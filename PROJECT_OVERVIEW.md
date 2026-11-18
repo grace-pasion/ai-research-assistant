@@ -16,11 +16,12 @@ Research often means juggling PDFs, search results, and notes across different t
 
 ## Initial data model
 
-The sketch separates user-owned research data from reusable academic literature metadata. They may be logical schemas in one PostgreSQL deployment; the physical database setup is still to be decided.
+The sketch separates user-owned research data from reusable academic literature metadata. Both may use PostgreSQL in one deployment; uploaded files live in separate local or cloud file storage.
 
 ```mermaid
 erDiagram
     USER ||--o{ RESEARCH_PROJECT : owns
+    USER ||--o{ CONVERSATION : creates
     RESEARCH_PROJECT ||--o{ DOCUMENT : contains
     RESEARCH_PROJECT ||--o{ CONVERSATION : has
     RESEARCH_PROJECT ||--o{ SEARCH_QUERY : starts
@@ -67,6 +68,7 @@ erDiagram
     }
     CONVERSATION {
         uuid conversation_id PK
+        uuid user_id FK
         uuid project_id FK
         string title
     }
@@ -104,6 +106,7 @@ erDiagram
         uuid document_id PK, FK
         uuid paper_id PK, FK
         float relevance_score
+        string relationship_type
     }
     PAPER {
         uuid paper_id PK
@@ -129,23 +132,29 @@ erDiagram
 
 ## Rough system design
 
-The stack follows the initial proposal: React, Python/FastAPI, PostgreSQL with pgvector, academic search APIs, and an LLM API. Redis/Celery is shown as an option for slower document-processing jobs.
+The stack follows the initial proposal: React, Python/FastAPI, PostgreSQL with pgvector, academic search APIs, and an LLM API. Original uploads go to local or cloud file storage; Tesseract OCR can extract text from scanned files. Redis/Celery is an option for slower document-processing jobs.
 
 ```mermaid
 flowchart LR
     R[Researcher] -->|uses| UI[React web app]
     UI -->|authenticated requests| API[Python / FastAPI]
     API --> AUTH[Authentication and project access]
-    API -->|upload| PROC[Document processing]
+    API -->|original upload| FS[Local or cloud file storage]
+    FS -->|file for processing| PROC[Document processing]
     PROC --> EXTRACT[PDF and text extraction]
+    EXTRACT -. scanned files .-> OCR[Tesseract OCR]
+    OCR --> CHUNK[Chunking and embeddings]
     EXTRACT --> CHUNK[Chunking and embeddings]
-    CHUNK -->|document metadata and chunks| DB[(PostgreSQL + pgvector)]
-    PROC -. optional background jobs .-> JOBS[Redis + Celery]
+    CHUNK -->|document metadata and chunks| USERDB[(User Research DB - PostgreSQL + pgvector)]
+    API -. optional background jobs .-> JOBS[Redis + Celery]
+    JOBS -. queued work .-> PROC
     API -->|search request| SEARCH[Academic search service]
     SEARCH -->|metadata lookup| EXT[OpenAlex / Crossref / Semantic Scholar]
-    EXT -->|paper metadata| DB
-    API -->|retrieve relevant chunks and papers| DB
-    DB -->|context and sources| RAG[RAG context builder]
+    EXT -->|paper metadata| LITDB[(Academic Literature DB - PostgreSQL)]
+    API -->|retrieve document chunks| USERDB
+    API -->|retrieve papers| LITDB
+    USERDB -->|document context| RAG[RAG context builder]
+    LITDB -->|paper context| RAG
     RAG -->|prompt| LLM[OpenAI API]
     LLM -->|answer| API
     API -->|answer and citations| UI
@@ -155,20 +164,25 @@ flowchart LR
 
 ## Initial daily goals
 
-An initial **10-work-session** sequence, sized for roughly **30–40 project hours**. Follow it across the remaining class days; combine sessions if the course calendar is shorter.
+Daily goals for **November 18–December 2, 2026** (15 days), at roughly **2–2.5 hours per day** or **30–40 project hours** total.
 
 | Day | Goal |
 |---|---|
-| 1 | Confirm the minimum viable feature set, user flow, and technology choices. |
-| 2 | Set up the app skeleton and initial PostgreSQL schema. |
-| 3 | Build research-project and document upload/listing flows. |
-| 4 | Extract document text; add chunking and embedding storage. |
-| 5 | Integrate one academic search provider and save paper metadata. |
-| 6 | Retrieve relevant document chunks and papers for a question. |
-| 7 | Generate answers with source references and retain conversation history. |
-| 8 | Connect the main React screens to the API; refine the core user flow. |
-| 9 | Test the end-to-end flow, handle errors, and fix the most important issues. |
-| 10 | Prepare a demo, finish concise setup/use documentation, and identify next steps. |
+| Nov 18 | Confirm the MVP, user flow, and technology choices; prepare the development environment. |
+| Nov 19 | Set up the application skeleton and map the ERD into PostgreSQL tables. |
+| Nov 20 | Implement the initial API and database connection; start the React app shell. |
+| Nov 21 | Build research-project and document upload/listing flows; save files outside the database. |
+| Nov 22 | Extract text from PDFs and text files; try OCR for scanned documents. |
+| Nov 23 | Chunk extracted text, generate embeddings, and store/search them with pgvector. |
+| Nov 24 | Integrate one academic search provider and save paper metadata and authors. |
+| Nov 25 | Add search history and let users save relevant papers to a research project. |
+| Nov 26 | Persist conversations and messages; retrieve relevant document and paper sources. |
+| Nov 27 | Generate grounded AI answers and return citations to their sources. |
+| Nov 28 | Connect the React project, documents, papers, and chat views to the API. |
+| Nov 29 | Refine the core user flow and add background document processing if needed. |
+| Nov 30 | Test the end-to-end flow, access controls, upload handling, and error states. |
+| Dec 1 | Fix priority issues; prepare sample research data and a demo walkthrough. |
+| Dec 2 | Demo the prototype, finish setup/use documentation, and capture next steps. |
 
 ## Optional UX sketch
 
