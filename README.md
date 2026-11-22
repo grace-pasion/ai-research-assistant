@@ -44,6 +44,8 @@ The database and uploaded files persist in Docker volumes. To stop the app, pres
 
 GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. This repository includes a workflow that builds and publishes the frontend on pushes to `main` and on manual runs. The workflow also runs the frontend tests and requires the backend URL before publishing.
 
+If `VITE_API_URL` is not set, the workflow still tests and builds the frontend, but warns and skips deployment. Set the variable and run the workflow again to publish.
+
 To enable it:
 
 1. Deploy the API, both PostgreSQL databases (with pgvector), and durable file storage to a backend host. Configure that host with private `JWT_SECRET` and `OPENAI_API_KEY` values, persistent database/storage, HTTPS, and `CORS_ORIGINS=https://grace-pasion.github.io`. A Docker host with persistent volumes is also supported.
