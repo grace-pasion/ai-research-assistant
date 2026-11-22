@@ -248,6 +248,12 @@ class ProjectPaper(ResearchBase):
     paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     relevance_score: Mapped[float | None] = mapped_column(Float)
     relationship_type: Mapped[str] = mapped_column(String(64), default="saved")
+    screening_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unread", server_default="unread"
+    )
+    screening_note: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

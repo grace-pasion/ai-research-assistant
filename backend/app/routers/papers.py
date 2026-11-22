@@ -16,7 +16,12 @@ from app.models import (
     SearchQueryResult,
     User,
 )
-from app.schemas import PaperResponse, PaperSearchResponse
+from app.schemas import (
+    PaperResponse,
+    PaperScreeningResponse,
+    PaperScreeningUpdate,
+    PaperSearchResponse,
+)
 from app.security import get_current_user, require_project_owner
 from app.services.academic_search import search_papers, upsert_paper
 from app.services.audit import record_activity
@@ -25,7 +30,11 @@ router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["academic p
 
 
 def _paper_response(
-    paper: Paper, literature_db: Session, saved: bool = False
+    paper: Paper,
+    literature_db: Session,
+    saved: bool = False,
+    screening_status: str = "unread",
+    screening_note: str = "",
 ) -> PaperResponse:
     relationships = literature_db.execute(
         select(Author.author_id, Author.author_name)
@@ -46,6 +55,8 @@ def _paper_response(
         citation_count=paper.citation_count,
         authors=[{"author_id": row.author_id, "author_name": row.author_name} for row in relationships],
         saved=saved,
+        screening_status=screening_status,
+        screening_note=screening_note,
     )
 
 
@@ -65,8 +76,20 @@ def list_saved_papers(
     paper_ids = [item.paper_id for item in saved]
     if not paper_ids:
         return []
+    screening = {item.paper_id: item for item in saved}
     papers = literature_db.scalars(select(Paper).where(Paper.paper_id.in_(paper_ids))).all()
-    return [_paper_response(paper, literature_db, saved=True) for paper in papers]
+    papers_by_id = {paper.paper_id: paper for paper in papers}
+    return [
+        _paper_response(
+            papers_by_id[paper_id],
+            literature_db,
+            saved=True,
+            screening_status=screening[paper_id].screening_status,
+            screening_note=screening[paper_id].screening_note,
+        )
+        for paper_id in paper_ids
+        if paper_id in papers_by_id
+    ]
 
 
 @router.get("/search", response_model=PaperSearchResponse)
@@ -160,4 +183,31 @@ def unsave_paper(
         db.delete(relation)
         record_activity(db, user.user_id, "paper.removed")
         db.commit()
+
+
+@router.patch("/{paper_id}/screening", response_model=PaperScreeningResponse)
+def update_paper_screening(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    payload: PaperScreeningUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    relation = db.get(ProjectPaper, (project_id, paper_id))
+    if relation is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+    relation.screening_status = payload.screening_status
+    relation.screening_note = payload.screening_note
+    record_activity(
+        db,
+        user.user_id,
+        "paper.screening.updated",
+        {"status": payload.screening_status},
+    )
+    db.commit()
+    return PaperScreeningResponse(
+        screening_status=relation.screening_status,
+        screening_note=relation.screening_note,
+    )
 

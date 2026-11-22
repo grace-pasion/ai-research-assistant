@@ -15,6 +15,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - Open an uploaded document to read its extracted text and view its highlights and notes in the document reader. On saved papers, annotate the available abstract; notes persist across sessions.
 - Document chunking and OpenAI embeddings, stored in pgvector.
 - OpenAlex and Crossref literature search with semantic re-ranking of paper abstracts when an OpenAI key is configured, cached paper and author metadata, query history, and saving/removing papers from projects.
+- Project literature screening: mark saved papers unread, include, or exclude, record an optional short reason, and track reviewed/unread totals.
 - Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts; prompts asking to find a paper also search OpenAlex and show retrieved results as linked chat sources.
 - Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
 - Separate administrator sign-in with an allowlisted account, user/account summaries, metadata-only activity history, and permanent account deletion.
@@ -44,7 +45,7 @@ docker compose up --build
 
 Open the app at <http://localhost:5173>. The API health check is at <http://localhost:8000/api/health>, and interactive API documentation is at <http://localhost:8000/docs>.
 
-Create an account in the app. Add a research project, upload documents, and search OpenAlex or Crossref for papers. Open a document from the Documents list to read its extracted text, highlight passages, and view or add notes in the reader; use **Annotate** on a saved paper to annotate its available abstract. Notes persist in the project database across sessions. OpenAI is required for semantic literature re-ranking, document embeddings, and assistant answers. Without an OpenAI key, academic search still returns provider-ranked results, uploads are retained, and document text can still be searched; documents show **Needs API key** and can be reprocessed after you add a key and restart the API. In chat, ask to find or pull up a paper to search OpenAlex and include relevant paper abstracts and links in the draft.
+Create an account in the app. Add a research project, upload documents, and search OpenAlex or Crossref for papers. In **Literature**, save papers to the project, record an unread/include/exclude screening decision and optional short reason, and see project screening progress. Open a document from the Documents list to read its extracted text, highlight passages, and view or add notes in the reader; use **Annotate** on a saved paper to annotate its available abstract. Notes and screening decisions persist in the project database across sessions. OpenAI is required for semantic literature re-ranking, document embeddings, and assistant answers. Without an OpenAI key, academic search still returns provider-ranked results, uploads are retained, and document text can still be searched; documents show **Needs API key** and can be reprocessed after you add a key and restart the API. In chat, ask to find or pull up a paper to search OpenAlex and include relevant paper abstracts and links in the draft.
 
 The database (including annotations) and uploaded files persist in Docker volumes. To stop the app, press `Ctrl+C`; to start it again, run `docker compose up`. To permanently erase all local research data, explicitly remove the named volumes with `docker compose down --volumes` (this is destructive).
 
@@ -68,7 +69,7 @@ The workflow uses the repository Actions variable `VITE_API_URL` when set; other
 3. Render generates a private `JWT_SECRET` for the backend. Leave `STORAGE_BACKEND=supabase`, `SUPABASE_STORAGE_BUCKET=research-documents`, and `CORS_ORIGINS=https://grace-pasion.github.io` as configured by the blueprint. Do not add a Render disk; Supabase Storage is the persistent file store.
 4. Wait for the deployment to finish, then open `https://<your-render-service>.onrender.com/api/health`. A healthy service returns `{"status":"ok"}`.
 
-The same Supabase database stores the application's research and literature tables; `LITERATURE_DATABASE_URL` automatically falls back to `DATABASE_URL`. The API creates its tables—including `annotations`—and enables the `vector` extension on startup.
+The same Supabase database stores the application's research and literature tables; `LITERATURE_DATABASE_URL` automatically falls back to `DATABASE_URL`. The API creates its tables—including `annotations`—adds literature-screening columns to existing project-paper tables, and enables the `vector` extension on startup.
 
 ### 3. Connect GitHub Pages to the API
 
@@ -119,4 +120,4 @@ npm run build
 - OpenAlex and Crossref are used instead of scraping Google Scholar. Search availability and metadata completeness depend on those public services.
 - OCR is performed locally inside the API container. Local Python installs need the Tesseract executable installed separately.
 - OpenAI API keys, database passwords, and JWT secrets are read only by the backend. The example secrets are for local setup only; do not expose this development configuration to the public internet.
-- The first PostgreSQL container start creates `research_db` and `literature_db`; the API creates tables, including `annotations`, and pgvector indexes on startup. The database initialization script only runs for a new Postgres data volume.
+- The first PostgreSQL container start creates `research_db` and `literature_db`; the API creates tables, including `annotations`, adds literature-screening columns to existing project-paper tables, and creates pgvector indexes on startup. The database initialization script only runs for a new Postgres data volume.

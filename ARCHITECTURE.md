@@ -61,7 +61,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 - **Research workspace:** user-owned projects; uploaded-document metadata, extracted text, processing status, and chunk records.
 - **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance.
-- **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper saved relationships.
+- **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper relationships with a persistent screening status (`unread`, `include`, or `exclude`) and optional short note. Existing databases receive these columns additively at startup.
 - **Assistant history:** conversations, reviewed user/assistant messages, and ordered references to document chunks or saved papers. A conversation is created only after the user approves a draft.
 - **Usage control:** a daily counter keyed by an HMAC hash of the client IP and UTC date. The raw client IP is not stored in that counter.
 - **Authentication throttling:** 15-minute counters keyed by HMAC hashes of IP and IP/email pairs. Raw IP addresses and email addresses are not stored in these counters; successful sign-in clears the matching counters.
@@ -86,6 +86,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
 3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
+5. In the project's saved-paper list, the user can mark each paper unread, include, or exclude, add an optional reason/note, and track the total reviewed and unread papers. Screening decisions are scoped to the project and persist in the `project_papers` relationship.
 
 ### Annotate documents and papers
 
@@ -137,6 +138,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - Search by topic, title, author, or DOI using OpenAlex or Crossref; OpenAI embeddings re-rank results semantically when configured.
 - Review returned bibliographic details and open an external paper link when supplied.
 - Save papers to the current project, review the saved-paper list, and remove papers from it.
+- Screen saved papers as unread, included, or excluded; add an optional short reason and track project-level screening progress.
 - Open a saved paper's available abstract to highlight passages and add, edit, or delete persistent project notes.
 
 ### Source-grounded assistant
@@ -181,6 +183,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/papers` | List papers saved to a project. |
 | `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
+| `PATCH` | `/api/projects/{project_id}/papers/{paper_id}/screening` | Update a saved paper's screening status and optional reason/note. |
 | `GET`, `POST` | `/api/projects/{project_id}/documents/{document_id}/annotations` | List or add notes/highlights for an owned document. |
 | `GET`, `POST` | `/api/projects/{project_id}/papers/{paper_id}/annotations` | List or add notes/highlights for a paper saved in the project. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}/documents/{document_id}/annotations/{annotation_id}` | Edit or delete a document annotation. |

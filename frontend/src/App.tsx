@@ -125,6 +125,11 @@ function App() {
     () => documents.some((document) => document.processing_status === "processing"),
     [documents],
   );
+  const screeningCounts = useMemo(() => ({
+    unread: papers.filter((paper) => paper.screening_status === "unread").length,
+    include: papers.filter((paper) => paper.screening_status === "include").length,
+    exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
+  }), [papers]);
   const openedDocument = annotationDocumentId
     ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
     : null;
@@ -346,6 +351,30 @@ function App() {
       setNotice("Paper removed from this project.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not remove this paper.");
+    }
+  }
+
+  async function updatePaperScreening(
+    paper: Paper,
+    screeningStatus: Paper["screening_status"],
+    screeningNote: string,
+  ) {
+    if (!project) return;
+    setError("");
+    try {
+      const updated = await request<Pick<Paper, "screening_status" | "screening_note">>(
+        `/api/projects/${project.project_id}/papers/${paper.paper_id}/screening`,
+        {
+          method: "PATCH",
+          body: jsonBody({ screening_status: screeningStatus, screening_note: screeningNote }),
+        },
+      );
+      setPapers((current) => current.map((item) =>
+        item.paper_id === paper.paper_id ? { ...item, ...updated } : item,
+      ));
+      setNotice("Screening decision saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this screening decision.");
     }
   }
 
@@ -749,11 +778,28 @@ function App() {
                   )}
                   <div className="result-group saved-group">
                     <div className="result-label"><span>Saved to this project</span><small>{papers.length} papers</small></div>
+                    <section className="screening-progress" aria-label="Literature screening progress">
+                      <div className="screening-progress-heading">
+                        <strong>Screening progress</strong>
+                        <span>{screeningCounts.include + screeningCounts.exclude} of {papers.length} reviewed</span>
+                      </div>
+                      <progress
+                        max={Math.max(papers.length, 1)}
+                        value={screeningCounts.include + screeningCounts.exclude}
+                        aria-label={`${screeningCounts.include + screeningCounts.exclude} of ${papers.length} papers screened`}
+                      />
+                      <div className="screening-counts">
+                        <span>{screeningCounts.unread} unread</span>
+                        <span>{screeningCounts.include} included</span>
+                        <span>{screeningCounts.exclude} excluded</span>
+                      </div>
+                    </section>
                     {papers.length ? papers.map((paper) => (
                       <Fragment key={paper.paper_id}>
                         <PaperCard
                           paper={paper}
                           saved
+                          onScreeningChange={(status, note) => void updatePaperScreening(paper, status, note)}
                           onRemove={() => void unsavePaper(paper)}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
                         />
@@ -928,7 +974,29 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status}`}>{status === "processing" && <LoaderCircle size={12} className="spin" />}{labels[status] ?? status}</span>;
 }
 
-function PaperCard({ paper, saved = false, onSave, onRemove, onAnnotate }: { paper: Paper; saved?: boolean; onSave?: () => void; onRemove?: () => void; onAnnotate?: () => void }) {
+function PaperCard({
+  paper,
+  saved = false,
+  onSave,
+  onRemove,
+  onAnnotate,
+  onScreeningChange,
+}: {
+  paper: Paper;
+  saved?: boolean;
+  onSave?: () => void;
+  onRemove?: () => void;
+  onAnnotate?: () => void;
+  onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
+}) {
+  const [screeningStatus, setScreeningStatus] = useState(paper.screening_status);
+  const [screeningNote, setScreeningNote] = useState(paper.screening_note);
+
+  useEffect(() => {
+    setScreeningStatus(paper.screening_status);
+    setScreeningNote(paper.screening_note);
+  }, [paper.screening_status, paper.screening_note]);
+
   return (
     <article className="paper-card">
       <div className="paper-icon"><Library size={17} /></div>
@@ -939,6 +1007,42 @@ function PaperCard({ paper, saved = false, onSave, onRemove, onAnnotate }: { pap
         </p>
         {paper.abstract && <p className="paper-abstract">{paper.abstract.replace(/<[^>]*>/g, "").slice(0, 500)}{paper.abstract.length > 500 ? "…" : ""}</p>}
         {paper.doi && <p className="doi-line">DOI: {paper.doi.replace(/^https?:\/\/doi\.org\//, "")}</p>}
+        {saved && (
+          <div className="screening-controls">
+            <label>
+              Decision
+              <select
+                value={screeningStatus}
+                onChange={(event) => setScreeningStatus(event.target.value as Paper["screening_status"])}
+                aria-label={`Screening decision for ${paper.title}`}
+              >
+                <option value="unread">Unread</option>
+                <option value="include">Include</option>
+                <option value="exclude">Exclude</option>
+              </select>
+            </label>
+            <label>
+              Reason / note
+              <input
+                value={screeningNote}
+                onChange={(event) => setScreeningNote(event.target.value)}
+                maxLength={500}
+                placeholder="Add a short reason (optional)"
+                aria-label={`Screening note for ${paper.title}`}
+              />
+            </label>
+            <button
+              className="button secondary small-button"
+              onClick={() => onScreeningChange?.(screeningStatus, screeningNote)}
+              disabled={
+                screeningStatus === paper.screening_status &&
+                screeningNote === paper.screening_note
+              }
+            >
+              Save decision
+            </button>
+          </div>
+        )}
       </div>
       <div className="paper-actions">
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
