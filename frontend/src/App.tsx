@@ -32,6 +32,7 @@ import type {
   DocumentRecord,
   DocumentSearchResult,
   Draft,
+  PaperImportResponse,
   Paper,
   Project,
   SearchResult,
@@ -80,6 +81,7 @@ function App() {
   const [showEditProject, setShowEditProject] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [provider, setProvider] = useState("openalex");
+  const [referenceBusy, setReferenceBusy] = useState(false);
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
 
@@ -465,6 +467,52 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Academic search failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function importReferences(file: File) {
+    if (!project || referenceBusy) return;
+    setReferenceBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await request<PaperImportResponse>(
+        `/api/projects/${project.project_id}/papers/import`,
+        { method: "POST", body: form },
+      );
+      setNotice(
+        `Added ${result.added_count} reference${result.added_count === 1 ? "" : "s"}; `
+        + `skipped ${result.duplicate_count} DOI duplicate${result.duplicate_count === 1 ? "" : "s"}.`,
+      );
+      try {
+        await loadProjectData(project);
+      } catch (cause) {
+        setError(cause instanceof Error
+          ? `References were imported, but the project list could not be refreshed: ${cause.message}`
+          : "References were imported, but the project list could not be refreshed.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not import references.");
+    } finally {
+      setReferenceBusy(false);
+    }
+  }
+
+  async function exportReferences(format: "ris" | "bibtex") {
+    if (!project || !papers.length || referenceBusy) return;
+    setReferenceBusy(true);
+    setError("");
+    try {
+      await downloadFile(
+        `/api/projects/${project.project_id}/papers/export?format=${format}`,
+        format === "ris" ? "references.ris" : "references.bib",
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not export references.");
+    } finally {
+      setReferenceBusy(false);
     }
   }
 
@@ -985,6 +1033,43 @@ function App() {
                 <section className="section-content">
                   <div className="section-heading">
                     <div><h2>Discover literature</h2><p>Search scholarly indexes by topic or meaning; abstracts are semantically ranked when OpenAI is configured.</p></div>
+                  </div>
+                  <div className="reference-toolbar">
+                    <div className="reference-toolbar-copy">
+                      <strong>Reference import/export</strong>
+                      <span>Import RIS or BibTeX; duplicates with matching DOIs are skipped.</span>
+                    </div>
+                    <div className="reference-actions">
+                      <label className="button secondary small-button reference-import-button">
+                        {referenceBusy ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+                        Import file
+                        <input
+                          type="file"
+                          accept=".ris,.bib,.bibtex"
+                          aria-label="Import RIS or BibTeX bibliography"
+                          disabled={referenceBusy}
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            if (file) void importReferences(file);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        className="button secondary small-button"
+                        disabled={referenceBusy || !papers.length}
+                        onClick={() => void exportReferences("ris")}
+                      >
+                        <Download size={14} /> Export RIS
+                      </button>
+                      <button
+                        className="button secondary small-button"
+                        disabled={referenceBusy || !papers.length}
+                        onClick={() => void exportReferences("bibtex")}
+                      >
+                        <Download size={14} /> Export BibTeX
+                      </button>
+                    </div>
                   </div>
                   <form className="search-form" onSubmit={(event) => void searchPapers(event)}>
                     <Search size={18} />

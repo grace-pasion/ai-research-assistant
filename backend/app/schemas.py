@@ -250,6 +250,19 @@ class PaperSearchResponse(BaseModel):
     results: list[PaperResponse]
 
 
+class PaperImportResult(BaseModel):
+    paper_id: uuid.UUID
+    title: str
+    doi: str | None
+    status: Literal["imported", "matched", "duplicate"]
+
+
+class PaperImportResponse(BaseModel):
+    added_count: int
+    duplicate_count: int
+    results: list[PaperImportResult]
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=5000)
     mode: Literal["question", "compare", "directions"] = "question"

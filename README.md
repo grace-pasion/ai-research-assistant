@@ -18,6 +18,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - Document chunking and OpenAI embeddings, stored in pgvector.
 - Page-level citations for PDF evidence: assistant citations identify the source document, PDF page, and supporting passage; opening a citation displays the original PDF at that page. Reprocess PDFs that were already processed before this feature to add page locators to their existing chunks.
 - OpenAlex and Crossref literature search with semantic re-ranking of paper abstracts when an OpenAI key is configured, cached paper and author metadata, query history, and saving/removing papers from projects.
+- Import RIS and BibTeX bibliographies into a project and export its saved references in either format. DOI matching prevents a reference already in the project from being added twice; records without a DOI remain separate.
 - Import open-access PDFs for saved literature papers. Imported papers use the existing extraction, chunking, and embedding pipeline so their full text can be read, searched, and queried with the assistant.
 - Project literature screening: mark saved papers unread, undecided, include, or exclude, record an optional short reason, and track reviewed/unread/undecided totals. Undecided papers count as reviewed.
 - Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts; prompts asking to find a paper also search OpenAlex and show retrieved results as linked chat sources.

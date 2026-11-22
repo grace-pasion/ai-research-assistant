@@ -1,9 +1,12 @@
 import logging
 import re
 import uuid
+from pathlib import Path
+from typing import Literal
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,6 +27,7 @@ from app.models import (
 from app.schemas import (
     DocumentResponse,
     PaperResponse,
+    PaperImportResponse,
     PaperScreeningResponse,
     PaperScreeningUpdate,
     PaperSearchResponse,
@@ -37,12 +41,20 @@ from app.services.academic_search import (
     upsert_paper,
 )
 from app.services.audit import record_activity
+from app.services.bibliography import (
+    Reference,
+    format_references,
+    parse_bibtex,
+    parse_ris,
+    save_references_to_project,
+)
 from app.services.processing import process_saved_document
 from app.services.storage import delete_document as delete_stored_document
 from app.services.storage import store_document
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["academic papers"])
 logger = logging.getLogger(__name__)
+MAX_REFERENCE_IMPORT_BYTES = 5 * 1024 * 1024
 
 
 def _paper_response(
@@ -106,6 +118,80 @@ def list_saved_papers(
         for paper_id in paper_ids
         if paper_id in papers_by_id
     ]
+
+
+@router.post("/import", response_model=PaperImportResponse, status_code=status.HTTP_201_CREATED)
+async def import_reference_file(
+    project_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    extension = Path((file.filename or "").replace("\\", "/")).suffix.casefold()
+    if extension not in {".ris", ".bib", ".bibtex"}:
+        raise HTTPException(status_code=415, detail="Choose a RIS or BibTeX (.bib/.bibtex) file.")
+    content = await file.read(MAX_REFERENCE_IMPORT_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="The bibliography file is empty.")
+    if len(content) > MAX_REFERENCE_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="Bibliography files are limited to 5 MB.")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="The bibliography file must be UTF-8 encoded.") from exc
+    try:
+        references = parse_ris(text) if extension == ".ris" else parse_bibtex(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result = save_references_to_project(db, literature_db, project_id, references)
+    record_activity(
+        db,
+        user.user_id,
+        "paper.references_imported",
+        {
+            "format": extension.lstrip("."),
+            "added_count": result["added_count"],
+            "duplicate_count": result["duplicate_count"],
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/export")
+def export_reference_file(
+    project_id: uuid.UUID,
+    format: Literal["ris", "bibtex"] = Query(default="ris"),
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    papers = list_saved_papers(project_id, db, literature_db, user)
+    references = [
+        Reference(
+            title=paper.title,
+            authors=tuple(author.author_name for author in paper.authors),
+            year=paper.publication_year,
+            doi=paper.doi,
+            venue=paper.venue,
+            abstract=paper.abstract,
+            url=paper.paper_url,
+            citation_key=f"ref{paper.paper_id.hex}",
+        )
+        for paper in papers
+    ]
+    filename = "references.ris" if format == "ris" else "references.bib"
+    media_type = (
+        "application/x-research-info-systems" if format == "ris" else "application/x-bibtex"
+    )
+    return Response(
+        content=format_references(references, format),
+        media_type=f"{media_type}; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/search", response_model=PaperSearchResponse)

@@ -91,6 +91,13 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 5. In the project's saved-paper list, the user can mark each paper unread, undecided, include, or exclude, add an optional reason/note, and track reviewed, unread, and undecided totals. Undecided papers count as reviewed but remain separate from included and excluded papers. Screening decisions are scoped to the project and persist in the `project_papers` relationship.
 6. For a saved paper, **Extract full text** looks up an OpenAlex location marked open access and downloads its PDF when available. The API stores it as a project document linked through `document_papers`, then runs the existing extraction/chunking/embedding pipeline. If no open-access PDF is available, the user can upload a copy they have access to. Imported text is queryable through the existing document search and assistant retrieval flows.
 
+### Import and export bibliographies
+
+1. The user imports a UTF-8 RIS or BibTeX file, with a 5 MB and 1,000-entry limit, or exports all papers saved in the current project as RIS or BibTeX.
+2. The API parses common title, author, year, venue, DOI, abstract, and URL fields. Imported URLs are restricted to HTTP(S), and malformed files are rejected before any paper records are written.
+3. DOI values are normalized across bare and DOI-resolver URL forms. A matching literature record is reused and added to the project; if that DOI is already saved there, the import reports it as a duplicate and skips it. Records without DOIs are imported as distinct references.
+4. Reference metadata is stored in the shared literature database and project membership in the research database. The import response reports how many entries were added and skipped; export includes the current project's saved references only.
+
 ### LaTeX workspace
 
 1. The signed-in user opens **Main document** in a project. The API checks project ownership and returns the saved source files or a starter article template and empty bibliography.
@@ -199,6 +206,8 @@ Routes require a bearer token except health, registration, and login routes. The
 | `DELETE` | `/api/documents/{document_id}` | Delete an owned document and its stored file. |
 | `GET` | `/api/projects/{project_id}/papers` | List papers saved to a project. |
 | `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
+| `POST` | `/api/projects/{project_id}/papers/import` | Import RIS or BibTeX references with DOI-based duplicate detection. |
+| `GET` | `/api/projects/{project_id}/papers/export?format=...` | Download saved project references as RIS or BibTeX. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
 | `POST` | `/api/projects/{project_id}/papers/{paper_id}/full-text` | Import an available open-access PDF as a project document for extraction and querying. |
 | `PATCH` | `/api/projects/{project_id}/papers/{paper_id}/screening` | Update a saved paper's screening status and optional reason/note. |

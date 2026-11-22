@@ -68,6 +68,17 @@ export type Paper = {
   screening_note: string;
 };
 
+export type PaperImportResponse = {
+  added_count: number;
+  duplicate_count: number;
+  results: {
+    paper_id: string;
+    title: string;
+    doi: string | null;
+    status: "imported" | "matched" | "duplicate";
+  }[];
+};
+
 export type SearchResult = {
   query_id: string;
   provider: string;

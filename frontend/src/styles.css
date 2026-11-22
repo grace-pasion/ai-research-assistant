@@ -96,6 +96,13 @@ h1, h2, h3, p { margin-top: 0; }
 .upload-control { margin: 0; }
 .upload-button { cursor: pointer; position: relative; }
 .upload-button input { cursor: pointer; height: 100%; inset: 0; opacity: 0; position: absolute; width: 100%; }
+.reference-toolbar { align-items: center; background: #fbfcfa; border: 1px solid #e8ece8; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: -7px 0 16px; padding: 10px 12px; }
+.reference-toolbar-copy { display: flex; flex-direction: column; gap: 4px; }
+.reference-toolbar-copy strong { color: #536157; font-size: 10px; }
+.reference-toolbar-copy span { color: #89938b; font-size: 9px; }
+.reference-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
+.reference-import-button { cursor: pointer; position: relative; }
+.reference-import-button input { cursor: pointer; height: 100%; inset: 0; opacity: 0; position: absolute; width: 100%; }
 .bulk-upload-status { background: #fff; border: 1px solid #e8ece8; border-radius: 8px; margin: -8px 0 16px; overflow: hidden; }
 .bulk-upload-heading { align-items: center; background: #f8faf8; border-bottom: 1px solid #edf0ed; color: #647168; display: flex; font-size: 10px; justify-content: space-between; padding: 9px 12px; }
 .bulk-upload-heading span { color: #8a958d; font-size: 9px; }
