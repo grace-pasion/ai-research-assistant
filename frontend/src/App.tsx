@@ -20,9 +20,10 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, getToken, jsonBody, setToken } from "./api";
 import type {
+  Annotation,
   Conversation,
   DocumentRecord,
   DocumentSearchResult,
@@ -43,6 +44,8 @@ function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
+  const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -665,12 +668,25 @@ function App() {
                           {document.processing_status !== "processing" && document.processing_status !== "ready" && (
                             <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>Reprocess</button>
                           )}
+                          <button
+                            className="button secondary small-button"
+                            onClick={() => setAnnotationDocumentId((current) => current === document.document_id ? null : document.document_id)}
+                          >
+                            <Pencil size={13} /> Annotate
+                          </button>
                           <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
                             <Trash2 size={16} />
                           </button>
                         </article>
                       ))}
                     </div>
+                  )}
+                  {annotationDocumentId && documents.some((item) => item.document_id === annotationDocumentId) && (
+                    <AnnotationEditor
+                      key={annotationDocumentId}
+                      annotationsPath={`/api/projects/${project.project_id}/documents/${annotationDocumentId}/annotations`}
+                      sourcePath={`/api/documents/${annotationDocumentId}/reader`}
+                    />
                   )}
                   {processing && <p className="processing-note"><LoaderCircle className="spin" size={15} /> Extracting text and preparing documents…</p>}
                 </section>
@@ -703,7 +719,21 @@ function App() {
                   <div className="result-group saved-group">
                     <div className="result-label"><span>Saved to this project</span><small>{papers.length} papers</small></div>
                     {papers.length ? papers.map((paper) => (
-                      <PaperCard key={paper.paper_id} paper={paper} saved onRemove={() => void unsavePaper(paper)} />
+                      <Fragment key={paper.paper_id}>
+                        <PaperCard
+                          paper={paper}
+                          saved
+                          onRemove={() => void unsavePaper(paper)}
+                          onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
+                        />
+                        {annotationPaperId === paper.paper_id && (
+                          <AnnotationEditor
+                            key={`annotations-${paper.paper_id}`}
+                            annotationsPath={`/api/projects/${project.project_id}/papers/${paper.paper_id}/annotations`}
+                            sourceText={paper.abstract?.replace(/<[^>]*>/g, "") ?? ""}
+                          />
+                        )}
+                      </Fragment>
                     )) : <p className="muted compact">Your saved papers will appear here.</p>}
                   </div>
                 </section>
@@ -867,7 +897,7 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status}`}>{status === "processing" && <LoaderCircle size={12} className="spin" />}{labels[status] ?? status}</span>;
 }
 
-function PaperCard({ paper, saved = false, onSave, onRemove }: { paper: Paper; saved?: boolean; onSave?: () => void; onRemove?: () => void }) {
+function PaperCard({ paper, saved = false, onSave, onRemove, onAnnotate }: { paper: Paper; saved?: boolean; onSave?: () => void; onRemove?: () => void; onAnnotate?: () => void }) {
   return (
     <article className="paper-card">
       <div className="paper-icon"><Library size={17} /></div>
@@ -882,12 +912,224 @@ function PaperCard({ paper, saved = false, onSave, onRemove }: { paper: Paper; s
       <div className="paper-actions">
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
         {saved ? (
-          <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>
+          <>
+            <button className="button secondary small-button" onClick={onAnnotate}><Pencil size={13} /> Annotate</button>
+            <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>
+          </>
         ) : (
           <button className="button secondary small-button" onClick={onSave}><Plus size={15} /> Save</button>
         )}
       </div>
     </article>
+  );
+}
+
+function AnnotationEditor({
+  annotationsPath,
+  sourcePath,
+  sourceText,
+}: {
+  annotationsPath: string;
+  sourcePath?: string;
+  sourceText?: string;
+}) {
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [text, setText] = useState(sourceText ?? "");
+  const [note, setNote] = useState("");
+  const [selection, setSelection] = useState<{ quote: string; start_offset: number; end_offset: number } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNote, setEditNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const sourceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    const annotationRequest = api<Annotation[]>(annotationsPath);
+    const textRequest = sourcePath
+      ? api<{ text: string }>(sourcePath)
+      : Promise.resolve({ text: sourceText ?? "" });
+    Promise.all([annotationRequest, textRequest])
+      .then(([loadedAnnotations, reader]) => {
+        if (!active) return;
+        setAnnotations(loadedAnnotations);
+        setText(reader.text);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load annotations.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [annotationsPath, sourcePath, sourceText]);
+
+  function captureSelection() {
+    const container = sourceRef.current;
+    const selected = window.getSelection();
+    if (!container || !selected || selected.isCollapsed || !selected.anchorNode || !selected.focusNode ||
+      !container.contains(selected.anchorNode) || !container.contains(selected.focusNode)) {
+      setError("Select text in the source first.");
+      return;
+    }
+    const range = selected.getRangeAt(0);
+    const preceding = range.cloneRange();
+    preceding.selectNodeContents(container);
+    preceding.setEnd(range.startContainer, range.startOffset);
+    const start = Array.from(preceding.toString()).length;
+    const quote = range.toString();
+    if (!quote.trim()) {
+      setError("Select text in the source first.");
+      return;
+    }
+    setSelection({ quote, start_offset: start, end_offset: start + Array.from(quote).length });
+    setError("");
+  }
+
+  async function saveAnnotation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await api<Annotation>(annotationsPath, {
+        method: "POST",
+        body: jsonBody({
+          quote: selection?.quote ?? null,
+          note: note.trim(),
+          start_offset: selection?.start_offset ?? null,
+          end_offset: selection?.end_offset ?? null,
+        }),
+      });
+      setAnnotations((current) => [...current, saved]);
+      setNote("");
+      setSelection(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this annotation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateAnnotation(annotation: Annotation) {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await api<Annotation>(`${annotationsPath}/${annotation.annotation_id}`, {
+        method: "PATCH",
+        body: jsonBody({ note: editNote }),
+      });
+      setAnnotations((current) => current.map((item) => item.annotation_id === updated.annotation_id ? updated : item));
+      setEditingId(null);
+      setEditNote("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update this note.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAnnotation(annotation: Annotation) {
+    setBusy(true);
+    setError("");
+    try {
+      await api<void>(`${annotationsPath}/${annotation.annotation_id}`, { method: "DELETE" });
+      setAnnotations((current) => current.filter((item) => item.annotation_id !== annotation.annotation_id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete this annotation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sourceCharacters = Array.from(text);
+  const validHighlights = annotations
+    .filter((item) =>
+      item.quote &&
+      item.start_offset !== null &&
+      item.end_offset !== null &&
+      sourceCharacters.slice(item.start_offset, item.end_offset).join("") === item.quote,
+    )
+    .sort((left, right) => (left.start_offset ?? 0) - (right.start_offset ?? 0));
+  const sourceParts: ReactNode[] = [];
+  let cursor = 0;
+  validHighlights.forEach((item) => {
+    const start = item.start_offset ?? 0;
+    const end = item.end_offset ?? start;
+    if (start < cursor || end > sourceCharacters.length) return;
+    if (start > cursor) sourceParts.push(sourceCharacters.slice(cursor, start).join(""));
+    sourceParts.push(<mark key={item.annotation_id}>{sourceCharacters.slice(start, end).join("")}</mark>);
+    cursor = end;
+  });
+  if (cursor < sourceCharacters.length) sourceParts.push(sourceCharacters.slice(cursor).join(""));
+
+  return (
+    <section className="annotation-editor" aria-label="Source annotations">
+      <div className="annotation-heading">
+        <div><h3>Read & annotate</h3><p>Select text to highlight it, or add a note on its own.</p></div>
+        <span>{annotations.length} saved</span>
+      </div>
+      {error && <p className="inline-error" role="alert">{error}</p>}
+      {loading ? <p className="muted compact">Loading source and annotations…</p> : (
+        <>
+          {text ? (
+            <div className="annotation-source" ref={sourceRef}>
+              {sourceParts.length ? sourceParts : text}
+            </div>
+          ) : (
+            <p className="muted compact">No extracted text or abstract is available. You can still add a note.</p>
+          )}
+          {text && (
+            <div className="annotation-selection">
+              <button className="button secondary small-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={captureSelection}>Highlight selection</button>
+              {selection && <span>Selected: “{selection.quote.slice(0, 180)}{selection.quote.length > 180 ? "…" : ""}”</span>}
+            </div>
+          )}
+          <form className="annotation-form" onSubmit={(event) => void saveAnnotation(event)}>
+            <label htmlFor={`annotation-note-${annotationsPath}`}>Note</label>
+            <textarea
+              id={`annotation-note-${annotationsPath}`}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="What stands out about this passage?"
+              maxLength={5000}
+              rows={3}
+            />
+            <button className="button primary small-button" disabled={busy || (!note.trim() && !selection)}>
+              {busy ? "Saving…" : "Save annotation"}
+            </button>
+          </form>
+          {!!annotations.length && (
+            <div className="annotation-list">
+              {annotations.map((item) => (
+                <article className="annotation-item" key={item.annotation_id}>
+                  {item.quote && <blockquote>{item.quote}</blockquote>}
+                  {editingId === item.annotation_id ? (
+                    <div className="annotation-edit">
+                      <textarea value={editNote} onChange={(event) => setEditNote(event.target.value)} maxLength={5000} rows={2} />
+                      <button className="button secondary small-button" type="button" disabled={busy} onClick={() => void updateAnnotation(item)}>Save note</button>
+                      <button className="text-button" type="button" onClick={() => setEditingId(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      {item.note && <p>{item.note}</p>}
+                      <div className="annotation-actions">
+                        <button className="text-button" type="button" onClick={() => { setEditingId(item.annotation_id); setEditNote(item.note); }}>Edit note</button>
+                        <button className="text-button danger-text" type="button" disabled={busy} onClick={() => void deleteAnnotation(item)}>Delete</button>
+                      </div>
+                    </>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

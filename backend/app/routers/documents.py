@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import Document, ResearchProject, User
-from app.schemas import DocumentResponse, DocumentSearchResult
+from app.schemas import DocumentReaderResponse, DocumentResponse, DocumentSearchResult
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
 from app.services.documents import SUPPORTED_EXTENSIONS
@@ -114,6 +114,23 @@ def download_document(
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{quote(document.filename)}"
         },
+    )
+
+
+@router.get("/api/documents/{document_id}/reader", response_model=DocumentReaderResponse)
+def read_document_text(
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    require_project_owner(db, document.project_id, user.user_id)
+    return DocumentReaderResponse(
+        document_id=document.document_id,
+        filename=document.filename,
+        text=document.extracted_text or "",
     )
 
 

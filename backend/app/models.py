@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -105,6 +106,38 @@ class Document(ResearchBase):
     processing_status: Mapped[str] = mapped_column(String(32), default="processing", index=True)
     processing_error: Mapped[str | None] = mapped_column(Text)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Annotation(ResearchBase):
+    __tablename__ = "annotations"
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id IS NOT NULL AND paper_id IS NULL) OR "
+            "(document_id IS NULL AND paper_id IS NOT NULL)",
+            name="ck_annotations_single_target",
+        ),
+        CheckConstraint(
+            "length(trim(note)) > 0 OR (quote IS NOT NULL AND length(trim(quote)) > 0)",
+            name="ck_annotations_content",
+        ),
+    )
+
+    annotation_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    quote: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str] = mapped_column(Text, default="")
+    start_offset: Mapped[int | None] = mapped_column(Integer)
+    end_offset: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class DocumentChunk(ResearchBase):

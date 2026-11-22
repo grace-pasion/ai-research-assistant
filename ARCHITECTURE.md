@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, and assistant review UI. |
+| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, source annotations, and assistant review UI. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -59,6 +59,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 
 - **Account data:** user email, display name, and password hash.
 - **Research workspace:** user-owned projects; uploaded-document metadata, extracted text, processing status, and chunk records.
+- **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance.
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper saved relationships.
 - **Assistant history:** conversations, reviewed user/assistant messages, and ordered references to document chunks or saved papers. A conversation is created only after the user approves a draft.
@@ -67,7 +68,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 - **Activity history:** action type, timestamp, actor account, and a small set of non-content details. Events deliberately exclude document names/text, search terms, assistant questions, and generated answers. User events are removed when that account is hard-deleted.
 - **Original files:** local files in development or private Supabase Storage objects in the hosted setup. PostgreSQL stores the storage path and metadata, not the file bytes.
 
-The API enables PostgreSQL's `vector` extension and creates its tables at startup. In local Compose, the initialization script creates `research_db` and `literature_db`. In the hosted Blueprint, one Supabase `DATABASE_URL` is used for both model metadata sets by default; configure `LITERATURE_DATABASE_URL` only if a separate literature database is desired.
+The API enables PostgreSQL's `vector` extension and creates its tables—including `annotations`—at startup. In local Compose, the initialization script creates `research_db` and `literature_db`. In the hosted Blueprint, one Supabase `DATABASE_URL` is used for both model metadata sets by default; configure `LITERATURE_DATABASE_URL` only if a separate literature database is desired.
 
 ## Main data flows
 
@@ -85,6 +86,13 @@ The API enables PostgreSQL's `vector` extension and creates its tables at startu
 2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
 3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
+
+### Annotate documents and papers
+
+1. The user opens **Annotate** for an uploaded document or a saved paper. The document reader shows extracted text; the paper reader shows its available abstract.
+2. The browser lets the user select text and save it as a highlight, optionally with a note. Notes can also be saved without a selection; existing notes can be edited or deleted.
+3. The API verifies project ownership and that paper annotations target a paper saved in that project. It validates selected text offsets against the current source, then stores annotations in the research database. Offsets use Unicode code points so the saved highlight can be restored after reload.
+4. Annotations are private to the project and persist across sessions. Annotation activity does not include passage or note contents in the metadata-only activity log.
 
 ### Ask the research assistant
 
@@ -119,6 +127,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - View each file's size, upload date, processing state, and any processing error.
 - Download the original file, retry processing when it is not already processing or ready, and delete it.
 - Search extracted document text and inspect matching excerpts.
+- Open extracted document text, highlight selected passages, and add, edit, or delete notes. Highlights and notes persist with the project.
 - Use OCR for scanned PDFs when Tesseract is available.
 - Upload limit: 25 MB by default in the hosted configuration (backend setting permits configuration up to 100 MB); PDF extraction is limited to 100 pages.
 - Continue to use extracted-text search when no OpenAI key is configured; embeddings and AI answers require the backend OpenAI key.
@@ -128,6 +137,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - Search by topic, title, author, or DOI using OpenAlex or Crossref; OpenAI embeddings re-rank results semantically when configured.
 - Review returned bibliographic details and open an external paper link when supplied.
 - Save papers to the current project, review the saved-paper list, and remove papers from it.
+- Open a saved paper's available abstract to highlight passages and add, edit, or delete persistent project notes.
 
 ### Source-grounded assistant
 
@@ -163,6 +173,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
 | `GET` | `/api/projects/{project_id}/documents` | List project documents and processing states. |
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
+| `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |
 | `POST` | `/api/projects/{project_id}/documents` | Upload a document. |
 | `GET` | `/api/documents/{document_id}/download` | Download the original document. |
 | `POST` | `/api/documents/{document_id}/reprocess` | Reprocess an owned document. |
@@ -170,6 +181,10 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/papers` | List papers saved to a project. |
 | `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
+| `GET`, `POST` | `/api/projects/{project_id}/documents/{document_id}/annotations` | List or add notes/highlights for an owned document. |
+| `GET`, `POST` | `/api/projects/{project_id}/papers/{paper_id}/annotations` | List or add notes/highlights for a paper saved in the project. |
+| `PATCH`, `DELETE` | `/api/projects/{project_id}/documents/{document_id}/annotations/{annotation_id}` | Edit or delete a document annotation. |
+| `PATCH`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/annotations/{annotation_id}` | Edit or delete a saved-paper annotation. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations` | List approved conversations for a project. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read an approved conversation and its sources. |
 | `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; explicit literature-finding prompts also retrieve papers from OpenAlex. |

@@ -28,6 +28,19 @@ export type DocumentSearchResult = {
   excerpt: string;
 };
 
+export type Annotation = {
+  annotation_id: string;
+  project_id: string;
+  document_id: string | null;
+  paper_id: string | null;
+  quote: string | null;
+  note: string;
+  start_offset: number | null;
+  end_offset: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Paper = {
   paper_id: string;
   external_paper_id: string;

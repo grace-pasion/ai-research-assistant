@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from pydantic import field_validator
 
 BLOCKED_PASSWORDS = {
@@ -133,6 +133,57 @@ class DocumentResponse(APIModel):
 class DocumentSearchResult(BaseModel):
     document: DocumentResponse
     excerpt: str
+
+
+class DocumentReaderResponse(BaseModel):
+    document_id: uuid.UUID
+    filename: str
+    text: str
+
+
+class AnnotationCreate(BaseModel):
+    quote: str | None = Field(default=None, max_length=20000)
+    note: str = Field(default="", max_length=5000)
+    start_offset: int | None = Field(default=None, ge=0)
+    end_offset: int | None = Field(default=None, ge=0)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_annotation_note(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_annotation_content(self):
+        if not self.note and not (self.quote and self.quote.strip()):
+            raise ValueError("Add a note or select text to highlight.")
+        if (self.start_offset is None) != (self.end_offset is None):
+            raise ValueError("Both selection offsets are required.")
+        if self.start_offset is not None:
+            if not self.quote or self.end_offset - self.start_offset != len(self.quote):
+                raise ValueError("Selection offsets must match the highlighted text.")
+        return self
+
+
+class AnnotationUpdate(BaseModel):
+    note: str = Field(max_length=5000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_annotation_note(cls, value: str) -> str:
+        return value.strip()
+
+
+class AnnotationResponse(APIModel):
+    annotation_id: uuid.UUID
+    project_id: uuid.UUID
+    document_id: uuid.UUID | None
+    paper_id: uuid.UUID | None
+    quote: str | None
+    note: str
+    start_offset: int | None
+    end_offset: int | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PaperAuthorResponse(BaseModel):
