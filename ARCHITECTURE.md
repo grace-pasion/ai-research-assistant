@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, project workspace and sharing, inbox and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
+| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, project workspace and sharing, inbox and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -57,7 +57,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 
 ## Data model and persistence
 
-- **Account data:** user email, unique username, display name, and password hash. Existing accounts receive a generated username during the additive startup migration.
+- **Account data:** user email, unique username, display name, optional resized profile-picture data URI, and password hash. Existing accounts receive a generated username and the optional picture column during additive startup migrations. Passwords remain one-way hashed and are never returned by the API.
 - **Research workspace:** owner-managed projects; accepted `project_invitations` grant collaborators access to project documents, papers, annotations, and LaTeX content. Assistant conversations remain scoped to the individual user. Project/document metadata and extracted text are in the research database; original uploads are stored in the private file store.
 - **Project invitations:** `project_invitations` stores inviter, invitee, project, status (`pending`, `accepted`, or `declined`), and timestamps. `notifications` records invitations, invitation responses, and new direct messages for inbox display.
 - **Direct messages:** `direct_messages` stores sender, recipient, message text, creation time, and read time. Messages are private to the two users; notification rows link to the original message.
@@ -124,13 +124,13 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 ### Ask the research assistant
 
 1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt. A prompt asking to find, search for, or pull up a paper additionally searches OpenAlex. The workspace shows the remaining prompt and embedding allowances and aggregate document-processing statuses.
-2. The API checks authentication and project access, then enforces a limit of 20 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
+2. The API checks authentication and project access, then enforces a limit of 50 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
 3. The API retrieves up to six relevant ready document chunks using query embeddings and pgvector cosine distance. It also ranks the project's saved papers using query-term overlap and can include up to six relevant papers. For explicit literature-finding prompts, it searches and semantically re-ranks OpenAlex results, caches their metadata, and includes up to three papers not already in the saved-paper results.
 4. OpenAI receives the question, selected source excerpts, PDF page locators, and prior user questions for conversational context; previous assistant answers are not reused as evidence. For question and research-direction modes, it generates atomic factual claims, each paired with a source index and verbatim quote. Compare mode instead generates per-source claims for research question, methods, sampling, findings, and limitations. The API rejects any claim whose quote is not present in the cited excerpt, then calls OpenAI again to assess whether every remaining claim is directly supported by its quote. The API constructs citation markers itself and omits claims that the verifier rejects. Comparison cells without verified claims are explicitly marked **Missing evidence**; unsupported details are not inferred.
 5. The verified answer and source excerpts are returned as an **unsaved draft**. `[S#]` answer citations map to the ordered source cards. PDF source cards include the document name, 1-based page number, and supporting chunk passage; opening a card or answer citation opens the document reader with the original PDF positioned at that page. Other document citations open the reader with the supporting passage, and paper citations link to the paper. The user can discard the draft or approve it. A signed approval token is bound to the user and project and expires after 15 minutes.
 6. Only approval stores the conversation, question, answer, and source references. Document page locators are restored from the referenced chunks when approved conversations are loaded. Approval is idempotent.
 
-The verifier is another model call and can still make mistakes; evidence checking reduces, but cannot eliminate, hallucinations. Human review remains necessary. The 20-request limit is shared by clients using the same IP address. Embedding usage is independently limited to 50,000 estimated input tokens per account per UTC day by default, configurable with `DAILY_EMBEDDING_TOKEN_LIMIT`; the limit covers uploads, open-access imports, and reprocessing. Token estimates are approximate and these limits are not OpenAI billing guarantees.
+The verifier is another model call and can still make mistakes; evidence checking reduces, but cannot eliminate, hallucinations. Human review remains necessary. The 50-request limit is shared by clients using the same IP address. Embedding usage is independently limited to 50,000 estimated input tokens per account per UTC day by default, configurable with `DAILY_EMBEDDING_TOKEN_LIMIT`; the limit covers uploads, open-access imports, and reprocessing. Token estimates are approximate and these limits are not OpenAI billing guarantees.
 
 ### Usage and processing controls
 
@@ -150,6 +150,8 @@ The verifier is another model call and can still make mistakes; evidence checkin
 ### Accounts and workspace access
 
 - Create an account with username, name, email, and a 12–128 character password. A small local denylist blocks common passwords and passwords made of one repeated character; this applies to new registrations, not existing passwords.
+- Open **Profile & settings** from the lower-left account control to view the email, update the display name and username, or upload/remove a profile picture. Pictures are cropped to 256 × 256 pixels in the browser, encoded as JPEG, and limited to 512 KB before being stored on the account.
+- Review current daily AI allowances and document-processing totals on the dedicated **AI usage** page within account settings instead of the project page. **Profile** is a separate settings page for user information, profile-picture management, and password changes. Password hashes are not reversible or exposed; users can change a password after verifying the current password, with the same minimum strength rules as registration.
 - Sign in and sign out. Researcher and administrator sign-in allow 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window; a successful sign-in clears matching counters.
 - Keep an authenticated session in the browser using a bearer token. The backend validates signed tokens and checks project ownership or accepted collaborator access on every project resource route.
 - Invite registered colleagues by username or email from the project's share control. Recipients can accept or decline in **Inbox**; owners can remove invited or accepted collaborators. Accepted collaborators share project documents, papers, annotations, and LaTeX content. Only owners can edit project details or delete projects.
@@ -193,7 +195,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Query extracted full text from uploaded documents and imported open-access papers through document-chunk retrieval.
 - Continue an approved conversation and review its stored messages and citations.
 - Discard an unapproved draft or explicitly approve it before the conversation is saved.
-- Make at most 20 assistant draft requests per client IP per UTC day.
+- Make at most 50 assistant draft requests per client IP per UTC day.
 - View remaining daily assistant prompts and estimated embedding tokens, plus aggregate document-processing statuses. Embedding usage is capped at 50,000 estimated tokens per account per UTC day by default.
 
 ### Administrator console
@@ -214,6 +216,8 @@ Routes require a bearer token except health, registration, and login routes. The
 | `POST` | `/api/auth/register` | Register an account and return a token. |
 | `POST` | `/api/auth/login` | Sign in and return a token. |
 | `GET` | `/api/auth/me` | Return the authenticated user's profile. |
+| `PATCH` | `/api/auth/profile` | Update the authenticated user's display name, username, or profile picture. |
+| `POST` | `/api/auth/password` | Change the authenticated user's password after current-password verification. |
 | `GET` | `/api/users/search?q=...` | Search registered colleagues by username, name, or email. |
 | `GET` | `/api/inbox` | List recent invitation, invitation-response, and direct-message notifications. |
 | `GET` | `/api/inbox/unread-count` | Read the authenticated user's unread notification count. |
@@ -267,7 +271,7 @@ Interactive API documentation is available at `/docs` on the API host.
 - Administrator access is checked on every admin request against the server-side, comma-separated `ADMIN_EMAILS` allowlist. The admin interface is separate, but the allowlisted user signs in with their existing account credentials. Removing an email from the allowlist revokes admin access after the backend restarts/redeploys.
 - Activity logging is metadata-only by design. It does not record file names or contents, search terms, assistant prompts, or generated answers. User activity history is cascade-deleted with the user account.
 - API credentials and signing secrets, including `OPENALEX_API_KEY`, are backend environment variables. The browser receives only the public API base URL.
-- `DAILY_EMBEDDING_TOKEN_LIMIT` sets the per-account daily embedding-input estimate cap (50,000 by default). Assistant draft prompts remain limited to 20 per client IP per UTC day.
+- `DAILY_EMBEDDING_TOKEN_LIMIT` sets the per-account daily embedding-input estimate cap (50,000 by default). Assistant draft prompts remain limited to 50 per client IP per UTC day.
 - CORS allows the configured web origin; the hosted Render configuration allows `https://grace-pasion.github.io`.
 - Supabase Storage is configured as a private bucket. The API accesses files server-to-server.
 - The hosted backend defaults to `gpt-4o-mini` for chat and `text-embedding-3-small` for embeddings. OpenAI calls can incur charges.

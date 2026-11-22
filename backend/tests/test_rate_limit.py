@@ -44,7 +44,7 @@ def prompt_usage_db():
     engine.dispose()
 
 
-def test_daily_limit_allows_twenty_prompts_then_returns_429(
+def test_daily_limit_allows_fifty_prompts_then_returns_429(
     prompt_usage_db: Session, monkeypatch
 ):
     monkeypatch.setattr(
@@ -55,7 +55,7 @@ def test_daily_limit_allows_twenty_prompts_then_returns_429(
     request = make_request("203.0.113.15")
     now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 
-    for _ in range(20):
+    for _ in range(50):
         rate_limit.consume_daily_prompt(prompt_usage_db, request, now)
 
     with pytest.raises(HTTPException) as error:
@@ -65,7 +65,7 @@ def test_daily_limit_allows_twenty_prompts_then_returns_429(
     assert error.value.headers["Retry-After"] == str(12 * 60 * 60)
     usage = prompt_usage_db.scalar(select(DailyPromptUsage))
     assert usage is not None
-    assert usage.prompt_count == 20
+    assert usage.prompt_count == 50
 
 
 def test_embedding_allowance_is_account_scoped_and_resets_at_utc_midnight(
@@ -110,7 +110,7 @@ def test_usage_endpoint_reports_prompt_and_embedding_allowances(
     usage = usage_router.get_usage(request, prompt_usage_db, user)
 
     assert usage.assistant_prompts_used == 1
-    assert usage.assistant_prompts_remaining == 19
+    assert usage.assistant_prompts_remaining == 49
     assert usage.embedding_tokens_used == 25
     assert usage.embedding_tokens_remaining == 75
     assert usage.resets_at.hour == 0

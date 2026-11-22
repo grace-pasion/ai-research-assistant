@@ -3,6 +3,7 @@ export type User = {
   email: string;
   username: string | null;
   name: string;
+  profile_picture: string | null;
 };
 
 export type Project = {

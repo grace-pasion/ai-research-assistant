@@ -7,8 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.database import ensure_user_username_column
-from app.database import get_db
+from app.database import ensure_user_profile_picture_column, ensure_user_username_column, get_db
 from app.models import (
     DirectMessage,
     LatexWorkspace,
@@ -229,11 +228,17 @@ def test_username_migration_backfills_existing_accounts(tmp_path):
         )
 
     ensure_user_username_column(engine)
+    ensure_user_profile_picture_column(engine)
 
     with engine.connect() as connection:
         username = connection.scalar(text("SELECT username FROM users WHERE user_id = :user_id"), {"user_id": user_id.hex})
+        profile_picture = connection.scalar(
+            text("SELECT profile_picture FROM users WHERE user_id = :user_id"),
+            {"user_id": user_id.hex},
+        )
     assert username.startswith("researcher_")
     assert len(username) == len("researcher_") + 12
+    assert profile_picture is None
     engine.dispose()
 
 

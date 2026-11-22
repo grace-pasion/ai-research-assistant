@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import (
     ensure_document_chunk_page_column,
     ensure_project_paper_screening_columns,
+    ensure_user_profile_picture_column,
     ensure_user_username_column,
     initialize_database,
     make_engine,
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     )
     initialize_database(research_engine, ResearchBase.metadata)
     ensure_user_username_column(research_engine)
+    ensure_user_profile_picture_column(research_engine)
     ensure_project_paper_screening_columns(research_engine)
     ensure_document_chunk_page_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)

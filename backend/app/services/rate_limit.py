@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AuthRateLimit, DailyEmbeddingUsage, DailyPromptUsage
 
-DAILY_PROMPT_LIMIT = 20
+DAILY_PROMPT_LIMIT = 50
 AUTH_IP_ATTEMPT_LIMIT = 30
 AUTH_IP_EMAIL_ATTEMPT_LIMIT = 5
 AUTH_WINDOW_SECONDS = 15 * 60
@@ -157,7 +157,7 @@ def consume_daily_prompt(
         retry_after = max(1, int((next_reset - now).total_seconds()))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Daily AI prompt limit reached (20 prompts per IP address). Try again after 00:00 UTC.",
+            detail="Daily AI prompt limit reached (50 prompts per IP address). Try again after 00:00 UTC.",
             headers={"Retry-After": str(retry_after)},
         )
 

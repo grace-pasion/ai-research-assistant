@@ -1,3 +1,5 @@
+import base64
+import binascii
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -43,11 +45,75 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
-        if not value.strip() or value.casefold() in BLOCKED_PASSWORDS:
-            raise ValueError("Choose a longer, less common password.")
-        if len(set(value)) == 1:
-            raise ValueError("A password cannot be the same character repeated.")
+        return validate_password_strength(value)
+
+
+def validate_password_strength(value: str) -> str:
+    if not value.strip() or value.casefold() in BLOCKED_PASSWORDS:
+        raise ValueError("Choose a longer, less common password.")
+    if len(set(value)) == 1:
+        raise ValueError("A password cannot be the same character repeated.")
+    return value
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    username: str | None = Field(default=None, min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9._-]+$")
+    profile_picture: str | None = Field(default=None, max_length=700_000)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Name cannot be blank.")
         return value
+
+    @field_validator("username")
+    @classmethod
+    def normalize_profile_username(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else value
+
+    @field_validator("profile_picture")
+    @classmethod
+    def validate_profile_picture(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            media_type, encoded = value.split(",", 1)
+            if media_type not in {
+                "data:image/jpeg;base64",
+                "data:image/png;base64",
+                "data:image/webp;base64",
+            }:
+                raise ValueError("Choose a JPEG, PNG, or WebP profile picture.")
+            image = base64.b64decode(encoded, validate=True)
+            signatures = {
+                "data:image/jpeg;base64": image.startswith(b"\xff\xd8\xff"),
+                "data:image/png;base64": image.startswith(b"\x89PNG\r\n\x1a\n"),
+                "data:image/webp;base64": (
+                    len(image) >= 12 and image[:4] == b"RIFF" and image[8:12] == b"WEBP"
+                ),
+            }
+            if not signatures[media_type]:
+                raise ValueError("The profile picture is not a valid image.")
+        except (ValueError, binascii.Error):
+            raise ValueError("The profile picture is not a valid image.") from None
+        if not image or len(image) > 512 * 1024:
+            raise ValueError("Profile pictures must be smaller than 512 KB.")
+        return value
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return validate_password_strength(value)
 
 
 class LoginRequest(BaseModel):
@@ -60,6 +126,7 @@ class UserResponse(APIModel):
     email: EmailStr
     username: str | None
     name: str
+    profile_picture: str | None
 
 
 class AdminLoginRequest(BaseModel):

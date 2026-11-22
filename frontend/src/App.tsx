@@ -7,6 +7,8 @@ import {
   Check,
   ChevronDown,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   FileCode2,
   FolderPlus,
@@ -18,6 +20,7 @@ import {
   Pencil,
   Search,
   Send,
+  Settings,
   Share2,
   ShieldCheck,
   Trash2,
@@ -98,6 +101,7 @@ function App() {
   const [showEditProject, setShowEditProject] = useState(false);
   const [showShareProject, setShowShareProject] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [provider, setProvider] = useState("openalex");
@@ -846,7 +850,7 @@ function App() {
                 </label>
                 <label>
                   Username <span className="field-note">3–32 letters, numbers, dots, underscores, or hyphens</span>
-                  <input name="username" autoComplete="username" required minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" />
+                  <input name="username" autoComplete="username" required minLength={3} maxLength={32} pattern="([A-Za-z0-9._]|-)+" />
                 </label>
               </>
             )}
@@ -919,8 +923,26 @@ function App() {
         </nav>
         <div className="sidebar-spacer" />
         <div className="account-card">
-          <span className="avatar">{user.name.slice(0, 1).toUpperCase()}</span>
-          <span className="account-name">{user.name}</span>
+          <button
+            className="account-open"
+            aria-label="Open account settings"
+            title="Account settings"
+            onClick={() => {
+              setShowAccountSettings(true);
+              void refreshUsage();
+            }}
+          >
+            <span className="avatar">
+              {user.profile_picture
+                ? <img src={user.profile_picture} alt="" />
+                : user.name.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="account-name">
+              <strong>{user.name}</strong>
+              <small>@{user.username}</small>
+            </span>
+            <Settings size={15} aria-hidden="true" />
+          </button>
           <button className="icon-button logout" title="Sign out" onClick={signOut}>
             <LogOut size={16} />
           </button>
@@ -995,6 +1017,16 @@ function App() {
               onUnreadCount={refreshUnreadCount}
             />
           )}
+          {showAccountSettings && (
+            <AccountSettingsDialog
+              user={user}
+              aiUsage={aiUsage}
+              processingStatusCounts={processingStatusCounts}
+              request={request}
+              onUserUpdated={setUser}
+              onClose={() => setShowAccountSettings(false)}
+            />
+          )}
           {showEditProject && project && (
             <div className="modal-backdrop" onMouseDown={(event) => {
               if (event.target === event.currentTarget) setShowEditProject(false);
@@ -1041,43 +1073,6 @@ function App() {
                     <Pencil size={14} /> Edit
                   </button>
                 )}
-              </section>
-
-              <section className="ai-usage-panel" aria-label="Daily AI allowance and processing status">
-                <div className="ai-usage-heading">
-                  <strong>AI usage today</strong>
-                  <span>Allowances reset at 00:00 UTC</span>
-                </div>
-                {aiUsage ? (
-                  <div className="ai-usage-metrics">
-                    <UsageMeter
-                      label="Assistant prompts"
-                      detail="Shared by IP address"
-                      used={aiUsage.assistant_prompts_used}
-                      limit={aiUsage.assistant_prompts_limit}
-                      remaining={`${aiUsage.assistant_prompts_remaining.toLocaleString()} remaining`}
-                    />
-                    <UsageMeter
-                      label="Embedding tokens"
-                      detail="Estimated · per account"
-                      used={aiUsage.embedding_tokens_used}
-                      limit={aiUsage.embedding_tokens_limit}
-                      remaining={`${aiUsage.embedding_tokens_remaining.toLocaleString()} remaining`}
-                    />
-                  </div>
-                ) : (
-                  <p className="ai-usage-unavailable">Daily AI allowance is unavailable.</p>
-                )}
-                <div className="processing-summary" aria-live="polite">
-                  <strong>Document processing</strong>
-                  <span>{processingStatusCounts.processing} processing</span>
-                  <span>{processingStatusCounts.failed} failed</span>
-                  <span>{processingStatusCounts.quotaExceeded} at AI allowance limit</span>
-                  <span>{processingStatusCounts.needsApiKey} waiting for API key</span>
-                </div>
-                <p className="ai-usage-note">
-                  The embedding allowance counts estimated tokens for uploads, open-access imports, and reprocessing.
-                </p>
               </section>
 
               <div className="tab-bar" role="tablist" aria-label="Project sections">
@@ -1503,6 +1498,333 @@ function App() {
       </main>
     </div>
   );
+}
+
+type AccountSettingsDialogProps = {
+  user: User;
+  aiUsage: AIUsageResponse | null;
+  processingStatusCounts: {
+    processing: number;
+    failed: number;
+    quotaExceeded: number;
+    needsApiKey: number;
+  };
+  request: <T,>(path: string, options?: RequestInit) => Promise<T>;
+  onUserUpdated: (user: User) => void;
+  onClose: () => void;
+};
+
+function AccountSettingsDialog({
+  user,
+  aiUsage,
+  processingStatusCounts,
+  request,
+  onUserUpdated,
+  onClose,
+}: AccountSettingsDialogProps) {
+  const [name, setName] = useState(user.name);
+  const [username, setUsername] = useState(user.username ?? "");
+  const [profilePicture, setProfilePicture] = useState(user.profile_picture);
+  const [settingsPage, setSettingsPage] = useState<"profile" | "ai-usage">("profile");
+  const [showPasswordEditor, setShowPasswordEditor] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function saveProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await request<User>("/api/auth/profile", {
+        method: "PATCH",
+        body: jsonBody({ name, username, profile_picture: profilePicture }),
+      });
+      onUserUpdated(updated);
+      setName(updated.name);
+      setUsername(updated.username ?? "");
+      setProfilePicture(updated.profile_picture);
+      setNotice("Profile settings saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save your profile.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateProfilePicture(file: File | undefined) {
+    if (!file) return;
+    setError("");
+    try {
+      setProfilePicture(await createProfilePicture(file));
+      setNotice("Profile picture ready. Save profile settings to apply it.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load this image.");
+    }
+  }
+
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const form = new FormData(formElement);
+    try {
+      await request<{ message: string }>("/api/auth/password", {
+        method: "POST",
+        body: jsonBody({
+          current_password: form.get("current_password"),
+          new_password: form.get("new_password"),
+        }),
+      });
+      formElement.reset();
+      setShowPasswordEditor(false);
+      setNotice("Password changed successfully.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change your password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="modal-card settings-modal" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">YOUR ACCOUNT</p>
+            <h2 id="account-settings-title">Profile & settings</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close settings">
+            <X size={18} />
+          </button>
+        </div>
+        {error && <Notice kind="error" text={error} />}
+        {notice && <Notice kind="success" text={notice} />}
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Settings pages">
+            <button
+              className={settingsPage === "profile" ? "active" : ""}
+              type="button"
+              aria-current={settingsPage === "profile" ? "page" : undefined}
+              onClick={() => setSettingsPage("profile")}
+            >
+              Profile
+            </button>
+            <button
+              className={settingsPage === "ai-usage" ? "active" : ""}
+              type="button"
+              aria-current={settingsPage === "ai-usage" ? "page" : undefined}
+              onClick={() => setSettingsPage("ai-usage")}
+            >
+              AI usage
+            </button>
+          </nav>
+          <div className="settings-page">
+        {settingsPage === "profile" ? (
+          <>
+        <form className="stack-form settings-profile-form" onSubmit={(event) => void saveProfile(event)}>
+          <div className="settings-section-heading">
+            <h3>Profile</h3>
+            <p>Update how you appear in Fieldnotes.</p>
+          </div>
+          <div className="profile-picture-control">
+            <span className="avatar profile-picture-preview">
+              {profilePicture
+                ? <img src={profilePicture} alt="Profile preview" />
+                : name.slice(0, 1).toUpperCase()}
+            </span>
+            <div>
+              <label className="button secondary small-button profile-picture-upload">
+                Choose picture
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(event) => {
+                    void updateProfilePicture(event.currentTarget.files?.[0]);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              {profilePicture && (
+                <button
+                  className="text-button profile-picture-remove"
+                  type="button"
+                  onClick={() => setProfilePicture(null)}
+                >
+                  Remove picture
+                </button>
+              )}
+              <small>JPEG, PNG, or WebP. Images are cropped and resized before upload.</small>
+            </div>
+          </div>
+          <label>
+            Email
+            <input value={user.email} readOnly />
+            <span className="field-note">Your sign-in email cannot be changed here.</span>
+          </label>
+          <label>
+            Username
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+              minLength={3}
+              maxLength={32}
+              pattern="([A-Za-z0-9._]|-)+"
+              autoComplete="username"
+            />
+          </label>
+          <label>
+            Display name
+            <input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} />
+          </label>
+          <button className="button primary" disabled={busy}>
+            {busy ? "Saving…" : "Save profile"}
+          </button>
+        </form>
+
+        <section className="settings-password">
+          <div className="settings-section-heading">
+            <h3>Password</h3>
+            <p>Passwords are securely hashed and cannot be viewed. You can change yours below.</p>
+          </div>
+          {!showPasswordEditor ? (
+            <button
+              className="button secondary small-button"
+              type="button"
+              onClick={() => {
+                setError("");
+                setNotice("");
+                setShowPasswordEditor(true);
+              }}
+            >
+              Change password
+            </button>
+          ) : (
+            <form className="stack-form" onSubmit={(event) => void changePassword(event)}>
+              <label>
+                Current password
+                <span className="password-input-wrap">
+                  <input name="current_password" type={showCurrentPassword ? "text" : "password"} required autoComplete="current-password" />
+                  <button
+                    className="password-toggle"
+                    type="button"
+                    aria-label={showCurrentPassword ? "Hide current password" : "Show current password"}
+                    onClick={() => setShowCurrentPassword((visible) => !visible)}
+                  >
+                    {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
+              </label>
+              <label>
+                New password <span className="field-note">12+ characters; avoid common passwords</span>
+                <span className="password-input-wrap">
+                  <input name="new_password" type={showNewPassword ? "text" : "password"} required minLength={12} maxLength={128} autoComplete="new-password" />
+                  <button
+                    className="password-toggle"
+                    type="button"
+                    aria-label={showNewPassword ? "Hide new password" : "Show new password"}
+                    onClick={() => setShowNewPassword((visible) => !visible)}
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
+              </label>
+              <div className="settings-actions">
+                <button className="button primary small-button" disabled={busy}>{busy ? "Updating…" : "Update password"}</button>
+                <button className="button secondary small-button" type="button" onClick={() => setShowPasswordEditor(false)}>Cancel</button>
+              </div>
+            </form>
+          )}
+        </section>
+          </>
+        ) : (
+        <section className="settings-usage">
+          <div className="settings-section-heading">
+            <h3>AI usage</h3>
+            <p>Daily allowances reset at 00:00 UTC.</p>
+          </div>
+          <div className="ai-usage-panel settings-usage-panel" aria-label="Daily AI allowance and processing status">
+            {aiUsage ? (
+              <div className="ai-usage-metrics">
+                <UsageMeter
+                  label="Assistant prompts"
+                  detail="Shared by IP address"
+                  used={aiUsage.assistant_prompts_used}
+                  limit={aiUsage.assistant_prompts_limit}
+                  remaining={`${aiUsage.assistant_prompts_remaining.toLocaleString()} remaining`}
+                />
+                <UsageMeter
+                  label="Embedding tokens"
+                  detail="Estimated · per account"
+                  used={aiUsage.embedding_tokens_used}
+                  limit={aiUsage.embedding_tokens_limit}
+                  remaining={`${aiUsage.embedding_tokens_remaining.toLocaleString()} remaining`}
+                />
+              </div>
+            ) : (
+              <p className="ai-usage-unavailable">Daily AI allowance is unavailable.</p>
+            )}
+            <div className="processing-summary" aria-live="polite">
+              <strong>Document processing</strong>
+              <span>{processingStatusCounts.processing} processing</span>
+              <span>{processingStatusCounts.failed} failed</span>
+              <span>{processingStatusCounts.quotaExceeded} at AI allowance limit</span>
+              <span>{processingStatusCounts.needsApiKey} waiting for API key</span>
+            </div>
+            <p className="ai-usage-note">
+              Embedding usage includes uploads, open-access imports, and reprocessing.
+            </p>
+          </div>
+        </section>
+        )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+async function createProfilePicture(file: File): Promise<string> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a JPEG, PNG, or WebP image.");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("Choose an image smaller than 10 MB.");
+  }
+  const image = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    image.close();
+    throw new Error("Your browser could not process this image.");
+  }
+  const scale = Math.max(256 / image.width, 256 / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  context.drawImage(image, (256 - width) / 2, (256 - height) / 2, width, height);
+  image.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+  if (!blob || blob.size > 512 * 1024) {
+    throw new Error("Could not resize the image to the supported size.");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string"
+      ? resolve(reader.result)
+      : reject(new Error("Could not read the resized image."));
+    reader.onerror = () => reject(new Error("Could not read the resized image."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function UsageMeter({

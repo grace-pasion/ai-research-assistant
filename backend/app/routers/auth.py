@@ -1,17 +1,25 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.schemas import (
+    ChangePasswordRequest,
+    LoginRequest,
+    ProfileUpdate,
+    RegisterRequest,
+    TokenResponse,
+    UserResponse,
+)
 from app.security import (
     create_access_token,
     get_current_user,
     hash_password,
+    verify_password,
     verify_password_or_dummy,
 )
 from app.services.audit import record_activity
@@ -80,3 +88,51 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.patch("/profile", response_model=UserResponse)
+def update_profile(
+    payload: ProfileUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Choose at least one profile setting to update.")
+    if "username" in updates:
+        if updates["username"] is None:
+            raise HTTPException(status_code=422, detail="Username cannot be blank.")
+        existing = db.scalar(
+            select(User.user_id).where(
+                func.lower(User.username) == updates["username"],
+                User.user_id != user.user_id,
+            )
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="That username is already in use.")
+    for field, value in updates.items():
+        setattr(user, field, value)
+    record_activity(db, user.user_id, "account.profile_updated")
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="That username is already in use.") from None
+    db.refresh(user)
+    return user
+
+
+@router.post("/password")
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Choose a new password different from your current one.")
+    user.password_hash = hash_password(payload.new_password)
+    record_activity(db, user.user_id, "account.password_changed")
+    db.commit()
+    return {"message": "Password changed."}

@@ -48,6 +48,13 @@ def ensure_user_username_column(engine) -> None:
         )
 
 
+def ensure_user_profile_picture_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    if "profile_picture" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE users ADD COLUMN profile_picture TEXT"))
+
+
 def ensure_project_paper_screening_columns(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("project_papers")}
     with engine.begin() as connection:
