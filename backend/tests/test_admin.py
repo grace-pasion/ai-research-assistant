@@ -4,9 +4,11 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from app.config import Settings
 from app.models import (
+    AuthRateLimit,
     Conversation,
     Document,
     ProjectPaper,
@@ -17,6 +19,7 @@ from app.models import (
 from app.routers import admin
 from app.schemas import AdminLoginRequest
 from app.security import get_current_admin, hash_password
+from app.services import rate_limit
 
 
 @pytest.fixture
@@ -30,6 +33,7 @@ def admin_db():
         cursor.close()
 
     for table in (
+        AuthRateLimit.__table__,
         User.__table__,
         ResearchProject.__table__,
         Document.__table__,
@@ -51,6 +55,21 @@ def create_user(db: Session, email: str, password: str = "safe password") -> Use
     return user
 
 
+def make_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/api/admin/auth/login",
+            "headers": [],
+            "client": ("203.0.113.15", 12345),
+            "server": ("testserver", 443),
+        }
+    )
+
+
 def test_admin_access_uses_case_insensitive_email_allowlist(monkeypatch):
     settings = Settings(admin_emails="Admin@Example.com, second@example.com")
     monkeypatch.setattr("app.security.get_settings", lambda: settings)
@@ -65,6 +84,7 @@ def test_admin_access_uses_case_insensitive_email_allowlist(monkeypatch):
 
 def test_admin_login_rejects_non_allowlisted_account(admin_db: Session, monkeypatch):
     user = create_user(admin_db, "user@example.com")
+    monkeypatch.setattr(admin, "consume_auth_attempt", lambda *args: None)
     monkeypatch.setattr(
         admin,
         "get_settings",
@@ -74,6 +94,7 @@ def test_admin_login_rejects_non_allowlisted_account(admin_db: Session, monkeypa
     with pytest.raises(HTTPException) as error:
         admin.admin_login(
             AdminLoginRequest(email=user.email, password="safe password"),
+            make_request(),
             admin_db,
         )
 
@@ -82,6 +103,8 @@ def test_admin_login_rejects_non_allowlisted_account(admin_db: Session, monkeypa
 
 def test_admin_login_records_metadata_without_credentials(admin_db: Session, monkeypatch):
     user = create_user(admin_db, "admin@example.com")
+    monkeypatch.setattr(admin, "consume_auth_attempt", lambda *args: None)
+    monkeypatch.setattr(admin, "clear_auth_attempts", lambda *args: None)
     monkeypatch.setattr(
         admin,
         "get_settings",
@@ -91,6 +114,7 @@ def test_admin_login_records_metadata_without_credentials(admin_db: Session, mon
 
     result = admin.admin_login(
         AdminLoginRequest(email=user.email, password="safe password"),
+        make_request(),
         admin_db,
     )
 
@@ -99,6 +123,39 @@ def test_admin_login_records_metadata_without_credentials(admin_db: Session, mon
     assert activity is not None
     assert activity.action == "admin.login"
     assert activity.details == {}
+
+
+def test_admin_login_enforces_rate_limit(admin_db: Session, monkeypatch):
+    user = create_user(admin_db, "admin@example.com")
+    monkeypatch.setattr(
+        admin,
+        "get_settings",
+        lambda: Settings(admin_emails="admin@example.com"),
+    )
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: Settings(jwt_secret="test-secret"),
+    )
+    request = make_request()
+
+    for _ in range(5):
+        with pytest.raises(HTTPException) as error:
+            admin.admin_login(
+                AdminLoginRequest(email=user.email, password="wrong password"),
+                request,
+                admin_db,
+            )
+        assert error.value.status_code == 401
+
+    with pytest.raises(HTTPException) as error:
+        admin.admin_login(
+            AdminLoginRequest(email=user.email, password="wrong password"),
+            request,
+            admin_db,
+        )
+
+    assert error.value.status_code == 429
 
 
 def test_admin_user_listing_returns_counts_and_activity_without_content(

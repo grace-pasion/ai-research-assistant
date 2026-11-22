@@ -54,6 +54,18 @@ class UserActivity(ResearchBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AuthRateLimit(ResearchBase):
+    __tablename__ = "auth_rate_limits"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
 class DailyPromptUsage(ResearchBase):
     __tablename__ = "daily_prompt_usage"
 

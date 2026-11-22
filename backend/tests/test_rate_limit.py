@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import uuid
 from unittest.mock import Mock
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from app.config import Settings
-from app.models import DailyPromptUsage
+from app.models import AuthRateLimit, DailyPromptUsage
 from app.routers import assistant as assistant_router
 from app.schemas import AskRequest
 from app.services import rate_limit
@@ -34,6 +34,7 @@ def make_request(client_ip: str) -> Request:
 @pytest.fixture
 def prompt_usage_db():
     engine = create_engine("sqlite://")
+    AuthRateLimit.__table__.create(engine)
     DailyPromptUsage.__table__.create(engine)
     with Session(engine) as db:
         yield db
@@ -62,6 +63,99 @@ def test_daily_limit_allows_twenty_prompts_then_returns_429(
     usage = prompt_usage_db.scalar(select(DailyPromptUsage))
     assert usage is not None
     assert usage.prompt_count == 20
+
+
+def test_auth_rate_limit_blocks_sixth_attempt_and_stores_only_hashed_keys(
+    prompt_usage_db: Session, monkeypatch
+):
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: Settings(jwt_secret="test-secret"),
+    )
+    request = make_request("203.0.113.15")
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+
+    for _ in range(5):
+        rate_limit.consume_auth_attempt(
+            prompt_usage_db,
+            request,
+            "researcher@example.com",
+            now,
+        )
+
+    with pytest.raises(HTTPException) as error:
+        rate_limit.consume_auth_attempt(
+            prompt_usage_db,
+            request,
+            "researcher@example.com",
+            now,
+        )
+
+    assert error.value.status_code == 429
+    assert error.value.headers["Retry-After"] == str(rate_limit.AUTH_WINDOW_SECONDS)
+    rows = prompt_usage_db.scalars(select(AuthRateLimit)).all()
+    assert len(rows) == 2
+    assert all(len(row.key_hash) == 64 for row in rows)
+    assert all("researcher@example.com" not in row.key_hash for row in rows)
+
+
+def test_auth_rate_limit_resets_after_successful_login(
+    prompt_usage_db: Session, monkeypatch
+):
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: Settings(jwt_secret="test-secret"),
+    )
+    request = make_request("203.0.113.15")
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    rate_limit.consume_auth_attempt(
+        prompt_usage_db,
+        request,
+        "researcher@example.com",
+        now,
+    )
+
+    rate_limit.clear_auth_attempts(prompt_usage_db, request, "researcher@example.com")
+    prompt_usage_db.commit()
+    rate_limit.consume_auth_attempt(
+        prompt_usage_db,
+        request,
+        "researcher@example.com",
+        now,
+    )
+
+    rows = prompt_usage_db.scalars(select(AuthRateLimit)).all()
+    assert len(rows) == 2
+    assert all(row.attempt_count == 1 for row in rows)
+
+
+def test_auth_rate_limit_expires_old_buckets(prompt_usage_db: Session, monkeypatch):
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: Settings(jwt_secret="test-secret"),
+    )
+    request = make_request("203.0.113.15")
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    rate_limit.consume_auth_attempt(
+        prompt_usage_db,
+        request,
+        "researcher@example.com",
+        now,
+    )
+
+    rate_limit.consume_auth_attempt(
+        prompt_usage_db,
+        request,
+        "researcher@example.com",
+        now + timedelta(seconds=rate_limit.AUTH_WINDOW_SECONDS),
+    )
+
+    rows = prompt_usage_db.scalars(select(AuthRateLimit)).all()
+    assert len(rows) == 2
+    assert all(row.attempt_count == 1 for row in rows)
 
 
 def test_daily_prompt_limit_resets_at_utc_midnight_and_is_per_ip(

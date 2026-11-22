@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import User
 
 password_hash = PasswordHash.recommended()
+DUMMY_PASSWORD_HASH = password_hash.hash("fieldnotes-invalid-login-placeholder")
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -22,6 +23,13 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, hashed_password: str) -> bool:
     return password_hash.verify(password, hashed_password)
+
+
+def verify_password_or_dummy(password: str, hashed_password: str | None) -> bool:
+    if hashed_password is None:
+        password_hash.verify(password, DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(password, hashed_password)
 
 
 def create_access_token(user_id: UUID) -> str:

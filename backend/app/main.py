@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import initialize_database, make_engine
 from app.models import LiteratureBase, ResearchBase
 from app.routers import admin, assistant, auth, documents, papers, projects
+from app.security_headers import security_headers_middleware
 
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.middleware("http")(security_headers_middleware)
 
 app.include_router(auth.router)
 app.include_router(admin.router)

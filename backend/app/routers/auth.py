@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -6,8 +6,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from app.security import create_access_token, get_current_user, hash_password, verify_password
+from app.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password_or_dummy,
+)
 from app.services.audit import record_activity
+from app.services.rate_limit import clear_auth_attempts, consume_auth_attempt
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
@@ -31,14 +37,17 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == str(payload.email).lower()))
-    if user is None or not verify_password(payload.password, user.password_hash):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    email = str(payload.email).lower()
+    consume_auth_attempt(db, request, email)
+    user = db.scalar(select(User).where(User.email == email))
+    if not verify_password_or_dummy(payload.password, user.password_hash if user else None):
         raise HTTPException(
             status_code=401,
             detail="Email or password is incorrect.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    clear_auth_attempts(db, request, email)
     record_activity(db, user.user_id, "account.login")
     db.commit()
     return TokenResponse(access_token=create_access_token(user.user_id), user=user)

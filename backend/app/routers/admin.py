@@ -1,7 +1,7 @@
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -27,28 +27,35 @@ from app.schemas import (
 from app.security import (
     create_access_token,
     get_current_admin,
-    verify_password,
+    verify_password_or_dummy,
 )
 from app.services.audit import record_activity
+from app.services.rate_limit import clear_auth_attempts, consume_auth_attempt
 from app.services.storage import delete_document as delete_stored_document
 
 router = APIRouter(prefix="/api/admin", tags=["administrator"])
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-def admin_login(payload: AdminLoginRequest, db: Session = Depends(get_db)):
+def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)):
     email = str(payload.email).lower()
+    consume_auth_attempt(db, request, email)
     user = db.scalar(select(User).where(User.email == email))
+    password_valid = verify_password_or_dummy(
+        payload.password,
+        user.password_hash if user else None,
+    )
     if (
-        email.casefold() not in get_settings().admin_email_list
-        or user is None
-        or not verify_password(payload.password, user.password_hash)
+        user is None
+        or email.casefold() not in get_settings().admin_email_list
+        or not password_valid
     ):
         raise HTTPException(
             status_code=401,
             detail="Email or password is incorrect.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    clear_auth_attempts(db, request, email)
     record_activity(db, user.user_id, "admin.login")
     db.commit()
     return TokenResponse(access_token=create_access_token(user.user_id), user=user)
