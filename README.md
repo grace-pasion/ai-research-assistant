@@ -44,6 +44,8 @@ The database and uploaded files persist in Docker volumes. To stop the app, pres
 
 GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. The included workflow builds and publishes the frontend on pushes to `main` and on manual runs. For a no-cost demo, the API can run on Render Free, with Supabase Free PostgreSQL and a private Storage bucket. This is not a production hosting setup: both providers impose limits, and Render's free service sleeps when idle.
 
+If `VITE_API_URL` is not set, the workflow still tests and builds the frontend, but warns and skips deployment. Set the variable and run the workflow again to publish.
+
 ### 1. Create Supabase database and private file bucket
 
 1. Create a Supabase project on its Free plan. Keep the database password private.

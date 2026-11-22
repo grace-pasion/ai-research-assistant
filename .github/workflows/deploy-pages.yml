@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VITE_API_URL: ${{ vars.VITE_API_URL }}
+    outputs:
+      deploy: ${{ steps.backend.outputs.deploy }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -31,14 +33,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Require a deployed backend URL
+      - name: Check backend configuration
+        id: backend
         run: |
           if [ -z "$VITE_API_URL" ]; then
-            echo "::error::Set the VITE_API_URL Actions variable to your deployed HTTPS API URL."
-            exit 1
+            echo "::warning::Set the VITE_API_URL Actions variable to your deployed HTTPS API URL to enable deployment."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Configure GitHub Pages
+        if: steps.backend.outputs.deploy == 'true'
         uses: actions/configure-pages@v5
 
       - name: Install frontend dependencies
@@ -47,6 +53,8 @@ jobs:
 
       - name: Test frontend
         working-directory: frontend
+        env:
+          VITE_API_URL: http://localhost:8000
         run: npm test
 
       - name: Build frontend
@@ -56,11 +64,13 @@ jobs:
         run: npm run build -- --base="/${REPOSITORY_NAME}/"
 
       - name: Upload Pages artifact
+        if: steps.backend.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
 
   deploy:
+    if: needs.build.outputs.deploy == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
