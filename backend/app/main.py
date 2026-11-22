@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
 from app.database import initialize_database, make_engine
 from app.models import LiteratureBase, ResearchBase
-from app.routers import assistant, auth, documents, papers, projects
+from app.routers import admin, assistant, auth, documents, papers, projects
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(projects.router)
 app.include_router(documents.router)
 app.include_router(papers.router)

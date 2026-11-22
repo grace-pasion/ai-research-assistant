@@ -1,6 +1,8 @@
 # Fieldnotes — AI Research Assistant
 
-Fieldnotes is a local-first research workspace for organizing research projects and files, searching scholarly papers, and asking questions grounded in your sources. The web client is React + TypeScript; the API is FastAPI; PostgreSQL stores user research and shared literature in separate databases, with pgvector for document embeddings.
+Fieldnotes is a local-first research workspace for organizing research projects and files, searching scholarly papers, and asking questions grounded in your sources. The web client is React + TypeScript; the API is FastAPI; PostgreSQL stores research and literature data, with pgvector for document embeddings. Local development uses separate research and literature databases; hosted deployments may use one database or separate URLs.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, integrations, API surface, data flows, and complete user feature inventory.
 
 ## What is implemented
 
@@ -12,6 +14,7 @@ Fieldnotes is a local-first research workspace for organizing research projects 
 - OpenAlex and Crossref literature search, cached paper and author metadata, query history, and saving/removing papers from projects.
 - Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts.
 - Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
+- Separate administrator sign-in with an allowlisted account, user/account summaries, metadata-only activity history, and permanent account deletion.
 - A mandatory human approval step: generated answers and conversation messages are not saved until **Approve & save** is clicked. Draft approval tokens are signed, user/project-bound, expire after 15 minutes, and are idempotent.
 - Docker Compose setup, API health endpoint, interactive API docs, and focused backend tests.
 
@@ -45,7 +48,7 @@ The database and uploaded files persist in Docker volumes. To stop the app, pres
 
 GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. The included workflow builds and publishes the frontend on pushes to `main` and on manual runs. For a no-cost demo, the API can run on Render Free, with Supabase Free PostgreSQL and a private Storage bucket. This is not a production hosting setup: both providers impose limits, and Render's free service sleeps when idle.
 
-If `VITE_API_URL` is not set, the workflow still tests and builds the frontend, but warns and skips deployment. Set the variable and run the workflow again to publish.
+The workflow uses the repository Actions variable `VITE_API_URL` when set; otherwise, it falls back to the configured Fieldnotes Render API URL. It tests and builds the frontend before publishing. Set the variable to override the fallback when using a different API host.
 
 ### 1. Create Supabase database and private file bucket
 
@@ -65,11 +68,19 @@ The same Supabase database stores the application's research and literature tabl
 
 ### 3. Connect GitHub Pages to the API
 
-1. In the GitHub repository, open **Settings → Secrets and variables → Actions → Variables**, then create the repository variable `VITE_API_URL` with the Render service's public HTTPS base URL, such as `https://fieldnotes-api.onrender.com`. Do not add `/api` or a trailing slash. This URL is public configuration; never put API keys or database credentials here.
+1. Optionally, in the GitHub repository, open **Settings → Secrets and variables → Actions → Variables**, then create the repository variable `VITE_API_URL` with the Render service's public HTTPS base URL, such as `https://fieldnotes-api.onrender.com`. Do not add `/api` or a trailing slash. The workflow falls back to the current Fieldnotes Render URL when the variable is absent. This URL is public configuration; never put API keys or database credentials here.
 2. Open **Settings → Pages** and choose **GitHub Actions** as the build and deployment source.
 3. Push the changes to `main` (or run **Deploy frontend to GitHub Pages** from **Actions**). Check the workflow result and visit <https://grace-pasion.github.io/ai-research-assistant/>.
 
 Render Free services sleep after 15 minutes without traffic and can take time to wake up. Supabase Free projects may pause after a period of inactivity and have storage/database quotas. Free plans do not provide production uptime guarantees or a reliable backup plan; do not store the only copy of important research there. Check each provider's current limits before deploying.
+
+## Administrator console
+
+1. Create a normal Fieldnotes account for yourself if you do not already have one.
+2. In Render, add `ADMIN_EMAILS` as a backend environment variable with the exact email address for that account. Multiple administrator emails can be comma-separated. Keep this setting on the backend; do not add it to GitHub Pages variables. Redeploy the API after changing the allowlist.
+3. Open <https://grace-pasion.github.io/ai-research-assistant/?portal=admin> and sign in with that account's existing email and password. This is a separate admin portal, but it does not create a second password or public admin-registration flow. For local development, use `http://localhost:5173/?portal=admin` and set `ADMIN_EMAILS` in `.env`.
+4. The dashboard lists account email, joined date, project/document/saved-paper/conversation counts, last recorded activity, and a paginated activity feed. Activity records contain action types and limited operational metadata only: document contents and names, search terms, assistant prompts, and answers are not recorded or displayed. Tracking starts after this version is deployed; previous actions are not backfilled.
+5. **Delete** permanently removes the selected account, its projects and research data, activity history, and stored document files. The current administrator cannot delete their own account. If the API cannot remove the user's stored files, it returns an error and does not delete the account.
 
 ## Human review and data writes
 

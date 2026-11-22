@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models import ResearchProject, User
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.security import get_current_user, require_project_owner
+from app.services.audit import record_activity
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -39,6 +40,7 @@ def create_project(
         description=payload.description.strip(),
     )
     db.add(project)
+    record_activity(db, user.user_id, "project.created")
     db.commit()
     db.refresh(project)
     return project
@@ -54,6 +56,7 @@ def update_project(
     project = require_project_owner(db, project_id, user.user_id)
     project.project_name = payload.project_name.strip()
     project.description = payload.description.strip()
+    record_activity(db, user.user_id, "project.updated")
     db.commit()
     db.refresh(project)
     return project
@@ -78,6 +81,12 @@ def delete_project(
     document_paths = db.scalars(
         select(Document.storage_path).where(Document.project_id == project_id)
     ).all()
+    record_activity(
+        db,
+        user.user_id,
+        "project.deleted",
+        {"document_count": len(document_paths)},
+    )
     db.delete(project)
     db.commit()
     try:

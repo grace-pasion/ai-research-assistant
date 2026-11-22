@@ -62,6 +62,12 @@ def get_current_user(
     return user
 
 
+def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    if user.email.casefold() not in get_settings().admin_email_list:
+        raise HTTPException(status_code=403, detail="Administrator access required.")
+    return user
+
+
 def require_project_owner(db: Session, project_id: UUID, user_id: UUID):
     from app.models import ResearchProject
 

@@ -1,4 +1,5 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const ADMIN_TOKEN_KEY = "fieldnotes_admin_token";
 
 export function getToken(): string | null {
   return localStorage.getItem("research_assistant_token");
@@ -7,6 +8,15 @@ export function getToken(): string | null {
 export function setToken(token: string | null): void {
   if (token) localStorage.setItem("research_assistant_token", token);
   else localStorage.removeItem("research_assistant_token");
+}
+
+export function getAdminToken(): string | null {
+  return localStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+export function setAdminToken(token: string | null): void {
+  if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  else localStorage.removeItem(ADMIN_TOKEN_KEY);
 }
 
 export async function api<T>(

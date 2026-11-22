@@ -35,6 +35,46 @@ class UserResponse(APIModel):
     name: str
 
 
+class AdminLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AdminUserSummary(BaseModel):
+    user_id: uuid.UUID
+    email: EmailStr
+    name: str
+    created_at: datetime
+    project_count: int
+    document_count: int
+    saved_paper_count: int
+    conversation_count: int
+    last_activity_at: datetime | None
+
+
+class AdminUserPage(BaseModel):
+    users: list[AdminUserSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminActivityItem(BaseModel):
+    activity_id: uuid.UUID
+    user_id: uuid.UUID
+    email: EmailStr
+    action: str
+    details: dict
+    created_at: datetime
+
+
+class AdminActivityPage(BaseModel):
+    events: list[AdminActivityItem]
+    total: int
+    limit: int
+    offset: int
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
+    admin_emails: str = ""
     openalex_email: str | None = None
     max_upload_mb: int = Field(default=25, ge=1, le=100)
     storage_dir: str = "./uploads"
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def admin_email_list(self) -> set[str]:
+        return {email.strip().casefold() for email in self.admin_emails.split(",") if email.strip()}
 
     @property
     def effective_literature_database_url(self) -> str:

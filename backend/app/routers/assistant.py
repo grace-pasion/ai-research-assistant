@@ -31,6 +31,7 @@ from app.schemas import (
 )
 from app.security import get_current_user, require_project_owner
 from app.services.assistant import draft_answer
+from app.services.audit import record_activity
 from app.services.rate_limit import consume_daily_prompt
 
 router = APIRouter(prefix="/api/projects/{project_id}/assistant", tags=["research assistant"])
@@ -197,6 +198,8 @@ def create_draft(
     if payload.conversation_id is not None:
         _conversation_for_user(db, payload.conversation_id, user.user_id, project_id)
     consume_daily_prompt(db, request)
+    record_activity(db, user.user_id, "assistant.draft_requested", {"mode": payload.mode})
+    db.commit()
     answer, sources = draft_answer(
         db,
         literature_db,
@@ -336,6 +339,12 @@ def approve_draft(
                     source_order=source_order,
                 )
             )
+    record_activity(
+        db,
+        user.user_id,
+        "assistant.draft_approved",
+        {"mode": draft["mode"], "source_count": len(source_pairs)},
+    )
     conversation.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(conversation)

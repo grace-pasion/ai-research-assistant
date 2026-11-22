@@ -477,6 +477,9 @@ function App() {
           >
             {authMode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
           </button>
+          <a className="text-button centered" href={`${window.location.pathname}?portal=admin`}>
+            Administrator sign in
+          </a>
           <p className="tiny-note">Your research workspace is private to your account.</p>
         </section>
       </main>

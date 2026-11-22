@@ -19,6 +19,7 @@ from app.models import (
 from app.schemas import PaperResponse, PaperSearchResponse
 from app.security import get_current_user, require_project_owner
 from app.services.academic_search import search_papers
+from app.services.audit import record_activity
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["academic papers"])
 
@@ -148,6 +149,12 @@ async def search(
 
     query = SearchQuery(project_id=project_id, query_text=q.strip(), api_provider=provider)
     db.add(query)
+    record_activity(
+        db,
+        user.user_id,
+        "paper.searched",
+        {"provider": provider, "result_count": len(results)},
+    )
     literature_db.begin()
     try:
         papers = [_upsert_paper(literature_db, result) for result in results]
@@ -191,6 +198,7 @@ def save_paper(
                 relationship_type="saved",
             )
         )
+        record_activity(db, user.user_id, "paper.saved")
         db.commit()
 
 
@@ -205,5 +213,6 @@ def unsave_paper(
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is not None:
         db.delete(relation)
+        record_activity(db, user.user_id, "paper.removed")
         db.commit()
 

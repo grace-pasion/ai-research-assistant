@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models import Document, ResearchProject, User
 from app.schemas import DocumentResponse, DocumentSearchResult
 from app.security import get_current_user, require_project_owner
+from app.services.audit import record_activity
 from app.services.documents import SUPPORTED_EXTENSIONS
 from app.services.processing import reprocess_document
 from app.services.storage import (
@@ -59,6 +60,8 @@ def search_documents(
         start = max(0, position - 180)
         excerpt = full_text[start : position + len(query) + 220].strip()
         results.append({"document": document, "excerpt": excerpt})
+    record_activity(db, user.user_id, "document.searched", {"result_count": len(results)})
+    db.commit()
     return results
 
 
@@ -94,6 +97,8 @@ def download_document(
         path = Path(document.storage_path)
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Stored document file is missing.")
+        record_activity(db, user.user_id, "document.downloaded")
+        db.commit()
         return FileResponse(path, filename=document.filename, media_type="application/octet-stream")
     try:
         contents = read_document(document.storage_path)
@@ -101,6 +106,8 @@ def download_document(
         raise HTTPException(
             status_code=502, detail="Cloud document storage is unavailable; retry the download."
         ) from exc
+    record_activity(db, user.user_id, "document.downloaded")
+    db.commit()
     return Response(
         content=contents,
         media_type="application/octet-stream",
@@ -160,6 +167,12 @@ async def upload_document(
         processing_status="processing",
     )
     db.add(document)
+    record_activity(
+        db,
+        user.user_id,
+        "document.uploaded",
+        {"file_type": extension.lstrip("."), "size_bytes": len(data)},
+    )
     try:
         db.commit()
     except Exception:
@@ -208,6 +221,7 @@ def reprocess(
         raise HTTPException(status_code=404, detail="Document not found.")
     document.processing_status = "processing"
     document.processing_error = None
+    record_activity(db, user.user_id, "document.reprocessed", {"file_type": document.file_type})
     db.commit()
     background_tasks.add_task(_process_saved_document, document_id)
     return document
@@ -225,6 +239,7 @@ def delete_document(
     project = db.get(ResearchProject, document.project_id)
     if project is None or project.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Document not found.")
+    record_activity(db, user.user_id, "document.deleted", {"file_type": document.file_type})
     db.delete(document)
     db.commit()
     try:

@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models import User
 from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 from app.security import create_access_token, get_current_user, hash_password, verify_password
+from app.services.audit import record_activity
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
@@ -19,6 +20,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     user = User(email=email, name=payload.name.strip(), password_hash=hash_password(payload.password))
     db.add(user)
     try:
+        db.flush()
+        record_activity(db, user.user_id, "account.registered")
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -36,6 +39,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail="Email or password is incorrect.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    record_activity(db, user.user_id, "account.login")
+    db.commit()
     return TokenResponse(access_token=create_access_token(user.user_id), user=user)
 
 
