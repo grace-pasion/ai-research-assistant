@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, downloadFile, getToken, jsonBody, setToken } from "./api";
+import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { LatexWorkspace } from "./LatexWorkspace";
 import type {
   Annotation,
@@ -34,6 +34,7 @@ import type {
   Paper,
   Project,
   SearchResult,
+  Source,
   User,
 } from "./types";
 
@@ -48,6 +49,8 @@ function App() {
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
+  const [citationPage, setCitationPage] = useState<number | null>(null);
+  const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
   const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
@@ -137,6 +140,25 @@ function App() {
   const openedDocument = annotationDocumentId
     ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
     : null;
+
+  function openDocumentEvidence(
+    documentId: string,
+    pageNumber: number | null = null,
+    excerpt: string | null = null,
+  ) {
+    setAnnotationDocumentId(documentId);
+    setCitationPage(pageNumber);
+    setCitationExcerpt(excerpt);
+    setView("documents");
+  }
+
+  function openSource(source: Source) {
+    if (source.kind === "document" && source.document_id) {
+      openDocumentEvidence(source.document_id, source.page_number, source.excerpt);
+    } else if (source.paper_url) {
+      window.open(source.paper_url, "_blank", "noopener,noreferrer");
+    }
+  }
 
   useEffect(() => {
     if (!processing || !project) return;
@@ -369,8 +391,7 @@ function App() {
         { method: "POST" },
       );
       await loadProjectData(project);
-      setAnnotationDocumentId(document.document_id);
-      setView("documents");
+      openDocumentEvidence(document.document_id);
       if (document.processing_status === "needs_api_key") {
         setNotice("Full text was extracted. Add an OpenAI API key to make it available to AI queries.");
       } else if (document.processing_status === "ready") {
@@ -710,6 +731,18 @@ function App() {
                         </button>
                       </div>
                       {openedDocument.processing_error && <p className="inline-error">{openedDocument.processing_error}</p>}
+                      {citationExcerpt && (
+                        <aside className="citation-evidence">
+                          <strong>{citationPage ? `Cited passage · PDF page ${citationPage}` : "Cited passage"}</strong>
+                          <p>{citationExcerpt}</p>
+                        </aside>
+                      )}
+                      {openedDocument.file_type === "pdf" && (
+                        <DocumentPdfPreview
+                          documentId={openedDocument.document_id}
+                          pageNumber={citationPage}
+                        />
+                      )}
                       <AnnotationEditor
                         key={openedDocument.document_id}
                         annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
@@ -747,7 +780,7 @@ function App() {
                               <button
                                 className="document-open-link"
                                 type="button"
-                                onClick={() => setAnnotationDocumentId(match.document.document_id)}
+                                onClick={() => openDocumentEvidence(match.document.document_id)}
                               >
                                 {match.document.filename}
                               </button>
@@ -767,7 +800,7 @@ function App() {
                                 <button
                                   className="document-open-link"
                                   type="button"
-                                  onClick={() => setAnnotationDocumentId(document.document_id)}
+                                  onClick={() => openDocumentEvidence(document.document_id)}
                                 >
                                   {document.filename}
                                 </button>
@@ -891,7 +924,7 @@ function App() {
                       {conversation?.messages?.map((message) => (
                         <div className={`message ${message.role}`} key={message.message_id}>
                           <div className="message-label">{message.role === "assistant" ? "FIELDNOTES" : "YOU"}</div>
-                          <div className="message-content">{message.content}</div>
+                          <AnswerContent content={message.content} sources={message.sources} onSourceClick={openSource} />
                           {message.role === "assistant" && (
                             <>
                               {!!message.sources.length && (
@@ -900,7 +933,16 @@ function App() {
                                   {message.sources.map((source, index) => (
                                     <article className="source-card" key={`${source.kind}-${source.source_id}`}>
                                       <span className="source-index">S{index + 1}</span>
-                                      <div><strong>{source.title}</strong><p>{source.excerpt}</p></div>
+                                      <div>
+                                        <strong>{source.title}</strong>
+                                        {source.page_number && <span className="source-page">PDF · page {source.page_number}</span>}
+                                        <p>{source.excerpt}</p>
+                                        {source.kind === "document" && source.document_id && (
+                                          <button className="source-open-button" onClick={() => openSource(source)}>
+                                            {source.page_number ? `Open page ${source.page_number}` : "Open document"}
+                                          </button>
+                                        )}
+                                      </div>
                                       {source.kind === "paper" && source.paper_url && (
                                         <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
                                       )}
@@ -916,14 +958,23 @@ function App() {
                       {draft && (
                         <div className="draft-review">
                           <div className="review-topline"><span className="pending-dot" /> REVIEW REQUIRED <span>Not saved yet</span></div>
-                          <div className="message-content">{draft.answer}</div>
+                          <AnswerContent content={draft.answer} sources={draft.sources} onSourceClick={openSource} />
                           {!!draft.sources.length && (
                             <div className="source-list">
                               <span className="source-list-label">SOURCES TO REVIEW</span>
                               {draft.sources.map((source, index) => (
                                 <article className="source-card" key={`${source.kind}-${source.source_id}`}>
                                   <span className="source-index">S{index + 1}</span>
-                                  <div><strong>{source.title}</strong><p>{source.excerpt}</p></div>
+                                  <div>
+                                    <strong>{source.title}</strong>
+                                    {source.page_number && <span className="source-page">PDF · page {source.page_number}</span>}
+                                    <p>{source.excerpt}</p>
+                                    {source.kind === "document" && source.document_id && (
+                                      <button className="source-open-button" onClick={() => openSource(source)}>
+                                        {source.page_number ? `Open page ${source.page_number}` : "Open document"}
+                                      </button>
+                                    )}
+                                  </div>
                                   {source.kind === "paper" && source.paper_url && (
                                     <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
                                   )}
@@ -984,6 +1035,83 @@ function App() {
         </footer>
       </main>
     </div>
+  );
+}
+
+function AnswerContent({
+  content,
+  sources,
+  onSourceClick,
+}: {
+  content: string;
+  sources: Source[];
+  onSourceClick: (source: Source) => void;
+}) {
+  return (
+    <div className="message-content">
+      {content.split(/(\[S\d+\])/g).map((part, index) => {
+        const citation = /^\[S(\d+)\]$/.exec(part);
+        const source = citation ? sources[Number(citation[1]) - 1] : undefined;
+        return source ? (
+          <button
+            className="citation-ref"
+            key={`${part}-${index}`}
+            onClick={() => onSourceClick(source)}
+            type="button"
+            aria-label={`Open cited source ${citation?.[1]}`}
+          >
+            {part}
+          </button>
+        ) : (
+          <Fragment key={index}>{part}</Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function DocumentPdfPreview({
+  documentId,
+  pageNumber,
+}: {
+  documentId: string;
+  pageNumber: number | null;
+}) {
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    setPdfUrl(null);
+    setError("");
+    fetchPdfObjectUrl(`/api/documents/${documentId}/download`)
+      .then((url) => {
+        objectUrl = url;
+        if (active) setPdfUrl(url);
+        else URL.revokeObjectURL(url);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load the original PDF.");
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [documentId]);
+
+  return (
+    <details className="citation-pdf-preview" open={pageNumber !== null}>
+      <summary>{pageNumber ? `Original PDF · page ${pageNumber}` : "View original PDF"}</summary>
+      {error && <p className="inline-error">{error}</p>}
+      {!error && !pdfUrl && <p className="muted compact">Loading original PDF…</p>}
+      {pdfUrl && (
+        <iframe
+          title="Original research document"
+          src={`${pdfUrl}#page=${pageNumber ?? 1}`}
+        />
+      )}
+    </details>
   );
 }
 

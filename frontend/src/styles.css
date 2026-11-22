@@ -129,6 +129,12 @@ h1, h2, h3, p { margin-top: 0; }
 .document-reader-title { flex: 1; min-width: 180px; }
 .document-reader-title h2 { color: #2e3933; font: 650 17px var(--serif); margin: 0 0 5px; overflow-wrap: anywhere; }
 .document-reader-title p { color: #89938b; font-size: 10px; margin: 0; }
+.citation-evidence { background: #fffefa; border: 1px solid #e9e2cd; border-radius: 7px; margin-bottom: 12px; padding: 11px 13px; }
+.citation-evidence strong { color: #927b45; display: block; font-size: 10px; margin-bottom: 5px; }
+.citation-evidence p { color: #59645d; font-size: 11px; line-height: 1.65; margin: 0; white-space: pre-wrap; }
+.citation-pdf-preview { border: 1px solid #e7ece7; border-radius: 7px; margin: 0 0 16px; overflow: hidden; }
+.citation-pdf-preview summary { color: #547462; cursor: pointer; font-size: 10px; font-weight: 600; padding: 10px 12px; }
+.citation-pdf-preview iframe { border: 0; display: block; height: min(72vh, 760px); width: 100%; }
 .document-match .document-open-link { font-size: 10px; }
 .inline-error { color: #a7564c; font-size: 10px; line-height: 1.45; }
 .status-pill { align-items: center; border-radius: 20px; display: inline-flex; flex: 0 0 auto; font-size: 9px; gap: 5px; padding: 5px 9px; }
@@ -274,6 +280,10 @@ h1, h2, h3, p { margin-top: 0; }
 .source-index { background: #edf3ee; border-radius: 4px; color: #53735d; flex: 0 0 auto; font-size: 8px; font-weight: 700; padding: 4px; }
 .source-card strong { color: #566158; display: block; font-size: 9px; font-weight: 600; line-height: 1.5; }
 .source-card p { color: #8a918a; font-size: 9px; line-height: 1.5; margin: 3px 0 0; }
+.source-page { color: #8e7947; display: block; font-size: 8px; margin-top: 4px; }
+.source-open-button { background: transparent; border: 0; color: #547462; cursor: pointer; font-size: 9px; margin: 7px 0 0; padding: 0; }
+.source-open-button:hover, .citation-ref:hover { text-decoration: underline; }
+.citation-ref { background: #edf3ee; border: 0; border-radius: 3px; color: #3d7054; cursor: pointer; font: inherit; margin: 0 1px; padding: 0 3px; }
 .source-link { color: #74877a; margin-left: auto; }
 .review-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; }
 .composer { border-top: 1px solid #edf0ed; padding: 11px 14px 13px; }

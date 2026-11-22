@@ -87,6 +87,7 @@ def _conversation_detail(
                         title=document.filename,
                         excerpt=chunk.chunk_text[:1800],
                         document_id=document.document_id,
+                        page_number=chunk.page_number,
                     ),
                 )
                 for source_order, chunk, document in document_sources

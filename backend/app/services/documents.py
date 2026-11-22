@@ -6,20 +6,19 @@ import pymupdf
 from docx import Document as WordDocument
 from PIL import Image
 import pytesseract
-from PIL import Image
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
 CHUNK_WORDS = 450
 CHUNK_OVERLAP = 70
 
 
-def extract_text(path: Path, extension: str) -> str:
+def extract_document_pages(path: Path, extension: str) -> list[tuple[int | None, str]]:
     if extension == ".pdf":
         with pymupdf.open(path) as pdf:
             if len(pdf) > 100:
                 raise ValueError("PDFs are limited to 100 pages for local text extraction and OCR.")
             pages = []
-            for page in pdf:
+            for page_number, page in enumerate(pdf, start=1):
                 page_text = page.get_text("text").strip()
                 if not page_text:
                     if shutil.which("tesseract") is None:
@@ -30,11 +29,19 @@ def extract_text(path: Path, extension: str) -> str:
                     pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
                     image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
                     page_text = pytesseract.image_to_string(image).strip()
-                pages.append(page_text)
-        text = "\n".join(pages).strip()
-        if text:
-            return text
+                pages.append((page_number, page_text))
+        if any(text for _, text in pages):
+            return pages
         raise ValueError("No readable text was found, even after OCR.")
+    text = extract_text(path, extension)
+    return [(None, text)] if text else []
+
+
+def extract_text(path: Path, extension: str) -> str:
+    if extension == ".pdf":
+        return "\n".join(
+            text for _, text in extract_document_pages(path, extension)
+        ).strip()
     if extension == ".docx":
         document = WordDocument(path)
         paragraphs = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]

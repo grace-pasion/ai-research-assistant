@@ -48,3 +48,12 @@ def ensure_project_paper_screening_columns(engine) -> None:
                     "TEXT NOT NULL DEFAULT ''"
                 )
             )
+
+
+def ensure_document_chunk_page_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("document_chunks")}
+    if "page_number" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE document_chunks ADD COLUMN page_number INTEGER")
+            )

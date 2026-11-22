@@ -252,6 +252,7 @@ class SourceResponse(BaseModel):
     title: str
     excerpt: str
     document_id: uuid.UUID | None = None
+    page_number: int | None = None
     paper_id: uuid.UUID | None = None
     paper_url: str | None = None
 

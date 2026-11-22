@@ -71,6 +71,7 @@ export type Source = {
   title: string;
   excerpt: string;
   document_id: string | null;
+  page_number: number | null;
   paper_id: string | null;
   paper_url: string | null;
 };

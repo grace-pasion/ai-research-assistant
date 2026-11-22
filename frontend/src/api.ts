@@ -70,3 +70,22 @@ export async function downloadFile(path: string, filename: string): Promise<void
   anchor.click();
   URL.revokeObjectURL(objectUrl);
 }
+
+export async function fetchPdfObjectUrl(path: string): Promise<string> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (!response.ok) {
+    let message = `Could not load PDF (${response.status})`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+  const content = await response.blob();
+  return URL.createObjectURL(new Blob([content], { type: "application/pdf" }));
+}

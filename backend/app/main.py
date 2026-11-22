@@ -6,7 +6,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import sessionmaker
 
 from app.config import get_settings
-from app.database import ensure_project_paper_screening_columns, initialize_database, make_engine
+from app.database import (
+    ensure_document_chunk_page_column,
+    ensure_project_paper_screening_columns,
+    initialize_database,
+    make_engine,
+)
 from app.models import LiteratureBase, ResearchBase
 from app.routers import admin, annotations, assistant, auth, documents, latex, papers, projects
 from app.security_headers import security_headers_middleware
@@ -27,6 +32,7 @@ async def lifespan(app: FastAPI):
     )
     initialize_database(research_engine, ResearchBase.metadata)
     ensure_project_paper_screening_columns(research_engine)
+    ensure_document_chunk_page_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield
     research_engine.dispose()
