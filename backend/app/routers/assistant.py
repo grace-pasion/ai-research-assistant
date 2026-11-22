@@ -2,7 +2,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,6 +31,7 @@ from app.schemas import (
 )
 from app.security import get_current_user, require_project_owner
 from app.services.assistant import draft_answer
+from app.services.rate_limit import consume_daily_prompt
 
 router = APIRouter(prefix="/api/projects/{project_id}/assistant", tags=["research assistant"])
 APPROVAL_SALT = "approved-research-answer-v1"
@@ -187,6 +188,7 @@ def get_conversation(
 def create_draft(
     project_id: uuid.UUID,
     payload: AskRequest,
+    request: Request,
     db: Session = Depends(get_db),
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
@@ -194,6 +196,7 @@ def create_draft(
     require_project_owner(db, project_id, user.user_id)
     if payload.conversation_id is not None:
         _conversation_for_user(db, payload.conversation_id, user.user_id, project_id)
+    consume_daily_prompt(db, request)
     answer, sources = draft_answer(
         db,
         literature_db,

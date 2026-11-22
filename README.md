@@ -11,6 +11,7 @@ Fieldnotes is a local-first research workspace for organizing research projects 
 - Document chunking and OpenAI embeddings, stored in pgvector.
 - OpenAlex and Crossref literature search, cached paper and author metadata, query history, and saving/removing papers from projects.
 - Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts.
+- Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
 - A mandatory human approval step: generated answers and conversation messages are not saved until **Approve & save** is clicked. Draft approval tokens are signed, user/project-bound, expire after 15 minutes, and are idempotent.
 - Docker Compose setup, API health endpoint, interactive API docs, and focused backend tests.
 

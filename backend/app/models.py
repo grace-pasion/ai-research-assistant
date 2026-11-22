@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -39,6 +40,14 @@ class User(ResearchBase):
     name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DailyPromptUsage(ResearchBase):
+    __tablename__ = "daily_prompt_usage"
+
+    client_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    prompt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class ResearchProject(ResearchBase):
