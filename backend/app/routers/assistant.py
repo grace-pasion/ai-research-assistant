@@ -16,8 +16,7 @@ from app.models import (
     Message,
     MessageChunkSource,
     MessagePaperSource,
-    ProjectPaper,
-    ResearchProject,
+    Paper,
     User,
 )
 from app.schemas import (
@@ -121,6 +120,7 @@ def _conversation_detail(
                             title=title,
                             excerpt=(paper.abstract or "No abstract is available.")[:1400],
                             paper_id=paper.paper_id,
+                            paper_url=paper.paper_url,
                         ),
                     )
                 )
@@ -296,9 +296,9 @@ def approve_draft(
                 )
             source_pairs.append(("document", source_id))
         elif source["kind"] == "paper":
-            if db.get(ProjectPaper, (project_id, source_id)) is None:
+            if literature_db.get(Paper, source_id) is None:
                 raise HTTPException(
-                    status_code=409, detail="A cited paper is no longer saved in this project."
+                    status_code=409, detail="A cited paper is no longer available; generate a new answer."
                 )
             source_pairs.append(("paper", source_id))
         else:

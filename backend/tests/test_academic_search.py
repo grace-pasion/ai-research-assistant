@@ -1,3 +1,8 @@
+from types import SimpleNamespace
+
+from pydantic import SecretStr
+
+import app.services.academic_search as academic_search
 from app.services.academic_search import normalize_crossref, normalize_openalex
 
 
@@ -40,3 +45,89 @@ def test_normalize_crossref_uses_doi_and_publication_year():
 def test_normalizers_skip_incomplete_metadata():
     assert normalize_openalex({"title": "", "id": ""}) is None
     assert normalize_crossref({"title": ["No DOI"]}) is None
+
+
+def test_semantic_ranking_can_promote_related_abstracts(monkeypatch):
+    class FakeEmbeddings:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(index=0, embedding=[1.0, 0.0]),
+                    SimpleNamespace(index=1, embedding=[0.1, 0.9]),
+                    SimpleNamespace(index=2, embedding=[0.9, 0.1]),
+                ]
+            )
+
+    monkeypatch.setattr(
+        academic_search,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_api_key=SecretStr("test-key"),
+            openai_embedding_model="test-embedding-model",
+        ),
+    )
+    monkeypatch.setattr(
+        academic_search,
+        "OpenAI",
+        lambda **_kwargs: SimpleNamespace(embeddings=FakeEmbeddings()),
+    )
+    papers = [
+        {"title": "Literal keyword match", "abstract": "Unrelated methods."},
+        {"title": "Different wording", "abstract": "Conceptually related evidence."},
+    ]
+
+    ranked = academic_search._rerank_semantically("breast cancer detection", papers)
+
+    assert ranked == [papers[1], papers[0]]
+
+
+def test_semantic_ranking_keeps_provider_order_without_openai_key(monkeypatch):
+    papers = [{"title": "First"}, {"title": "Second"}]
+    monkeypatch.setattr(
+        academic_search,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key=None),
+    )
+
+    assert academic_search._rerank_semantically("topic", papers) == papers
+
+
+def test_semantic_ranking_uses_rare_topic_terms_to_reduce_false_positives(monkeypatch):
+    class FakeEmbeddings:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(index=0, embedding=[1.0, 0.0]),
+                    SimpleNamespace(index=1, embedding=[0.95, 0.312]),
+                    SimpleNamespace(index=2, embedding=[0.90, 0.436]),
+                ]
+            )
+
+    monkeypatch.setattr(
+        academic_search,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_api_key=SecretStr("test-key"),
+            openai_embedding_model="test-embedding-model",
+        ),
+    )
+    monkeypatch.setattr(
+        academic_search,
+        "OpenAI",
+        lambda **_kwargs: SimpleNamespace(embeddings=FakeEmbeddings()),
+    )
+    broad_match = {
+        "title": "Breast Cancer Detection Research",
+        "abstract": "A study of screening methods.",
+    }
+    specific_match = {
+        "title": "SimCLR-based Breast Cancer Classification",
+        "abstract": "Contrastive learning improves breast cancer detection.",
+    }
+
+    ranked = academic_search._rerank_semantically(
+        "SimCLR breast cancer detection",
+        [broad_match, specific_match],
+    )
+
+    assert ranked == [specific_match, broad_match]

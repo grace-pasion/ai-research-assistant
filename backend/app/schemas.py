@@ -5,6 +5,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from pydantic import field_validator
 
+BLOCKED_PASSWORDS = {
+    "123456789012",
+    "admin123456",
+    "letmein123",
+    "password",
+    "password123",
+    "password123!",
+    "qwerty123",
+    "welcome1234",
+}
+
 
 class APIModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -13,7 +24,7 @@ class APIModel(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     name: str = Field(min_length=1, max_length=120)
-    password: str = Field(min_length=10, max_length=128)
+    password: str = Field(min_length=12, max_length=128)
 
     @field_validator("name")
     @classmethod
@@ -21,6 +32,15 @@ class RegisterRequest(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Name cannot be blank.")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if not value.strip() or value.casefold() in BLOCKED_PASSWORDS:
+            raise ValueError("Choose a longer, less common password.")
+        if len(set(value)) == 1:
+            raise ValueError("A password cannot be the same character repeated.")
         return value
 
 
@@ -155,6 +175,7 @@ class SourceResponse(BaseModel):
     excerpt: str
     document_id: uuid.UUID | None = None
     paper_id: uuid.UUID | None = None
+    paper_url: str | None = None
 
 
 class AssistantDraftResponse(BaseModel):

@@ -57,6 +57,7 @@ export type Source = {
   excerpt: string;
   document_id: string | null;
   paper_id: string | null;
+  paper_url: string | null;
 };
 
 export type Draft = {

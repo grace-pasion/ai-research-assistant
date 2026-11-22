@@ -6,17 +6,19 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 
 ## What is implemented
 
-- Account registration, login, signed bearer tokens, and per-user project ownership.
+- Account registration with 12+ character, common-password checks; login, signed bearer tokens, and per-user project ownership.
+- Sign-in throttling: 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window, with hashed identifiers and automatic reset after successful sign-in.
 - Account and project data persist in PostgreSQL across logout/login and normal Docker restarts; logging out clears the local session token, not the account.
 - Research project create/list/update/delete, private document storage, and project-level document text search.
 - PDF, DOCX, TXT, and Markdown upload and extraction. Scanned PDF pages are processed with Tesseract OCR. Files are limited to 25 MB by default and PDFs to 100 pages.
 - Document chunking and OpenAI embeddings, stored in pgvector.
-- OpenAlex and Crossref literature search, cached paper and author metadata, query history, and saving/removing papers from projects.
-- Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts.
+- OpenAlex and Crossref literature search with semantic re-ranking of paper abstracts when an OpenAI key is configured, cached paper and author metadata, query history, and saving/removing papers from projects.
+- Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts; prompts asking to find a paper also search OpenAlex and show retrieved results as linked chat sources.
 - Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
 - Separate administrator sign-in with an allowlisted account, user/account summaries, metadata-only activity history, and permanent account deletion.
 - A mandatory human approval step: generated answers and conversation messages are not saved until **Approve & save** is clicked. Draft approval tokens are signed, user/project-bound, expire after 15 minutes, and are idempotent.
 - Docker Compose setup, API health endpoint, interactive API docs, and focused backend tests.
+- API security headers, HTTPS-only HSTS, and non-cacheable API responses.
 
 ## Run locally with Docker
 
@@ -40,7 +42,7 @@ docker compose up --build
 
 Open the app at <http://localhost:5173>. The API health check is at <http://localhost:8000/api/health>, and interactive API documentation is at <http://localhost:8000/docs>.
 
-Create an account in the app. Add a research project, upload documents, and search OpenAlex or Crossref for papers. OpenAI is required for semantic document embeddings and assistant answers. Without an OpenAI key, uploads are retained and text can still be searched; documents show **Needs API key** and can be reprocessed after you add a key and restart the API. Academic paper search does not need an OpenAI key.
+Create an account in the app. Add a research project, upload documents, and search OpenAlex or Crossref for papers. OpenAI is required for semantic literature re-ranking, document embeddings, and assistant answers. Without an OpenAI key, academic search still returns provider-ranked results, uploads are retained, and document text can still be searched; documents show **Needs API key** and can be reprocessed after you add a key and restart the API. In chat, ask to find or pull up a paper to search OpenAlex and include relevant paper abstracts and links in the draft.
 
 The database and uploaded files persist in Docker volumes. To stop the app, press `Ctrl+C`; to start it again, run `docker compose up`. To permanently erase all local research data, explicitly remove the named volumes with `docker compose down --volumes` (this is destructive).
 
@@ -85,6 +87,10 @@ Render Free services sleep after 15 minutes without traffic and can take time to
 ## Human review and data writes
 
 Generating an assistant response only reads your project data and calls OpenAI; it does not save a conversation or message. Inspect the proposed response and cited sources, then select **Approve & save** to store both the question and answer with their source references. **Discard** leaves no conversation data behind. Saving papers, uploading/deleting files, and editing/deleting projects are direct user actions and take effect immediately.
+
+## Built-in account protections
+
+New registrations require a password of 12–128 characters; a small local denylist blocks common choices and passwords made of one repeated character. Sign-in attempts for both researcher and administrator login are limited to 5 per IP/email pair and 30 per IP per 15 minutes. A successful sign-in clears the matching counters. Rate-limit keys are HMAC-hashed with the backend JWT secret; no raw IP or email is stored in the counters. These controls do not change existing passwords. API responses include security headers, HTTPS responses enable HSTS, and `/api/` responses are marked `no-store`.
 
 ## Local development and tests
 

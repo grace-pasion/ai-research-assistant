@@ -36,7 +36,7 @@ flowchart LR
 
 - `backend/app/main.py` creates the FastAPI application, CORS policy, database engines/session factories, startup schema initialization, and route registration.
 - `backend/app/routers/` implements authentication, administrator, projects, documents, papers, and assistant endpoints.
-- `backend/app/services/` implements academic search, extraction/chunking, document processing, local/Supabase file storage, AI retrieval/generation, activity recording, and daily prompt limits.
+- `backend/app/services/` implements academic search, extraction/chunking, document processing, local/Supabase file storage, AI retrieval/generation, activity recording, and atomic sign-in/daily prompt limits.
 - `backend/app/models.py` defines separate SQLAlchemy metadata for research data and literature data. The literature models use their own session factory even when both URLs point at the same physical PostgreSQL database.
 - `backend/app/config.py` loads backend settings from environment variables (and `.env` for local development). OpenAI, database, JWT, and Supabase credentials belong on the backend, never in the frontend.
 
@@ -46,9 +46,9 @@ Document processing uses FastAPI in-process background tasks, not a durable exte
 
 | Provider | API used | What Fieldnotes sends/receives |
 |---|---|---|
-| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, and landing-page URL. An optional `OPENALEX_EMAIL` identifies requests. |
+| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, and landing-page URL. Chat paper discovery also uses OpenAlex. An optional `OPENALEX_EMAIL` identifies requests. |
 | Crossref | `https://api.crossref.org/works` | Bibliographic query and result metadata, including DOI, title, abstract when available, authors, publication year, venue, and citation count. |
-| OpenAI | Embeddings API and Chat Completions API, called through the Python SDK | Creates document/query embeddings and source-grounded assistant drafts. Default models are `text-embedding-3-small` and `gpt-4o-mini`, configurable on the backend. |
+| OpenAI | Embeddings API and Chat Completions API, called through the Python SDK | Creates document/query embeddings, semantically re-ranks academic search candidates using paper titles and abstracts, and generates source-grounded assistant drafts. Default models are `text-embedding-3-small` and `gpt-4o-mini`, configurable on the backend. |
 | Supabase | PostgreSQL connection and Storage object REST API | Stores relational/vector data and private original files. The Storage bucket is accessed only by the API using backend credentials. |
 | GitHub | GitHub Actions and GitHub Pages | Builds/tests the frontend and hosts its static assets. GitHub is not the application database or document store. |
 | Render | Docker Web Service | Hosts the API. Render is not the durable document store or database. |
@@ -63,6 +63,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper saved relationships.
 - **Assistant history:** conversations, reviewed user/assistant messages, and ordered references to document chunks or saved papers. A conversation is created only after the user approves a draft.
 - **Usage control:** a daily counter keyed by an HMAC hash of the client IP and UTC date. The raw client IP is not stored in that counter.
+- **Authentication throttling:** 15-minute counters keyed by HMAC hashes of IP and IP/email pairs. Raw IP addresses and email addresses are not stored in these counters; successful sign-in clears the matching counters.
 - **Activity history:** action type, timestamp, actor account, and a small set of non-content details. Events deliberately exclude document names/text, search terms, assistant questions, and generated answers. User events are removed when that account is hard-deleted.
 - **Original files:** local files in development or private Supabase Storage objects in the hosted setup. PostgreSQL stores the storage path and metadata, not the file bytes.
 
@@ -81,15 +82,15 @@ The API enables PostgreSQL's `vector` extension and creates its tables at startu
 ### Search and save academic papers
 
 1. The user enters a query and chooses OpenAlex or Crossref.
-2. The API calls the selected provider, normalizes returned bibliographic records, and stores paper/author metadata and search history.
-3. The UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
+2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
+3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
 
 ### Ask the research assistant
 
-1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt.
+1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt. A prompt asking to find, search for, or pull up a paper additionally searches OpenAlex.
 2. The API checks authentication and project ownership, then enforces a limit of 20 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
-3. The API retrieves up to six relevant ready document chunks using query embeddings and pgvector cosine distance. It also ranks the project's saved papers using query-term overlap and can include up to six relevant papers.
+3. The API retrieves up to six relevant ready document chunks using query embeddings and pgvector cosine distance. It also ranks the project's saved papers using query-term overlap and can include up to six relevant papers. For explicit literature-finding prompts, it searches and semantically re-ranks OpenAlex results, caches their metadata, and includes up to three papers not already in the saved-paper results.
 4. OpenAI receives the question, selected source excerpts, and (when continuing a conversation) recent conversation messages. The answer is instructed to cite supplied sources and not to treat source text as instructions.
 5. The answer and source excerpts are returned as an **unsaved draft**. The user can discard it or approve it. A signed approval token is bound to the user and project and expires after 15 minutes.
 6. Only approval stores the conversation, question, answer, and source references. Approval is idempotent.
@@ -100,7 +101,8 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 
 ### Accounts and workspace access
 
-- Create an account with name, email, and password; sign in and sign out.
+- Create an account with name, email, and a 12–128 character password. A small local denylist blocks common passwords and passwords made of one repeated character; this applies to new registrations, not existing passwords.
+- Sign in and sign out. Researcher and administrator sign-in allow 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window; a successful sign-in clears matching counters.
 - Keep an authenticated session in the browser using a bearer token. The backend validates signed tokens and checks that the current user owns the requested project.
 - Use a private, account-scoped workspace. There is no multi-user project sharing in the current UI.
 
@@ -123,14 +125,14 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 
 ### Academic literature
 
-- Search by topic, title, author, or DOI using OpenAlex or Crossref.
+- Search by topic, title, author, or DOI using OpenAlex or Crossref; OpenAI embeddings re-rank results semantically when configured.
 - Review returned bibliographic details and open an external paper link when supplied.
 - Save papers to the current project, review the saved-paper list, and remove papers from it.
 
 ### Source-grounded assistant
 
-- Ask research questions, compare saved sources, or explore possible research directions.
-- Receive drafts with source citations/excerpts from the project's ready documents and saved papers.
+- Ask research questions, compare saved sources, explore possible research directions, or ask chat to find/pull up a relevant paper.
+- Receive drafts with source citations/excerpts from the project's ready documents, saved papers, and any papers retrieved by an explicit chat search. Retrieved-paper citations link to the paper but do not save it to the project.
 - Continue an approved conversation and review its stored messages and citations.
 - Discard an unapproved draft or explicitly approve it before the conversation is saved.
 - Make at most 20 assistant draft requests per client IP per UTC day.
@@ -166,18 +168,20 @@ Routes require a bearer token except health, registration, and login routes. The
 | `POST` | `/api/documents/{document_id}/reprocess` | Reprocess an owned document. |
 | `DELETE` | `/api/documents/{document_id}` | Delete an owned document and its stored file. |
 | `GET` | `/api/projects/{project_id}/papers` | List papers saved to a project. |
-| `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref. |
+| `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations` | List approved conversations for a project. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read an approved conversation and its sources. |
-| `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft. |
+| `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; explicit literature-finding prompts also retrieve papers from OpenAlex. |
 | `POST` | `/api/projects/{project_id}/assistant/approve` | Validate a review token and save the approved conversation. |
 
 Interactive API documentation is available at `/docs` on the API host.
 
 ## Security, configuration, and operating limits
 
-- Passwords are hashed; API access uses signed HS256 bearer tokens. Project and document operations perform ownership checks.
+- Passwords are hashed; new registrations require 12–128 characters and reject a small denylist of common passwords and all-one-character passwords. API access uses signed HS256 bearer tokens. Project and document operations perform ownership checks.
+- Researcher and administrator sign-in share atomic database-backed throttling: 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window. Counters contain HMAC-hashed identifiers and are cleared after successful sign-in.
+- API responses include `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Permissions-Policy`; HTTPS responses include HSTS, and `/api/` responses use `Cache-Control: no-store`.
 - Administrator access is checked on every admin request against the server-side, comma-separated `ADMIN_EMAILS` allowlist. The admin interface is separate, but the allowlisted user signs in with their existing account credentials. Removing an email from the allowlist revokes admin access after the backend restarts/redeploys.
 - Activity logging is metadata-only by design. It does not record file names or contents, search terms, assistant prompts, or generated answers. User activity history is cascade-deleted with the user account.
 - API credentials and signing secrets are backend environment variables. The browser receives only the public API base URL.

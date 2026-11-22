@@ -1,9 +1,15 @@
-from datetime import datetime
+import math
+import re
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
+from openai import APIError, OpenAI
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.models import Author, Paper, PaperAuthor
 
 OPENALEX_URL = "https://api.openalex.org/works"
 CROSSREF_URL = "https://api.crossref.org/works"
@@ -97,24 +103,160 @@ def normalize_crossref(work: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-async def search_papers(query: str, provider: str, limit: int) -> list[dict[str, Any]]:
+def _rerank_semantically(query: str, papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    settings = get_settings()
+    if not settings.openai_api_key or not settings.openai_api_key.get_secret_value().strip():
+        return papers
+    if not papers:
+        return papers
+
+    client = OpenAI(api_key=settings.openai_api_key.get_secret_value())
+    descriptions = [
+        f"{paper['title']}\n{paper.get('abstract') or ''}".strip() for paper in papers
+    ]
+    try:
+        response = client.embeddings.create(
+            model=settings.openai_embedding_model,
+            input=[query, *descriptions],
+        )
+    except APIError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAI semantic paper ranking failed. Try again later.",
+        ) from exc
+
+    vectors = [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
+    query_vector = vectors[0]
+    query_norm = math.sqrt(sum(value * value for value in query_vector))
+    query_terms = list(
+        dict.fromkeys(
+            term for term in re.findall(r"\w+", query.casefold()) if len(term) > 2
+        )
+    )
+    paper_tokens = [
+        (
+            set(re.findall(r"\w+", paper["title"].casefold())),
+            set(re.findall(r"\w+", (paper.get("abstract") or "").casefold())),
+        )
+        for paper in papers
+    ]
+    document_frequencies = {
+        term: sum(term in title or term in abstract for title, abstract in paper_tokens)
+        for term in query_terms
+    }
+    term_weights = {
+        term: math.log((len(papers) + 1) / (frequency + 1)) + 1
+        for term, frequency in document_frequencies.items()
+    }
+    total_term_weight = sum(term_weights.values())
+
+    def similarity(paper_index: int) -> float:
+        paper_vector = vectors[paper_index + 1]
+        paper_norm = math.sqrt(sum(value * value for value in paper_vector))
+        if not query_norm or not paper_norm:
+            return 0.0
+        dot = sum(left * right for left, right in zip(query_vector, paper_vector))
+        return dot / (query_norm * paper_norm)
+
+    def lexical_relevance(paper_index: int) -> float:
+        title_terms, abstract_terms = paper_tokens[paper_index]
+        if not total_term_weight:
+            return 0.0
+        matched_weight = sum(
+            term_weights[term]
+            * (1.0 if term in title_terms else 0.8 if term in abstract_terms else 0.0)
+            for term in query_terms
+        )
+        return matched_weight / total_term_weight
+
+    return [
+        paper
+        for _, paper in sorted(
+            enumerate(papers),
+            key=lambda item: (
+                -(similarity(item[0]) + 0.35 * lexical_relevance(item[0])),
+                item[0],
+            ),
+        )
+    ]
+
+
+def search_papers(query: str, provider: str, limit: int) -> list[dict[str, Any]]:
     settings = get_settings()
     headers = {"User-Agent": "AIResearchAssistant/1.0 (mailto:contact@example.com)"}
-    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+    candidate_limit = min(max(limit * 3, limit), 75)
+    with httpx.Client(timeout=20, headers=headers) as client:
         if provider == "openalex":
-            params: dict[str, Any] = {"search": query, "per-page": limit}
+            params: dict[str, Any] = {"search": query, "per-page": candidate_limit}
             if settings.openalex_email:
                 params["mailto"] = settings.openalex_email
-            response = await client.get(OPENALEX_URL, params=params)
+            response = client.get(OPENALEX_URL, params=params)
             response.raise_for_status()
             items = response.json().get("results", [])
-            return [paper for item in items if (paper := normalize_openalex(item))]
+            papers = [paper for item in items if (paper := normalize_openalex(item))]
+            return _rerank_semantically(query, papers)[:limit]
         if provider == "crossref":
-            response = await client.get(
+            response = client.get(
                 CROSSREF_URL,
-                params={"query.bibliographic": query, "rows": limit},
+                params={"query.bibliographic": query, "rows": candidate_limit},
             )
             response.raise_for_status()
             items = response.json().get("message", {}).get("items", [])
-            return [paper for item in items if (paper := normalize_crossref(item))]
+            papers = [paper for item in items if (paper := normalize_crossref(item))]
+            return _rerank_semantically(query, papers)[:limit]
     raise ValueError(f"Unsupported academic search provider: {provider}")
+
+
+def upsert_paper(literature_db: Session, data: dict[str, Any]) -> Paper:
+    paper = literature_db.scalar(
+        select(Paper).where(
+            Paper.api_provider == data["api_provider"],
+            Paper.external_paper_id == data["external_paper_id"],
+        )
+    )
+    if paper is None:
+        paper = Paper(
+            external_paper_id=data["external_paper_id"],
+            api_provider=data["api_provider"],
+            title=data["title"],
+        )
+        literature_db.add(paper)
+        literature_db.flush()
+    for field in (
+        "title",
+        "abstract",
+        "publication_year",
+        "doi",
+        "paper_url",
+        "venue",
+        "citation_count",
+    ):
+        value = data.get(field)
+        if value is not None:
+            setattr(paper, field, value)
+    for order, author_data in enumerate(data.get("authors") or []):
+        external_id = (author_data.get("id") or author_data["name"]).strip()
+        if not external_id:
+            continue
+        author = literature_db.scalar(
+            select(Author).where(
+                Author.api_provider == data["api_provider"],
+                Author.external_author_id == external_id,
+            )
+        )
+        if author is None:
+            author = Author(
+                author_name=author_data["name"][:255],
+                external_author_id=external_id[:255],
+                api_provider=data["api_provider"],
+            )
+            literature_db.add(author)
+            literature_db.flush()
+        relation = literature_db.get(PaperAuthor, (paper.paper_id, author.author_id))
+        if relation is None:
+            literature_db.add(
+                PaperAuthor(paper_id=paper.paper_id, author_id=author.author_id, author_order=order)
+            )
+        else:
+            relation.author_order = order
+    return paper

@@ -454,12 +454,12 @@ function App() {
               <input name="email" type="email" autoComplete="email" required />
             </label>
             <label>
-              Password <span className="field-note">{authMode === "register" && "10+ characters"}</span>
+              Password <span className="field-note">{authMode === "register" && "12+ characters; avoid common passwords"}</span>
               <input
                 name="password"
                 type="password"
                 autoComplete={authMode === "login" ? "current-password" : "new-password"}
-                minLength={authMode === "register" ? 10 : 1}
+                minLength={authMode === "register" ? 12 : 1}
                 required
               />
             </label>
@@ -679,7 +679,7 @@ function App() {
               {view === "papers" && (
                 <section className="section-content">
                   <div className="section-heading">
-                    <div><h2>Discover literature</h2><p>Search scholarly indexes, then save relevant work to this project.</p></div>
+                    <div><h2>Discover literature</h2><p>Search scholarly indexes by topic or meaning; abstracts are semantically ranked when OpenAI is configured.</p></div>
                   </div>
                   <form className="search-form" onSubmit={(event) => void searchPapers(event)}>
                     <Search size={18} />
@@ -749,6 +749,9 @@ function App() {
                                     <article className="source-card" key={`${source.kind}-${source.source_id}`}>
                                       <span className="source-index">S{index + 1}</span>
                                       <div><strong>{source.title}</strong><p>{source.excerpt}</p></div>
+                                      {source.kind === "paper" && source.paper_url && (
+                                        <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
+                                      )}
                                     </article>
                                   ))}
                                 </div>
@@ -769,8 +772,8 @@ function App() {
                                 <article className="source-card" key={`${source.kind}-${source.source_id}`}>
                                   <span className="source-index">S{index + 1}</span>
                                   <div><strong>{source.title}</strong><p>{source.excerpt}</p></div>
-                                  {source.kind === "paper" && source.paper_id && papers.find((paper) => paper.paper_id === source.paper_id)?.paper_url && (
-                                    <a className="source-link" href={papers.find((paper) => paper.paper_id === source.paper_id)?.paper_url ?? undefined} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
+                                  {source.kind === "paper" && source.paper_url && (
+                                    <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
                                   )}
                                 </article>
                               ))}
@@ -806,7 +809,7 @@ function App() {
                             event.currentTarget.form?.requestSubmit();
                           }
                         }}
-                        placeholder="Ask about your documents and saved papers…"
+                        placeholder="Ask about your sources, or ask me to find a relevant paper…"
                         rows={2}
                         maxLength={5000}
                         aria-label="Research question"

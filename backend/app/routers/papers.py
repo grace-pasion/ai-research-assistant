@@ -18,7 +18,7 @@ from app.models import (
 )
 from app.schemas import PaperResponse, PaperSearchResponse
 from app.security import get_current_user, require_project_owner
-from app.services.academic_search import search_papers
+from app.services.academic_search import search_papers, upsert_paper
 from app.services.audit import record_activity
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["academic papers"])
@@ -49,61 +49,6 @@ def _paper_response(
     )
 
 
-def _upsert_paper(literature_db: Session, data: dict) -> Paper:
-    paper = literature_db.scalar(
-        select(Paper).where(
-            Paper.api_provider == data["api_provider"],
-            Paper.external_paper_id == data["external_paper_id"],
-        )
-    )
-    if paper is None:
-        paper = Paper(
-            external_paper_id=data["external_paper_id"],
-            api_provider=data["api_provider"],
-            title=data["title"],
-        )
-        literature_db.add(paper)
-        literature_db.flush()
-    for field in (
-        "title",
-        "abstract",
-        "publication_year",
-        "doi",
-        "paper_url",
-        "venue",
-        "citation_count",
-    ):
-        value = data.get(field)
-        if value is not None:
-            setattr(paper, field, value)
-    for order, author_data in enumerate(data.get("authors") or []):
-        external_id = (author_data.get("id") or author_data["name"]).strip()
-        if not external_id:
-            continue
-        author = literature_db.scalar(
-            select(Author).where(
-                Author.api_provider == data["api_provider"],
-                Author.external_author_id == external_id,
-            )
-        )
-        if author is None:
-            author = Author(
-                author_name=author_data["name"][:255],
-                external_author_id=external_id[:255],
-                api_provider=data["api_provider"],
-            )
-            literature_db.add(author)
-            literature_db.flush()
-        relation = literature_db.get(PaperAuthor, (paper.paper_id, author.author_id))
-        if relation is None:
-            literature_db.add(
-                PaperAuthor(paper_id=paper.paper_id, author_id=author.author_id, author_order=order)
-            )
-        else:
-            relation.author_order = order
-    return paper
-
-
 @router.get("", response_model=list[PaperResponse])
 def list_saved_papers(
     project_id: uuid.UUID,
@@ -125,7 +70,7 @@ def list_saved_papers(
 
 
 @router.get("/search", response_model=PaperSearchResponse)
-async def search(
+def search(
     project_id: uuid.UUID,
     q: str = Query(min_length=2, max_length=500),
     provider: str = Query(default="openalex", pattern="^(openalex|crossref)$"),
@@ -136,7 +81,7 @@ async def search(
 ):
     require_project_owner(db, project_id, user.user_id)
     try:
-        results = await search_papers(q.strip(), provider, limit)
+        results = search_papers(q.strip(), provider, limit)
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
             status_code=502,
@@ -157,7 +102,7 @@ async def search(
     )
     literature_db.begin()
     try:
-        papers = [_upsert_paper(literature_db, result) for result in results]
+        papers = [upsert_paper(literature_db, result) for result in results]
         literature_db.commit()
         db.flush()
         db.add_all(

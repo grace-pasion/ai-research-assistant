@@ -3,6 +3,7 @@ import re
 from collections import Counter
 from typing import Any
 
+import httpx
 from fastapi import HTTPException
 from openai import OpenAI
 from sqlalchemy import select
@@ -18,6 +19,81 @@ from app.models import (
     PaperAuthor,
     ProjectPaper,
 )
+from app.services.academic_search import search_papers, upsert_paper
+
+PAPER_SEARCH_STOP_WORDS = {
+    "a",
+    "about",
+    "after",
+    "also",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "be",
+    "can",
+    "compare",
+    "could",
+    "find",
+    "for",
+    "from",
+    "get",
+    "help",
+    "how",
+    "i",
+    "in",
+    "into",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "paper",
+    "papers",
+    "please",
+    "pull",
+    "related",
+    "relevant",
+    "research",
+    "search",
+    "show",
+    "some",
+    "source",
+    "sources",
+    "study",
+    "studies",
+    "the",
+    "their",
+    "them",
+    "these",
+    "this",
+    "those",
+    "to",
+    "up",
+    "uploaded",
+    "use",
+    "used",
+    "using",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "your",
+    "would",
+    "notes",
+    "document",
+    "documents",
+    "it",
+    "they",
+    "its",
+}
 
 
 def _openai_client() -> OpenAI:
@@ -130,6 +206,52 @@ def _retrieve_papers(
     return result
 
 
+def _requests_external_papers(question: str) -> bool:
+    has_literature = re.search(
+        r"\b(papers?|studies|articles?|publications?|literature)\b",
+        question,
+        re.IGNORECASE,
+    )
+    asks_to_find = re.search(
+        r"\b(find|search|pull\s+up|show|recommend|locate|look\s+up|get|fetch)\b",
+        question,
+        re.IGNORECASE,
+    )
+    return bool(has_literature and asks_to_find)
+
+
+def _paper_search_query(question: str) -> str:
+    terms = re.findall(r"[\w-]+", question, re.UNICODE)
+    focused_terms = [term for term in terms if term.casefold() not in PAPER_SEARCH_STOP_WORDS]
+    return " ".join(focused_terms) or question.strip()
+
+
+def _discover_external_papers(
+    literature_db: Session, question: str
+) -> list[Paper]:
+    if not _requests_external_papers(question):
+        return []
+    try:
+        results = search_papers(_paper_search_query(question), "openalex", 3)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAlex search failed with HTTP {exc.response.status_code}. Try again later.",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not reach OpenAlex; check your network and retry."
+        ) from exc
+
+    try:
+        papers = [upsert_paper(literature_db, result) for result in results]
+        literature_db.commit()
+        return papers
+    except Exception:
+        literature_db.rollback()
+        raise
+
+
 def draft_answer(
     research_db: Session,
     literature_db: Session,
@@ -141,6 +263,13 @@ def draft_answer(
     client = _openai_client()
     chunks = _retrieve_chunks(research_db, project_id, question)
     papers = _retrieve_papers(research_db, literature_db, project_id, question, mode)
+    discovered_papers = _discover_external_papers(literature_db, question)
+    saved_paper_ids = {item["paper"].paper_id for item in papers}
+    papers.extend(
+        {"paper": paper, "author_ids": []}
+        for paper in discovered_papers
+        if paper.paper_id not in saved_paper_ids
+    )
 
     sources: list[dict[str, Any]] = []
     context_items: list[str] = []
@@ -181,16 +310,18 @@ def draft_answer(
                 "title": title,
                 "excerpt": excerpt,
                 "paper_id": paper.paper_id,
+                "paper_url": paper.paper_url,
             }
         )
-        context_items.append(f"[Saved academic paper: {title}]\n{excerpt}")
+        source_type = "Saved" if paper.paper_id in saved_paper_ids else "Retrieved"
+        context_items.append(f"[{source_type} academic paper: {title}]\n{excerpt}")
 
     if not context_items:
         raise HTTPException(
             status_code=422,
             detail=(
-                "There are no ready document chunks or saved papers in this project. "
-                "Upload a readable document or save papers before asking a grounded question."
+                "There are no relevant ready document chunks, saved papers, or retrieved papers. "
+                "Upload a readable document, save papers, or ask to find relevant literature."
             ),
         )
 
