@@ -12,6 +12,7 @@ from app.models import (
     Paper,
     ProjectPaper,
     ResearchProject,
+    TeamWorkspace,
     User,
     UserActivity,
 )
@@ -23,7 +24,7 @@ from app.services import academic_search
 def paper_databases(tmp_path):
     research_engine = create_engine(f"sqlite:///{tmp_path / 'research.sqlite'}")
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
-    for model in (User, ResearchProject, ProjectPaper, Document, DocumentPaper, UserActivity):
+    for model in (User, TeamWorkspace, ResearchProject, ProjectPaper, Document, DocumentPaper, UserActivity):
         model.__table__.create(research_engine)
     Paper.__table__.create(literature_engine)
     with Session(research_engine) as research_db, Session(literature_engine) as literature_db:

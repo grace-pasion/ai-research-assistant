@@ -30,7 +30,12 @@ import {
 } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
-import { InboxDialog, ShareDialog } from "./Collaboration";
+import {
+  InboxDialog,
+  ShareDialog,
+  TeamChannelDialog,
+  TeamWorkspaceDialog,
+} from "./Collaboration";
 import { LatexWorkspace } from "./LatexWorkspace";
 import type {
   AIUsageResponse,
@@ -46,6 +51,7 @@ import type {
   Project,
   SearchResult,
   Source,
+  TeamWorkspace,
   User,
 } from "./types";
 
@@ -72,10 +78,26 @@ function retainProjectSelection(current: Project | null, loaded: Project[]): Pro
   return updated;
 }
 
+function projectsInWorkspace(
+  projects: Project[],
+  workspaceId: string | null,
+  workspaces: TeamWorkspace[],
+): Project[] {
+  if (workspaceId) {
+    return projects.filter((item) => item.team_workspace_id === workspaceId);
+  }
+  const memberWorkspaceIds = new Set(workspaces.map((item) => item.team_workspace_id));
+  return projects.filter((item) =>
+    item.team_workspace_id === null || !memberWorkspaceIds.has(item.team_workspace_id),
+  );
+}
+
 function App() {
   const [token, setAuthToken] = useState<string | null>(getToken());
   const [user, setUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [teamWorkspaces, setTeamWorkspaces] = useState<TeamWorkspace[]>([]);
+  const [selectedTeamWorkspaceId, setSelectedTeamWorkspaceId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
@@ -101,6 +123,8 @@ function App() {
   const [showEditProject, setShowEditProject] = useState(false);
   const [showShareProject, setShowShareProject] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
+  const [showTeamWorkspaces, setShowTeamWorkspaces] = useState(false);
+  const [showTeamChannels, setShowTeamChannels] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [searchText, setSearchText] = useState("");
@@ -115,11 +139,28 @@ function App() {
     [token],
   );
 
+  const refreshTeamWorkspaces = useCallback(async (selectWorkspaceId?: string) => {
+    const loaded = await request<TeamWorkspace[]>("/api/team-workspaces");
+    setTeamWorkspaces(loaded);
+    if (selectWorkspaceId) {
+      setSelectedTeamWorkspaceId(selectWorkspaceId);
+      const loadedProjects = await request<Project[]>("/api/projects");
+      setProjects(loadedProjects);
+      setProject((current) => retainProjectSelection(
+        current,
+        loadedProjects.filter((item) => item.team_workspace_id === selectWorkspaceId),
+      ));
+    }
+  }, [request]);
+
   const refreshProjects = useCallback(async () => {
     const loaded = await request<Project[]>("/api/projects");
     setProjects(loaded);
-    setProject((selected) => retainProjectSelection(selected, loaded));
-  }, [request]);
+    setProject((selected) => retainProjectSelection(
+      selected,
+      projectsInWorkspace(loaded, selectedTeamWorkspaceId, teamWorkspaces),
+    ));
+  }, [request, selectedTeamWorkspaceId, teamWorkspaces]);
 
   const refreshUnreadCount = useCallback(async () => {
     const result = await request<{ count: number }>("/api/inbox/unread-count");
@@ -156,15 +197,22 @@ function App() {
   useEffect(() => {
     if (!token) return;
     let active = true;
-    Promise.all([request<User>("/api/auth/me"), request<Project[]>("/api/projects")])
-      .then(([me, loaded]) => {
+    Promise.all([
+      request<User>("/api/auth/me"),
+      request<Project[]>("/api/projects"),
+      request<TeamWorkspace[]>("/api/team-workspaces"),
+    ])
+      .then(([me, loaded, loadedWorkspaces]) => {
         if (!active) return;
         setUser(me);
         setProjects(loaded);
-        setProject((selected) => {
-          if (selected && loaded.some((item) => item.project_id === selected.project_id)) return selected;
-          return loaded[0] ?? null;
-        });
+        setTeamWorkspaces(loadedWorkspaces);
+        const personalProjects = projectsInWorkspace(loaded, null, loadedWorkspaces);
+        const initialWorkspaceId = personalProjects.length
+          ? null
+          : loadedWorkspaces[0]?.team_workspace_id ?? null;
+        setSelectedTeamWorkspaceId(initialWorkspaceId);
+        setProject(projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null);
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -344,9 +392,18 @@ function App() {
       setToken(result.access_token);
       setAuthToken(result.access_token);
       setUser(result.user);
-      const loaded = await api<Project[]>("/api/projects", {}, result.access_token);
+      const [loaded, loadedWorkspaces] = await Promise.all([
+        api<Project[]>("/api/projects", {}, result.access_token),
+        api<TeamWorkspace[]>("/api/team-workspaces", {}, result.access_token),
+      ]);
       setProjects(loaded);
-      setProject(loaded[0] ?? null);
+      setTeamWorkspaces(loadedWorkspaces);
+      const personalProjects = projectsInWorkspace(loaded, null, loadedWorkspaces);
+      const initialWorkspaceId = personalProjects.length
+        ? null
+        : loadedWorkspaces[0]?.team_workspace_id ?? null;
+      setSelectedTeamWorkspaceId(initialWorkspaceId);
+      setProject(projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Authentication failed.");
     } finally {
@@ -366,6 +423,7 @@ function App() {
         body: jsonBody({
           project_name: form.get("project_name"),
           description: form.get("description"),
+          team_workspace_id: selectedTeamWorkspaceId,
         }),
       });
       setProjects((current) => [created, ...current]);
@@ -808,7 +866,9 @@ function App() {
       await request<void>(`/api/projects/${project.project_id}`, { method: "DELETE" });
       const remaining = projects.filter((item) => item.project_id !== project.project_id);
       setProjects(remaining);
-      setProject(remaining[0] ?? null);
+      setProject(
+        projectsInWorkspace(remaining, selectedTeamWorkspaceId, teamWorkspaces)[0] ?? null,
+      );
       setConversation(null);
       setDraft(null);
       setNotice("Project deleted.");
@@ -824,11 +884,34 @@ function App() {
     setAuthToken(null);
     setUser(null);
     setProjects([]);
+    setTeamWorkspaces([]);
+    setSelectedTeamWorkspaceId(null);
     setProject(null);
     setConversation(null);
     setDraft(null);
     setError("");
   }
+
+  function switchTeamWorkspace(workspaceId: string | null) {
+    setSelectedTeamWorkspaceId(workspaceId);
+    setProject((current) => retainProjectSelection(
+      current,
+      projectsInWorkspace(projects, workspaceId, teamWorkspaces),
+    ));
+    setConversation(null);
+    setDraft(null);
+    setView("documents");
+  }
+
+  const visibleProjects = useMemo(
+    () => projectsInWorkspace(projects, selectedTeamWorkspaceId, teamWorkspaces),
+    [projects, selectedTeamWorkspaceId, teamWorkspaces],
+  );
+  const channelWorkspaceId = selectedTeamWorkspaceId ?? project?.team_workspace_id ?? null;
+  const channelWorkspace = teamWorkspaces.find(
+    (item) => item.team_workspace_id === channelWorkspaceId,
+  );
+  const canCreateTeamChannel = Boolean(channelWorkspace);
 
   if (!token || !user) {
     return (
@@ -900,14 +983,43 @@ function App() {
         </a>
         <div className="sidebar-label">WORKSPACE</div>
         <button className="new-project-button" onClick={() => setShowNewProject(true)}>
-          <FolderPlus size={16} /> New project <Plus size={15} className="push-right" />
+          <FolderPlus size={16} /> New {selectedTeamWorkspaceId ? "team project" : "project"} <Plus size={15} className="push-right" />
         </button>
+        <div className="sidebar-team-heading">
+          <span className="sidebar-label">TEAM WORKSPACES</span>
+          <button className="icon-button" title="Manage team workspaces" onClick={() => setShowTeamWorkspaces(true)}>
+            <Plus size={15} />
+          </button>
+        </div>
+        <nav className="team-workspace-list" aria-label="Team workspaces">
+          <button
+            className={`team-workspace-link ${selectedTeamWorkspaceId === null ? "selected" : ""}`}
+            onClick={() => switchTeamWorkspace(null)}
+            type="button"
+          >
+            <Users size={14} /><span>Personal &amp; shared</span>
+          </button>
+          {teamWorkspaces.map((workspace) => (
+            <button
+              className={`team-workspace-link ${selectedTeamWorkspaceId === workspace.team_workspace_id ? "selected" : ""}`}
+              key={workspace.team_workspace_id}
+              onClick={() => switchTeamWorkspace(workspace.team_workspace_id)}
+              type="button"
+            >
+              <Users size={14} /><span>{workspace.name}</span>
+            </button>
+          ))}
+        </nav>
         <nav className="project-list" aria-label="Research projects">
-          {projects.map((item) => (
+          {visibleProjects.map((item) => (
             <button
               className={`project-link ${project?.project_id === item.project_id ? "selected" : ""}`}
               key={item.project_id}
               onClick={() => {
+                const memberWorkspace = teamWorkspaces.find(
+                  (workspace) => workspace.team_workspace_id === item.team_workspace_id,
+                );
+                setSelectedTeamWorkspaceId(memberWorkspace ? memberWorkspace.team_workspace_id : null);
                 setProject(item);
                 setConversation(null);
                 setDraft(null);
@@ -919,7 +1031,7 @@ function App() {
               <span className="project-link-name">{item.project_name}</span>
             </button>
           ))}
-          {!projects.length && <p className="sidebar-empty">Create your first research project.</p>}
+          {!visibleProjects.length && <p className="sidebar-empty">No projects here yet.</p>}
         </nav>
         <div className="sidebar-spacer" />
         <div className="account-card">
@@ -957,13 +1069,31 @@ function App() {
           </div>
           <div className="topbar-right">
             <span className="private-badge">
-              {project && user && project.user_id !== user.user_id
-                ? <><Users size={14} /> Shared project</>
-                : <><ShieldCheck size={14} /> Private workspace</>}
+              {project?.team_workspace_id
+                ? <><Users size={14} /> Team workspace</>
+                : project && user && project.user_id !== user.user_id
+                  ? <><Users size={14} /> Shared project</>
+                  : <><ShieldCheck size={14} /> Private workspace</>}
             </span>
             <button className="icon-button inbox-button" title="Inbox and messages" onClick={() => setShowInbox(true)}>
               <Bell size={17} />
               {unreadCount > 0 && <span className="unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+            </button>
+            {channelWorkspaceId && (
+              <button
+                className="icon-button"
+                title="Team channels"
+                onClick={() => setShowTeamChannels(true)}
+              >
+                <MessageSquareText size={16} />
+              </button>
+            )}
+            <button
+              className="icon-button"
+              title="Team workspaces"
+              onClick={() => setShowTeamWorkspaces(true)}
+            >
+              <Users size={16} />
             </button>
             {project && (
               <>
@@ -991,7 +1121,7 @@ function App() {
             }}>
               <form className="modal-card stack-form" onSubmit={createProject}>
                 <div className="modal-heading">
-                  <div><p className="eyebrow">WORKSPACE</p><h2>New research project</h2></div>
+                  <div><p className="eyebrow">{selectedTeamWorkspaceId ? "TEAM WORKSPACE" : "WORKSPACE"}</p><h2>New {selectedTeamWorkspaceId ? "team " : ""}research project</h2></div>
                   <button type="button" className="icon-button" onClick={() => setShowNewProject(false)} aria-label="Close">
                     <X size={18} />
                   </button>
@@ -1015,6 +1145,25 @@ function App() {
               onClose={() => setShowInbox(false)}
               onProjectsUpdated={refreshProjects}
               onUnreadCount={refreshUnreadCount}
+            />
+          )}
+          {showTeamWorkspaces && (
+            <TeamWorkspaceDialog
+              workspaces={teamWorkspaces}
+              userId={user.user_id}
+              request={request}
+              onClose={() => setShowTeamWorkspaces(false)}
+              onChanged={refreshTeamWorkspaces}
+            />
+          )}
+          {showTeamChannels && channelWorkspaceId && (
+            <TeamChannelDialog
+              workspaceId={channelWorkspaceId}
+              workspaceName={channelWorkspace?.name ?? "Shared team workspace"}
+              project={project?.team_workspace_id === channelWorkspaceId ? project : null}
+              canCreate={canCreateTeamChannel}
+              request={request}
+              onClose={() => setShowTeamChannels(false)}
             />
           )}
           {showAccountSettings && (

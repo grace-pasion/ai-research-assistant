@@ -10,13 +10,13 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, project workspace and sharing, inbox and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
+| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, project sharing, workspace/project channels and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
 | Backend API | Python 3.12, FastAPI, SQLAlchemy, Uvicorn, Docker | Provides the JSON API, bearer-token authentication, authorization, processing, storage access, and integrations. |
 | API hosting | Render Web Service (Docker) | Runs the API. The service may sleep on the free plan; the health endpoint is `/api/health`. |
-| Hosted database | Supabase PostgreSQL with the `vector` extension | Stores accounts, projects, document text/chunks and embeddings, conversations, usage counters, and literature metadata. The Render configuration uses `DATABASE_URL`; `LITERATURE_DATABASE_URL` defaults to the same URL unless separately configured. |
+| Hosted database | Supabase PostgreSQL with the `vector` extension | Stores accounts, team workspaces/memberships/channels/messages, projects, document text/chunks and embeddings, conversations, usage counters, and literature metadata. The Render configuration uses `DATABASE_URL`; `LITERATURE_DATABASE_URL` defaults to the same URL unless separately configured. |
 | Hosted file storage | Supabase Storage, private `research-documents` bucket | Stores original uploaded files. The API accesses the bucket using its server-side Supabase key; the browser does not access the bucket directly. |
 | Local development | Docker Compose, PostgreSQL 16 with pgvector | Runs the Vite development server, API, and PostgreSQL. Local Compose initializes separate `research_db` and `literature_db` databases and stores uploads in a Docker volume. Local file storage is also supported. |
 
@@ -58,7 +58,8 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 ## Data model and persistence
 
 - **Account data:** user email, unique username, display name, optional resized profile-picture data URI, and password hash. Existing accounts receive a generated username and the optional picture column during additive startup migrations. Passwords remain one-way hashed and are never returned by the API.
-- **Research workspace:** owner-managed projects; accepted `project_invitations` grant collaborators access to project documents, papers, annotations, and LaTeX content. Assistant conversations remain scoped to the individual user. Project/document metadata and extracted text are in the research database; original uploads are stored in the private file store.
+- **Research and team workspaces:** personal projects remain owner-managed. `team_workspaces` represent organizations; `team_workspace_memberships` grant members access to every project in that workspace. Projects link optionally to a team workspace, and existing projects receive a nullable link column during startup migration. Assistant conversations remain scoped to the individual user. Project/document metadata and extracted text are in the research database; original uploads are stored in the private file store.
+- **Team membership and channels:** `team_workspace_invitations` tracks invitations to registered accounts until accepted or declined. `team_channels` belong to a workspace and may optionally be linked to one project; `team_channel_messages` persist channel history. Workspace members can use workspace-wide and project channels. A project guest who is not in the organization can list and message only channels linked to projects they can access.
 - **Project invitations:** `project_invitations` stores inviter, invitee, project, status (`pending`, `accepted`, or `declined`), and timestamps. `notifications` records invitations, invitation responses, and new direct messages for inbox display.
 - **Direct messages:** `direct_messages` stores sender, recipient, message text, creation time, and read time. Messages are private to the two users; notification rows link to the original message.
 - **LaTeX workspaces:** one project-owned `latex_workspaces` row per project stores `main.tex`, `references.bib`, and its last-update timestamp in the research database. Accepted collaborators can read and edit it. Polling syncs saved changes, and timestamp checks reject stale saves rather than silently overwriting another user's newer edit.
@@ -71,7 +72,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 - **Activity history:** action type, timestamp, actor account, and a small set of non-content details. Events deliberately exclude document names/text, search terms, assistant questions, and generated answers. User events are removed when that account is hard-deleted.
 - **Original files:** local files in development or private Supabase Storage objects in the hosted setup. PostgreSQL stores the storage path and metadata, not the file bytes.
 
-The API enables PostgreSQL's `vector` extension and creates its tables—including `annotations`—at startup. In local Compose, the initialization script creates `research_db` and `literature_db`. In the hosted Blueprint, one Supabase `DATABASE_URL` is used for both model metadata sets by default; configure `LITERATURE_DATABASE_URL` only if a separate literature database is desired.
+The API enables PostgreSQL's `vector` extension and creates its tables—including `annotations`, team workspace, membership, invitation, channel, and channel-message tables—at startup. Existing research databases receive the nullable project-to-team-workspace column additively. In local Compose, the initialization script creates `research_db` and `literature_db`. In the hosted Blueprint, one Supabase `DATABASE_URL` is used for both model metadata sets by default; configure `LITERATURE_DATABASE_URL` only if a separate literature database is desired.
 
 ## Main data flows
 
@@ -109,10 +110,12 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 ### Project collaboration and messaging
 
-1. A project owner enters a registered colleague's username or email in **Share**. The API creates a pending invitation and an inbox notification. Unknown accounts are not emailed or invited; there is no external email-delivery integration.
-2. The invitee accepts or declines from **Inbox**. Acceptance immediately grants access to the project and its shared documents, literature, annotations, and LaTeX workspace. The owner receives an invitation-response notification and can revoke access at any time. Owners alone can edit project details, manage invitations, or delete the project. Assistant conversations remain private to the user who created them.
-3. The frontend polls inbox counts, project summaries, active project data, and open annotation lists every five seconds; the LaTeX editor polls saved workspace content every 2.5 seconds when there are no local unsaved edits. This gives near-real-time updates without a persistent WebSocket connection. Concurrent stale LaTeX saves are rejected with HTTP 409.
-4. Authenticated users can search colleague usernames, names, or email addresses and send direct messages. The API scopes each thread to its two participants, records unread notifications, marks messages read when the recipient opens the thread, and returns at most the latest 100 messages per thread request.
+1. A user creates a team workspace; the API records them as its owner and creates their membership. The owner invites registered accounts by username or email. Invitees accept or decline from the team-workspaces panel; acceptance adds workspace membership and grants access to workspace projects. Unknown accounts are not emailed or invited; there is no external email-delivery integration.
+2. A workspace member creates projects within the selected team workspace and can create workspace-wide channels or channels linked to a particular project. Messages persist in PostgreSQL and the channel view polls for new messages.
+3. A project owner enters a registered colleague's username or email in **Share**. The API creates a pending invitation and an inbox notification. This project-only invitation can bring in people outside the workspace; they can access the invited project and its project-linked channels, but not workspace-wide channels or other projects.
+4. The project invitee accepts or declines from **Inbox**. Acceptance immediately grants access to the project and its shared documents, literature, annotations, and LaTeX workspace. The owner receives an invitation-response notification and can revoke access at any time. Owners alone can edit project details, manage invitations, or delete the project. Assistant conversations remain private to the user who created them.
+5. The frontend polls inbox counts, project summaries, active project data, and open annotation lists every five seconds; the LaTeX editor polls saved workspace content every 2.5 seconds when there are no local unsaved edits. This gives near-real-time updates without a persistent WebSocket connection. Concurrent stale LaTeX saves are rejected with HTTP 409.
+6. Authenticated users can search colleague usernames, names, or email addresses and send direct messages. The API scopes each thread to its two participants, records unread notifications, marks messages read when the recipient opens the thread, and returns at most the latest 100 messages per thread request.
 
 ### Annotate documents and papers
 
@@ -154,6 +157,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Review current daily AI allowances and document-processing totals on the dedicated **AI usage** page within account settings instead of the project page. **Profile** is a separate settings page for user information, profile-picture management, and password changes. Password hashes are not reversible or exposed; users can change a password after verifying the current password, with the same minimum strength rules as registration.
 - Sign in and sign out. Researcher and administrator sign-in allow 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window; a successful sign-in clears matching counters.
 - Keep an authenticated session in the browser using a bearer token. The backend validates signed tokens and checks project ownership or accepted collaborator access on every project resource route.
+- Create organization team workspaces, invite registered members, organize multiple projects under a workspace, and create workspace-wide or project-scoped messaging channels. Workspace membership grants access to all projects in that workspace; a non-member project guest sees only their invited project and its project-specific channels.
 - Invite registered colleagues by username or email from the project's share control. Recipients can accept or decline in **Inbox**; owners can remove invited or accepted collaborators. Accepted collaborators share project documents, papers, annotations, and LaTeX content. Only owners can edit project details or delete projects.
 - Use **Inbox** to review invitations, invitation responses, and direct messages. Search for a colleague by username, name, or email to start a private conversation. Messages, notification changes, project lists, documents, papers, and saved LaTeX content refresh in the background while open.
 
@@ -218,6 +222,15 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/auth/me` | Return the authenticated user's profile. |
 | `PATCH` | `/api/auth/profile` | Update the authenticated user's display name, username, or profile picture. |
 | `POST` | `/api/auth/password` | Change the authenticated user's password after current-password verification. |
+| `GET`, `POST` | `/api/team-workspaces` | List the authenticated user's team workspaces or create a workspace and become its owner. |
+| `GET` | `/api/team-workspaces/{workspace_id}/members` | List members of a workspace. |
+| `POST` | `/api/team-workspaces/{workspace_id}/invitations` | Owner-only: invite a registered account to a workspace by username or email. |
+| `GET` | `/api/team-workspaces/{workspace_id}/invitations` | Owner-only: list pending workspace invitations. |
+| `GET` | `/api/team-workspace-invitations` | List pending workspace invitations received by the current user. |
+| `POST` | `/api/team-workspace-invitations/{invitation_id}/respond` | Accept or decline a workspace invitation. |
+| `DELETE` | `/api/team-workspaces/{workspace_id}/members/{member_id}` | Owner-only: remove a member; workspace owners cannot remove themselves. |
+| `GET`, `POST` | `/api/team-workspaces/{workspace_id}/channels` | List accessible workspace/project channels or create a channel. Project-linked channels require the project to belong to that workspace. |
+| `GET`, `POST` | `/api/team-channels/{channel_id}/messages` | Read or send channel messages; access is restricted to workspace members or members of the linked project. |
 | `GET` | `/api/users/search?q=...` | Search registered colleagues by username, name, or email. |
 | `GET` | `/api/inbox` | List recent invitation, invitation-response, and direct-message notifications. |
 | `GET` | `/api/inbox/unread-count` | Read the authenticated user's unread notification count. |
@@ -229,7 +242,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/admin/users?limit=...&offset=...` | List paginated account summaries and activity timestamps. |
 | `GET` | `/api/admin/activity?user_id=...&limit=...&offset=...` | List paginated activity metadata, optionally for one user. |
 | `DELETE` | `/api/admin/users/{user_id}` | Permanently delete another user and their associated data/files. |
-| `GET`, `POST` | `/api/projects` | List owned and accepted shared projects, or create a project owned by the authenticated user. |
+| `GET`, `POST` | `/api/projects` | List owned, accepted shared, and team-workspace projects, or create a personal or team-workspace project owned by the authenticated user. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
 | `POST`, `GET` | `/api/projects/{project_id}/invitations` | Owner-only: send an invite by registered username/email or list project invitations and access statuses. |
 | `DELETE` | `/api/projects/{project_id}/invitations/{invitation_id}` | Owner-only: revoke a pending invitation or accepted collaborator's access. |

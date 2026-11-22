@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.models import LatexWorkspace, ProjectInvitation, ResearchProject, User, UserActivity
+from app.models import LatexWorkspace, ProjectInvitation, ResearchProject, TeamWorkspace, User, UserActivity
 from app.routers.latex import DEFAULT_MAIN_TEX, get_latex_workspace, save_latex_workspace
 from app.schemas import LatexWorkspaceUpdate
 
@@ -14,7 +14,7 @@ from app.schemas import LatexWorkspaceUpdate
 @pytest.fixture
 def latex_database(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'latex.sqlite'}")
-    for model in (User, ResearchProject, ProjectInvitation, LatexWorkspace, UserActivity):
+    for model in (User, TeamWorkspace, ResearchProject, ProjectInvitation, LatexWorkspace, UserActivity):
         model.__table__.create(engine)
     with Session(engine) as db:
         user = User(email="writer@example.com", name="Writer", password_hash="hashed")

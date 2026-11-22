@@ -178,6 +178,7 @@ class TokenResponse(BaseModel):
 class ProjectCreate(BaseModel):
     project_name: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=5000)
+    team_workspace_id: uuid.UUID | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -188,10 +189,108 @@ class ProjectUpdate(BaseModel):
 class ProjectResponse(APIModel):
     project_id: uuid.UUID
     user_id: uuid.UUID
+    team_workspace_id: uuid.UUID | None
     project_name: str
     description: str
     created_at: datetime
     updated_at: datetime
+
+
+class TeamWorkspaceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_workspace_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Workspace name cannot be blank.")
+        return value
+
+
+class TeamWorkspaceResponse(BaseModel):
+    team_workspace_id: uuid.UUID
+    owner_id: uuid.UUID
+    name: str
+    created_at: datetime
+    membership_role: Literal["owner", "member"]
+    member_count: int
+
+
+class TeamWorkspaceInvitationCreate(BaseModel):
+    identifier: str = Field(min_length=1, max_length=320)
+
+
+class TeamWorkspaceInvitationResponse(BaseModel):
+    invitation_id: uuid.UUID
+    team_workspace_id: uuid.UUID
+    inviter_id: uuid.UUID
+    invitee_id: uuid.UUID
+    status: Literal["pending", "accepted", "declined"]
+    created_at: datetime
+    updated_at: datetime
+    workspace_name: str
+    inviter_name: str
+    invitee_name: str
+    invitee_username: str
+    invitee_email: EmailStr
+
+
+class TeamWorkspaceInvitationReply(BaseModel):
+    response: Literal["accepted", "declined"]
+
+
+class TeamWorkspaceMemberResponse(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    name: str
+    email: EmailStr
+    role: Literal["owner", "member"]
+    joined_at: datetime
+
+
+class TeamChannelCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    project_id: uuid.UUID | None = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_channel_name(cls, value: str) -> str:
+        value = value.strip().lstrip("#").strip()
+        if not value:
+            raise ValueError("Channel name cannot be blank.")
+        return value
+
+
+class TeamChannelResponse(BaseModel):
+    channel_id: uuid.UUID
+    team_workspace_id: uuid.UUID
+    project_id: uuid.UUID | None
+    created_by: uuid.UUID
+    name: str
+    created_at: datetime
+    project_name: str | None = None
+
+
+class TeamChannelMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_channel_message(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message cannot be blank.")
+        return value
+
+
+class TeamChannelMessageResponse(BaseModel):
+    message_id: uuid.UUID
+    channel_id: uuid.UUID
+    sender_id: uuid.UUID
+    sender_name: str
+    content: str
+    created_at: datetime
 
 
 class ProjectInvitationCreate(BaseModel):

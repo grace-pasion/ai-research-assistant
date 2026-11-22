@@ -87,6 +87,53 @@ class DailyEmbeddingUsage(ResearchBase):
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class TeamWorkspace(ResearchBase):
+    __tablename__ = "team_workspaces"
+
+    team_workspace_id: Mapped[uuid.UUID] = uuid_column()
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TeamWorkspaceMembership(ResearchBase):
+    __tablename__ = "team_workspace_memberships"
+    __table_args__ = (UniqueConstraint("team_workspace_id", "user_id"),)
+
+    membership_id: Mapped[uuid.UUID] = uuid_column()
+    team_workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("team_workspaces.team_workspace_id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TeamWorkspaceInvitation(ResearchBase):
+    __tablename__ = "team_workspace_invitations"
+    __table_args__ = (UniqueConstraint("team_workspace_id", "invitee_id"),)
+
+    invitation_id: Mapped[uuid.UUID] = uuid_column()
+    team_workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("team_workspaces.team_workspace_id", ondelete="CASCADE"), index=True
+    )
+    inviter_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    invitee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ResearchProject(ResearchBase):
     __tablename__ = "research_projects"
     __table_args__ = (Index("ix_projects_owner_updated", "user_id", "updated_at"),)
@@ -95,12 +142,47 @@ class ResearchProject(ResearchBase):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), index=True
     )
+    team_workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("team_workspaces.team_workspace_id", ondelete="SET NULL"), nullable=True, index=True
+    )
     project_name: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class TeamChannel(ResearchBase):
+    __tablename__ = "team_channels"
+    __table_args__ = (UniqueConstraint("team_workspace_id", "name"),)
+
+    channel_id: Mapped[uuid.UUID] = uuid_column()
+    team_workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("team_workspaces.team_workspace_id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TeamChannelMessage(ResearchBase):
+    __tablename__ = "team_channel_messages"
+
+    message_id: Mapped[uuid.UUID] = uuid_column()
+    channel_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("team_channels.channel_id", ondelete="CASCADE"), index=True
+    )
+    sender_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ProjectInvitation(ResearchBase):

@@ -6,7 +6,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ProjectInvitation, ResearchProject, User
+from app.models import (
+    ProjectInvitation,
+    ResearchProject,
+    TeamWorkspaceMembership,
+    User,
+)
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
@@ -25,6 +30,11 @@ def list_projects(
             .where(
                 or_(
                     ResearchProject.user_id == user.user_id,
+                    ResearchProject.team_workspace_id.in_(
+                        select(TeamWorkspaceMembership.team_workspace_id).where(
+                            TeamWorkspaceMembership.user_id == user.user_id
+                        )
+                    ),
                     ResearchProject.project_id.in_(
                         select(ProjectInvitation.project_id).where(
                             ProjectInvitation.invitee_id == user.user_id,
@@ -44,8 +54,18 @@ def create_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if payload.team_workspace_id is not None:
+        membership = db.scalar(
+            select(TeamWorkspaceMembership.membership_id).where(
+                TeamWorkspaceMembership.team_workspace_id == payload.team_workspace_id,
+                TeamWorkspaceMembership.user_id == user.user_id,
+            )
+        )
+        if membership is None:
+            raise HTTPException(status_code=404, detail="Team workspace not found.")
     project = ResearchProject(
         user_id=user.user_id,
+        team_workspace_id=payload.team_workspace_id,
         project_name=payload.project_name.strip(),
         description=payload.description.strip(),
     )

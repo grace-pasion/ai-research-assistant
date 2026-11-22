@@ -14,6 +14,7 @@ from app.models import (
     Document,
     DocumentChunk,
     ResearchProject,
+    TeamWorkspace,
     UserActivity,
     User,
 )
@@ -32,7 +33,7 @@ def create_processing_project(db: Session) -> ResearchProject:
 
 
 def create_processing_tables(engine) -> None:
-    for model in (User, ResearchProject, DailyEmbeddingUsage, Document, DocumentChunk):
+    for model in (User, TeamWorkspace, ResearchProject, DailyEmbeddingUsage, Document, DocumentChunk):
         model.__table__.create(engine)
 
 
@@ -191,7 +192,7 @@ def test_embedding_allowance_blocks_api_call_and_keeps_extracted_text(
 
 def test_reprocess_does_not_queue_a_second_job_for_a_processing_document():
     engine = create_engine("sqlite://")
-    for model in (User, ResearchProject, Document, UserActivity):
+    for model in (User, TeamWorkspace, ResearchProject, Document, UserActivity):
         model.__table__.create(engine)
     with Session(engine) as db:
         project = create_processing_project(db)

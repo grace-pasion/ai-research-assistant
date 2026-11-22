@@ -13,6 +13,7 @@ from app.models import (
     ProjectInvitation,
     ProjectPaper,
     ResearchProject,
+    TeamWorkspace,
     User,
     UserActivity,
 )
@@ -32,7 +33,7 @@ from app.services.bibliography import (
 def bibliography_databases(tmp_path):
     research_engine = create_engine(f"sqlite:///{tmp_path / 'research.sqlite'}")
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
-    for model in (User, ResearchProject, ProjectInvitation, ProjectPaper, UserActivity):
+    for model in (User, TeamWorkspace, ResearchProject, ProjectInvitation, ProjectPaper, UserActivity):
         model.__table__.create(research_engine)
     for model in (Paper, Author, PaperAuthor):
         model.__table__.create(literature_engine)

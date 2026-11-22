@@ -13,6 +13,7 @@ from app.models import (
     Document,
     ProjectPaper,
     ResearchProject,
+    TeamWorkspace,
     User,
     UserActivity,
 )
@@ -35,6 +36,7 @@ def admin_db():
     for table in (
         AuthRateLimit.__table__,
         User.__table__,
+        TeamWorkspace.__table__,
         ResearchProject.__table__,
         Document.__table__,
         ProjectPaper.__table__,

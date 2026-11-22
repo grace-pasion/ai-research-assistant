@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User
+from app.models import TeamWorkspaceMembership, User
 
 password_hash = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hash.hash("fieldnotes-invalid-login-placeholder")
@@ -97,6 +97,14 @@ def require_project_access(db: Session, project_id: UUID, user_id: UUID):
     if project is None:
         raise HTTPException(status_code=404, detail="Research project not found")
     if project.user_id == user_id:
+        return project
+    workspace_membership = db.scalar(
+        select(TeamWorkspaceMembership.membership_id).where(
+            TeamWorkspaceMembership.team_workspace_id == project.team_workspace_id,
+            TeamWorkspaceMembership.user_id == user_id,
+        )
+    ) if project.team_workspace_id is not None else None
+    if workspace_membership is not None:
         return project
     invitation = db.scalar(
         select(ProjectInvitation.invitation_id).where(

@@ -9,13 +9,26 @@ from app.config import get_settings
 from app.database import (
     ensure_document_chunk_page_column,
     ensure_project_paper_screening_columns,
+    ensure_project_team_workspace_column,
     ensure_user_profile_picture_column,
     ensure_user_username_column,
     initialize_database,
     make_engine,
 )
 from app.models import LiteratureBase, ResearchBase
-from app.routers import admin, annotations, assistant, auth, collaboration, documents, latex, papers, projects, usage
+from app.routers import (
+    admin,
+    annotations,
+    assistant,
+    auth,
+    collaboration,
+    documents,
+    latex,
+    papers,
+    projects,
+    team_workspaces,
+    usage,
+)
 from app.security_headers import security_headers_middleware
 
 
@@ -37,6 +50,7 @@ async def lifespan(app: FastAPI):
     ensure_user_profile_picture_column(research_engine)
     ensure_project_paper_screening_columns(research_engine)
     ensure_document_chunk_page_column(research_engine)
+    ensure_project_team_workspace_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield
     research_engine.dispose()
@@ -62,6 +76,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(projects.router)
 app.include_router(collaboration.router)
+app.include_router(team_workspaces.router)
 app.include_router(latex.router)
 app.include_router(documents.router)
 app.include_router(papers.router)

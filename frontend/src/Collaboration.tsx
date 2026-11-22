@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, MessageCircle, Send, UserPlus, X } from "lucide-react";
+import { ArrowLeft, Check, Hash, MessageCircle, Send, UserPlus, X } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type {
   Colleague,
@@ -7,6 +7,11 @@ import type {
   Notification,
   Project,
   ProjectInvitation,
+  TeamChannel,
+  TeamChannelMessage,
+  TeamWorkspace,
+  TeamWorkspaceInvitation,
+  TeamWorkspaceMember,
 } from "./types";
 
 type Request = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -407,6 +412,369 @@ export function InboxDialog({
             </div>
           </div>
         )}
+      </section>
+    </div>
+  );
+}
+
+export function TeamWorkspaceDialog({
+  workspaces,
+  userId,
+  request,
+  onClose,
+  onChanged,
+}: {
+  workspaces: TeamWorkspace[];
+  userId: string;
+  request: Request;
+  onClose: () => void;
+  onChanged: (teamWorkspaceId?: string) => Promise<void>;
+}) {
+  const [selectedId, setSelectedId] = useState(workspaces[0]?.team_workspace_id ?? "");
+  const [members, setMembers] = useState<TeamWorkspaceMember[]>([]);
+  const [invitations, setInvitations] = useState<TeamWorkspaceInvitation[]>([]);
+  const [received, setReceived] = useState<TeamWorkspaceInvitation[]>([]);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [identifier, setIdentifier] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const selected = workspaces.find((item) => item.team_workspace_id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (!workspaces.some((item) => item.team_workspace_id === selectedId)) {
+      setSelectedId(workspaces[0]?.team_workspace_id ?? "");
+    }
+  }, [selectedId, workspaces]);
+
+  const refresh = useCallback(async () => {
+    const pending = await request<TeamWorkspaceInvitation[]>("/api/team-workspace-invitations");
+    setReceived(pending);
+    if (!selected) {
+      setMembers([]);
+      setInvitations([]);
+      return;
+    }
+    const [loadedMembers, loadedInvitations] = await Promise.all([
+      request<TeamWorkspaceMember[]>(`/api/team-workspaces/${selected.team_workspace_id}/members`),
+      selected.owner_id === userId
+        ? request<TeamWorkspaceInvitation[]>(`/api/team-workspaces/${selected.team_workspace_id}/invitations`)
+        : Promise.resolve([]),
+    ]);
+    setMembers(loadedMembers);
+    setInvitations(loadedInvitations);
+  }, [request, selected, userId]);
+
+  useEffect(() => {
+    refresh().catch((cause: unknown) =>
+      setError(cause instanceof Error ? cause.message : "Could not load team workspace details."),
+    );
+  }, [refresh]);
+
+  async function createWorkspace(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const created = await request<TeamWorkspace>("/api/team-workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name: workspaceName }),
+      });
+      setWorkspaceName("");
+      await onChanged(created.team_workspace_id);
+      setSelectedId(created.team_workspace_id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the team workspace.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function inviteMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request<TeamWorkspaceInvitation>(
+        `/api/team-workspaces/${selected.team_workspace_id}/invitations`,
+        { method: "POST", body: JSON.stringify({ identifier }) },
+      );
+      setIdentifier("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not invite this person.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function respond(invitation: TeamWorkspaceInvitation, response: "accepted" | "declined") {
+    setBusy(true);
+    setError("");
+    try {
+      await request<TeamWorkspaceInvitation>(
+        `/api/team-workspace-invitations/${invitation.invitation_id}/respond`,
+        { method: "POST", body: JSON.stringify({ response }) },
+      );
+      await Promise.all([onChanged(invitation.team_workspace_id), refresh()]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not respond to the invitation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeMember(member: TeamWorkspaceMember) {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request<void>(
+        `/api/team-workspaces/${selected.team_workspace_id}/members/${member.user_id}`,
+        { method: "DELETE" },
+      );
+      await Promise.all([onChanged(), refresh()]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not remove the team member.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="modal-card collaboration-modal team-workspace-modal" role="dialog" aria-modal="true" aria-labelledby="team-workspace-title">
+        <div className="modal-heading">
+          <div><p className="eyebrow">ORGANIZATION</p><h2 id="team-workspace-title">Team workspaces</h2></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        <p className="collaboration-help">Create an organization workspace, invite members, and share projects and channels with your team.</p>
+        <form className="collaboration-invite-form" onSubmit={(event) => void createWorkspace(event)}>
+          <input aria-label="New team workspace name" maxLength={160} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="New workspace name" required value={workspaceName} />
+          <button className="button primary" disabled={busy || !workspaceName.trim()}><UserPlus size={15} /> Create</button>
+        </form>
+        {received.length > 0 && (
+          <div className="collaboration-list">
+            <div className="collaboration-list-heading">Invitations for you</div>
+            {received.map((invitation) => (
+              <div className="team-invitation" key={invitation.invitation_id}>
+                <span><strong>{invitation.workspace_name}</strong><small>Invited by {invitation.inviter_name}</small></span>
+                <button className="button primary small-button" disabled={busy} onClick={() => void respond(invitation, "accepted")} type="button"><Check size={13} /> Join</button>
+                <button className="button secondary small-button" disabled={busy} onClick={() => void respond(invitation, "declined")} type="button">Decline</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {workspaces.length > 0 && (
+          <label className="team-workspace-select">
+            Manage workspace
+            <select onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
+              {workspaces.map((workspace) => <option key={workspace.team_workspace_id} value={workspace.team_workspace_id}>{workspace.name} · {workspace.member_count} members</option>)}
+            </select>
+          </label>
+        )}
+        {selected && (
+          <>
+            {selected.owner_id === userId && (
+              <>
+                <div className="collaboration-list-heading">Invite a team member</div>
+                <p className="collaboration-help">Invitations go to registered Fieldnotes accounts by username or email.</p>
+                <form className="collaboration-invite-form" onSubmit={(event) => void inviteMember(event)}>
+                  <input aria-label="Username or email address" autoComplete="off" maxLength={320} onChange={(event) => setIdentifier(event.target.value)} placeholder="Username or email address" required value={identifier} />
+                  <button className="button primary" disabled={busy || !identifier.trim()}><UserPlus size={15} /> Invite</button>
+                </form>
+                {invitations.map((invitation) => (
+                  <div className="team-invitation" key={invitation.invitation_id}>
+                    <span><strong>{invitation.invitee_name}</strong><small>{invitation.invitee_email}</small></span>
+                    <span className="collaboration-status status-pending">pending</span>
+                  </div>
+                ))}
+              </>
+            )}
+            <div className="collaboration-list">
+              <div className="collaboration-list-heading">Members</div>
+              {members.map((member) => (
+                <div className="collaboration-person" key={member.user_id}>
+                  <span className="avatar">{member.name.slice(0, 1).toUpperCase()}</span>
+                  <span className="collaboration-person-info">
+                    <strong>{member.name} <small>{member.role}</small></strong>
+                    <span>{member.email}</span>
+                  </span>
+                  {selected.owner_id === userId && member.user_id !== userId && (
+                    <button className="text-button danger-text" disabled={busy} onClick={() => void removeMember(member)} type="button">Remove</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {error && <p className="inline-error" role="alert">{error}</p>}
+      </section>
+    </div>
+  );
+}
+
+export function TeamChannelDialog({
+  workspaceId,
+  workspaceName,
+  project,
+  canCreate,
+  request,
+  onClose,
+}: {
+  workspaceId: string;
+  workspaceName: string;
+  project: Project | null;
+  canCreate: boolean;
+  request: Request;
+  onClose: () => void;
+}) {
+  const [channels, setChannels] = useState<TeamChannel[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [messages, setMessages] = useState<TeamChannelMessage[]>([]);
+  const [channelName, setChannelName] = useState("");
+  const [scope, setScope] = useState(project?.project_id ?? "");
+  const [content, setContent] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const selected = channels.find((channel) => channel.channel_id === selectedId) ?? null;
+
+  const refreshChannels = useCallback(async () => {
+    const loaded = await request<TeamChannel[]>(`/api/team-workspaces/${workspaceId}/channels`);
+    setChannels(loaded);
+    setSelectedId((current) => loaded.some((channel) => channel.channel_id === current)
+      ? current
+      : loaded[0]?.channel_id ?? "");
+  }, [request, workspaceId]);
+
+  const refreshMessages = useCallback(async (channelId: string) => {
+    setMessages(await request<TeamChannelMessage[]>(`/api/team-channels/${channelId}/messages`));
+  }, [request]);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => refreshChannels().catch((cause: unknown) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Could not load team channels.");
+    });
+    void load();
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [refreshChannels]);
+
+  useEffect(() => {
+    if (!selected) {
+      setMessages([]);
+      return;
+    }
+    let active = true;
+    const load = () => refreshMessages(selected.channel_id).catch((cause: unknown) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Could not load channel messages.");
+    });
+    void load();
+    const timer = window.setInterval(() => void load(), 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [refreshMessages, selected]);
+
+  async function createChannel(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const created = await request<TeamChannel>(`/api/team-workspaces/${workspaceId}/channels`, {
+        method: "POST",
+        body: JSON.stringify({ name: channelName, project_id: scope || null }),
+      });
+      setChannelName("");
+      await refreshChannels();
+      setSelectedId(created.channel_id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the channel.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !content.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const sent = await request<TeamChannelMessage>(`/api/team-channels/${selected.channel_id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      });
+      setMessages((current) => [...current, sent]);
+      setContent("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send the channel message.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="modal-card inbox-modal team-channel-modal" role="dialog" aria-modal="true" aria-labelledby="team-channel-title">
+        <div className="modal-heading">
+          <div><p className="eyebrow">TEAM MESSAGES · {workspaceName}</p><h2 id="team-channel-title">Channels</h2></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        {error && <p className="inline-error" role="alert">{error}</p>}
+        <div className="team-channel-layout">
+          <aside className="team-channel-list">
+            {channels.map((channel) => (
+              <button className={`team-channel-option ${channel.channel_id === selectedId ? "selected" : ""}`} key={channel.channel_id} onClick={() => setSelectedId(channel.channel_id)} type="button">
+                <Hash size={14} /><span><strong>{channel.name}</strong><small>{channel.project_name ?? "Workspace-wide"}</small></span>
+              </button>
+            ))}
+            {!channels.length && <p className="muted compact">No channels are available yet.</p>}
+            {canCreate && (
+              <form className="team-channel-create" onSubmit={(event) => void createChannel(event)}>
+                <label>New channel<input aria-label="New channel name" maxLength={80} onChange={(event) => setChannelName(event.target.value)} placeholder="Channel name" required value={channelName} /></label>
+                <label>Channel access
+                  <select onChange={(event) => setScope(event.target.value)} value={scope}>
+                    <option value="">Entire workspace</option>
+                    {project && <option value={project.project_id}>Only {project.project_name}</option>}
+                  </select>
+                </label>
+                <button className="button primary" disabled={busy || !channelName.trim()}><Hash size={14} /> Create channel</button>
+              </form>
+            )}
+          </aside>
+          <div className="team-channel-conversation">
+            {selected ? (
+              <>
+                <header className="inbox-conversation-header"><Hash size={15} /><span><strong>{selected.name}</strong><small>{selected.project_name ?? "Visible to team workspace members"}</small></span></header>
+                <div className="inbox-message-list" aria-live="polite">
+                  {messages.map((message) => (
+                    <div className="team-channel-message" key={message.message_id}>
+                      <strong>{message.sender_name}</strong><p>{message.content}</p>
+                      <small>{new Date(message.created_at).toLocaleString()}</small>
+                    </div>
+                  ))}
+                  {!messages.length && <p className="muted compact">No messages yet. Start the conversation.</p>}
+                </div>
+                <form className="inbox-compose" onSubmit={(event) => void sendMessage(event)}>
+                  <input aria-label="Channel message" maxLength={5000} onChange={(event) => setContent(event.target.value)} placeholder={`Message #${selected.name}`} value={content} />
+                  <button className="button primary" disabled={busy || !content.trim()} aria-label="Send message"><Send size={15} /></button>
+                </form>
+              </>
+            ) : (
+              <div className="inbox-empty"><Hash size={24} /><p>Create a channel to start team messaging.</p></div>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   );

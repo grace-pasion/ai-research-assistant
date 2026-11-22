@@ -19,6 +19,7 @@ from app.models import (
     PaperAuthor,
     ProjectInvitation,
     ResearchProject,
+    TeamWorkspace,
     User,
 )
 from app.routers.assistant import export_research_brief
@@ -31,6 +32,7 @@ def brief_databases(tmp_path):
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
     for model in (
         User,
+        TeamWorkspace,
         ResearchProject,
         ProjectInvitation,
         Conversation,

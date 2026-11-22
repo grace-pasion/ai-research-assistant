@@ -43,6 +43,12 @@ a { color: inherit; }
 .new-project-button:hover { background: #e8ede8; }
 .push-right { margin-left: auto; }
 .project-list { display: grid; gap: 3px; margin-top: 15px; }
+.sidebar-team-heading { align-items: center; display: flex; justify-content: space-between; margin: 15px 0 3px; }
+.sidebar-team-heading .sidebar-label { margin-bottom: 0; }
+.team-workspace-list { display: grid; gap: 2px; margin-top: 3px; }
+.team-workspace-link { align-items: center; background: transparent; border: 0; border-radius: 6px; color: #78827b; display: flex; font-size: 10px; gap: 8px; min-width: 0; padding: 7px 9px; text-align: left; }
+.team-workspace-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-workspace-link:hover, .team-workspace-link.selected { background: #edf3ee; color: #32644d; }
 .project-link { align-items: center; background: transparent; border: 0; border-radius: 7px; color: #69736d; display: flex; gap: 11px; min-width: 0; padding: 10px 11px; text-align: left; }
 .project-link:hover { background: #f2f4f1; color: var(--ink); }
 .project-link.selected { background: #eaf2ed; color: #285d49; font-weight: 600; }
@@ -381,6 +387,30 @@ h1, h2, h3, p { margin-top: 0; }
 .password-toggle:hover { background: #f0f3f0; color: #3d5948; }
 .settings-actions { display: flex; gap: 7px; }
 .collaboration-modal { max-height: 85vh; max-width: 620px; overflow: auto; }
+.team-workspace-modal { max-width: 680px; }
+.team-workspace-select { color: #56615a; display: flex; flex-direction: column; font-size: 10px; font-weight: 600; gap: 7px; margin-top: 15px; }
+.team-workspace-select select, .team-channel-create select { background: white; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 11px; padding: 9px; }
+.team-invitation { align-items: center; border-bottom: 1px solid #f0f2f0; display: flex; gap: 8px; justify-content: space-between; padding: 8px 0; }
+.team-invitation > span:first-child { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.team-invitation strong { color: #455149; font-size: 10px; }
+.team-invitation small { color: #919a94; font-size: 9px; }
+.team-channel-modal { max-width: 960px; }
+.team-channel-layout { display: grid; flex: 1; grid-template-columns: minmax(190px, 270px) minmax(0, 1fr); min-height: 0; }
+.team-channel-list { border-right: 1px solid #edf0ed; overflow: auto; padding: 10px 12px 10px 0; }
+.team-channel-option { align-items: flex-start; background: transparent; border: 0; border-radius: 7px; color: #6d7971; display: flex; gap: 8px; margin: 2px 0; padding: 8px; text-align: left; width: 100%; }
+.team-channel-option.selected, .team-channel-option:hover { background: #f1f5f1; color: #32644d; }
+.team-channel-option span { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.team-channel-option strong { font-size: 10px; }
+.team-channel-option small { color: #929b95; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-channel-create { border-top: 1px solid #edf0ed; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 12px; }
+.team-channel-create label { color: #78827b; display: flex; flex-direction: column; font-size: 9px; gap: 5px; }
+.team-channel-create input { background: white; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 10px; min-width: 0; outline: 0; padding: 8px; }
+.team-channel-create .button { font-size: 9px; min-height: 32px; }
+.team-channel-conversation { display: flex; flex-direction: column; min-height: 0; padding: 10px 0 0 13px; }
+.team-channel-message { background: #f7f9f7; border-radius: 8px; max-width: 90%; padding: 8px 10px; }
+.team-channel-message strong { color: #536258; font-size: 9px; }
+.team-channel-message p { color: #46534b; font-size: 10px; line-height: 1.5; margin: 4px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.team-channel-message small { color: #929b95; display: block; font-size: 8px; text-align: right; }
 .collaboration-help { color: #7d8980; font-size: 11px; line-height: 1.6; margin: 13px 0; }
 .collaboration-invite-form { display: flex; gap: 8px; }
 .collaboration-invite-form input, .inbox-search input, .inbox-compose input { background: #fff; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 11px; min-width: 0; outline: 0; padding: 10px 11px; }
@@ -476,7 +506,9 @@ h1, h2, h3, p { margin-top: 0; }
   body { min-width: 360px; }
   .sidebar { flex-basis: 64px; padding: 20px 8px 12px; }
   .brand { justify-content: center; margin: 1px 0 34px; }
-  .brand > span:not(.brand-mark), .sidebar-label, .new-project-button, .project-link-name, .account-name, .logout, .sidebar-empty { display: none; }
+  .brand > span:not(.brand-mark), .sidebar-label, .new-project-button, .team-workspace-link span, .project-link-name, .account-name, .logout, .sidebar-empty { display: none; }
+  .sidebar-team-heading { justify-content: center; }
+  .team-workspace-list { justify-items: center; }
   .project-list { justify-items: center; }
   .project-link { padding: 12px; }
   .project-bullet { height: 9px; width: 9px; }
@@ -490,6 +522,8 @@ h1, h2, h3, p { margin-top: 0; }
   .settings-nav button { flex: 1; text-align: center; }
   .settings-modal { padding: 18px; }
   .inbox-threads { padding-right: 5px; }
+  .team-channel-layout { grid-template-columns: minmax(105px, 36%) minmax(0, 1fr); }
+  .team-channel-list { padding-right: 5px; }
   .inbox-conversation { padding-left: 7px; }
   .inbox-conversation-header small { overflow-wrap: anywhere; }
   .collaboration-person { flex-wrap: wrap; }

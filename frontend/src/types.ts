@@ -9,10 +9,63 @@ export type User = {
 export type Project = {
   project_id: string;
   user_id: string;
+  team_workspace_id: string | null;
   project_name: string;
   description: string;
   created_at: string;
   updated_at: string;
+};
+
+export type TeamWorkspace = {
+  team_workspace_id: string;
+  owner_id: string;
+  name: string;
+  created_at: string;
+  membership_role: "owner" | "member";
+  member_count: number;
+};
+
+export type TeamWorkspaceMember = {
+  user_id: string;
+  username: string;
+  name: string;
+  email: string;
+  role: "owner" | "member";
+  joined_at: string;
+};
+
+export type TeamWorkspaceInvitation = {
+  invitation_id: string;
+  team_workspace_id: string;
+  inviter_id: string;
+  invitee_id: string;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+  updated_at: string;
+  workspace_name: string;
+  inviter_name: string;
+  invitee_name: string;
+  invitee_username: string;
+  invitee_email: string;
+};
+
+export type TeamChannel = {
+  channel_id: string;
+  team_workspace_id: string;
+  project_id: string | null;
+  created_by: string;
+  name: string;
+  created_at: string;
+  project_name: string | null;
+};
+
+export type TeamChannelMessage = {
+  message_id: string;
+  channel_id: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  created_at: string;
 };
 
 export type DocumentRecord = {

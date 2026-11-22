@@ -81,3 +81,22 @@ def ensure_document_chunk_page_column(engine) -> None:
             connection.execute(
                 text("ALTER TABLE document_chunks ADD COLUMN page_number INTEGER")
             )
+
+
+def ensure_project_team_workspace_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("research_projects")}
+    if "team_workspace_id" not in columns:
+        sql_type = "CHAR(32)" if engine.dialect.name == "sqlite" else "UUID"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE research_projects ADD COLUMN team_workspace_id "
+                    f"{sql_type} REFERENCES team_workspaces(team_workspace_id) ON DELETE SET NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_research_projects_team_workspace_id "
+                    "ON research_projects (team_workspace_id)"
+                )
+            )

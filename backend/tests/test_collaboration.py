@@ -14,6 +14,8 @@ from app.models import (
     Notification,
     ProjectInvitation,
     ResearchProject,
+    TeamWorkspace,
+    TeamWorkspaceMembership,
     User,
     UserActivity,
 )
@@ -39,6 +41,8 @@ def collaboration_db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'collaboration.sqlite'}")
     for model in (
         User,
+        TeamWorkspace,
+        TeamWorkspaceMembership,
         ResearchProject,
         ProjectInvitation,
         DirectMessage,
