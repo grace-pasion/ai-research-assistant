@@ -50,7 +50,7 @@ The database and uploaded files persist in Docker volumes. To stop the app, pres
 
 GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. The included workflow builds and publishes the frontend on pushes to `main` and on manual runs. For a no-cost demo, the API can run on Render Free, with Supabase Free PostgreSQL and a private Storage bucket. This is not a production hosting setup: both providers impose limits, and Render's free service sleeps when idle.
 
-The workflow uses the repository Actions variable `VITE_API_URL` when set; otherwise, it falls back to the configured Fieldnotes Render API URL. It tests and builds the frontend before publishing. Set the variable to override the fallback when using a different API host.
+The workflow uses the repository Actions variable `VITE_API_URL` when set; otherwise, it falls back to `https://fieldnotes-api-l1bc.onrender.com`. It tests and builds the frontend before publishing. Set the variable to override the fallback when using a different API host.
 
 ### 1. Create Supabase database and private file bucket
 
@@ -70,7 +70,7 @@ The same Supabase database stores the application's research and literature tabl
 
 ### 3. Connect GitHub Pages to the API
 
-1. Optionally, in the GitHub repository, open **Settings → Secrets and variables → Actions → Variables**, then create the repository variable `VITE_API_URL` with the Render service's public HTTPS base URL, such as `https://fieldnotes-api.onrender.com`. Do not add `/api` or a trailing slash. The workflow falls back to the current Fieldnotes Render URL when the variable is absent. This URL is public configuration; never put API keys or database credentials here.
+1. Optionally, in the GitHub repository, open **Settings → Secrets and variables → Actions → Variables**, then create the repository variable `VITE_API_URL` with the Render service's public HTTPS base URL, such as `https://fieldnotes-api-l1bc.onrender.com`. Do not add `/api` or a trailing slash. The workflow falls back to this Fieldnotes Render URL when the variable is absent. This URL is public configuration; never put API keys or database credentials here.
 2. Open **Settings → Pages** and choose **GitHub Actions** as the build and deployment source.
 3. Push the changes to `main` (or run **Deploy frontend to GitHub Pages** from **Actions**). Check the workflow result and visit <https://grace-pasion.github.io/ai-research-assistant/>.
 
