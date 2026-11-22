@@ -75,6 +75,16 @@ class DailyPromptUsage(ResearchBase):
     prompt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
+class DailyEmbeddingUsage(ResearchBase):
+    __tablename__ = "daily_embedding_usage"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ResearchProject(ResearchBase):
     __tablename__ = "research_projects"
     __table_args__ = (Index("ix_projects_owner_updated", "user_id", "updated_at"),)

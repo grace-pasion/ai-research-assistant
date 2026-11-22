@@ -18,7 +18,7 @@ export type DocumentRecord = {
   filename: string;
   file_type: string;
   file_size: number;
-  processing_status: string;
+  processing_status: "processing" | "ready" | "needs_api_key" | "failed" | "quota_exceeded";
   processing_error: string | null;
   uploaded_at: string;
 };
@@ -31,6 +31,16 @@ export type BulkDocumentUploadResult = {
 
 export type BulkDocumentUploadResponse = {
   results: BulkDocumentUploadResult[];
+};
+
+export type AIUsageResponse = {
+  assistant_prompts_used: number;
+  assistant_prompts_limit: number;
+  assistant_prompts_remaining: number;
+  embedding_tokens_used: number;
+  embedding_tokens_limit: number;
+  embedding_tokens_remaining: number;
+  resets_at: string;
 };
 
 export type DocumentSearchResult = {

@@ -26,6 +26,7 @@ import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMe
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { LatexWorkspace } from "./LatexWorkspace";
 import type {
+  AIUsageResponse,
   Annotation,
   BulkDocumentUploadResponse,
   Conversation,
@@ -61,6 +62,7 @@ function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [aiUsage, setAiUsage] = useState<AIUsageResponse | null>(null);
   const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
@@ -92,6 +94,17 @@ function App() {
     [token],
   );
 
+  const refreshUsage = useCallback(async () => {
+    try {
+      setAiUsage(await request<AIUsageResponse>("/api/usage"));
+    } catch (cause) {
+      setAiUsage(null);
+      setError((current) => current || (
+        cause instanceof Error ? cause.message : "Could not load daily AI usage."
+      ));
+    }
+  }, [request]);
+
   const loadProjectData = useCallback(
     async (selected: Project) => {
       const id = selected.project_id;
@@ -103,8 +116,9 @@ function App() {
       setDocuments(docs);
       setPapers(savedPapers);
       setConversations(chats);
+      void refreshUsage();
     },
-    [request],
+    [refreshUsage, request],
   );
 
   useEffect(() => {
@@ -136,6 +150,7 @@ function App() {
       setDocuments([]);
       setPapers([]);
       setConversations([]);
+      setAiUsage(null);
       return;
     }
     loadProjectData(project).catch((cause: unknown) => {
@@ -147,6 +162,12 @@ function App() {
     () => documents.some((document) => document.processing_status === "processing"),
     [documents],
   );
+  const processingStatusCounts = useMemo(() => ({
+    processing: documents.filter((document) => document.processing_status === "processing").length,
+    failed: documents.filter((document) => document.processing_status === "failed").length,
+    quotaExceeded: documents.filter((document) => document.processing_status === "quota_exceeded").length,
+    needsApiKey: documents.filter((document) => document.processing_status === "needs_api_key").length,
+  }), [documents]);
   const screeningCounts = useMemo(() => ({
     unread: papers.filter((paper) => paper.screening_status === "unread").length,
     undecided: papers.filter((paper) => paper.screening_status === "undecided").length,
@@ -181,13 +202,27 @@ function App() {
     if (!processing || !project) return;
     const timer = window.setInterval(() => {
       request<DocumentRecord[]>(`/api/projects/${project.project_id}/documents`)
-        .then(setDocuments)
+        .then((loaded) => {
+          setDocuments(loaded);
+          void refreshUsage();
+        })
         .catch((cause: unknown) =>
           setError(cause instanceof Error ? cause.message : "Could not refresh document status."),
         );
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [processing, project, request]);
+  }, [processing, project, refreshUsage, request]);
+
+  useEffect(() => {
+    if (!aiUsage) return;
+    const delay = Date.parse(aiUsage.resets_at) - Date.now();
+    if (delay <= 0) {
+      void refreshUsage();
+      return;
+    }
+    const timer = window.setTimeout(() => void refreshUsage(), delay + 1000);
+    return () => window.clearTimeout(timer);
+  }, [aiUsage?.resets_at, refreshUsage]);
 
   useEffect(() => {
     if (!documents.length) return;
@@ -640,7 +675,7 @@ function App() {
 
   async function askQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!project || question.trim().length < 3) return;
+    if (!project || question.trim().length < 3 || aiUsage?.assistant_prompts_remaining === 0) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -659,6 +694,7 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Could not generate an answer.");
     } finally {
       setBusy(false);
+      void refreshUsage();
     }
   }
 
@@ -888,6 +924,43 @@ function App() {
                 <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>
                   <Pencil size={14} /> Edit
                 </button>
+              </section>
+
+              <section className="ai-usage-panel" aria-label="Daily AI allowance and processing status">
+                <div className="ai-usage-heading">
+                  <strong>AI usage today</strong>
+                  <span>Allowances reset at 00:00 UTC</span>
+                </div>
+                {aiUsage ? (
+                  <div className="ai-usage-metrics">
+                    <UsageMeter
+                      label="Assistant prompts"
+                      detail="Shared by IP address"
+                      used={aiUsage.assistant_prompts_used}
+                      limit={aiUsage.assistant_prompts_limit}
+                      remaining={`${aiUsage.assistant_prompts_remaining.toLocaleString()} remaining`}
+                    />
+                    <UsageMeter
+                      label="Embedding tokens"
+                      detail="Estimated · per account"
+                      used={aiUsage.embedding_tokens_used}
+                      limit={aiUsage.embedding_tokens_limit}
+                      remaining={`${aiUsage.embedding_tokens_remaining.toLocaleString()} remaining`}
+                    />
+                  </div>
+                ) : (
+                  <p className="ai-usage-unavailable">Daily AI allowance is unavailable.</p>
+                )}
+                <div className="processing-summary" aria-live="polite">
+                  <strong>Document processing</strong>
+                  <span>{processingStatusCounts.processing} processing</span>
+                  <span>{processingStatusCounts.failed} failed</span>
+                  <span>{processingStatusCounts.quotaExceeded} at AI allowance limit</span>
+                  <span>{processingStatusCounts.needsApiKey} waiting for API key</span>
+                </div>
+                <p className="ai-usage-note">
+                  The embedding allowance counts estimated tokens for uploads, open-access imports, and reprocessing.
+                </p>
               </section>
 
               <div className="tab-bar" role="tablist" aria-label="Project sections">
@@ -1292,8 +1365,12 @@ function App() {
                       />
                       <div className="composer-bottom">
                         <span><ShieldCheck size={13} /> Answers are drafts until you approve them</span>
-                        <button className="button primary send-button" disabled={busy || question.trim().length < 3}>
-                          {busy ? <LoaderCircle className="spin" size={16} /> : <Send size={15} />} Generate
+                        <button
+                          className="button primary send-button"
+                          disabled={busy || question.trim().length < 3 || aiUsage?.assistant_prompts_remaining === 0}
+                        >
+                          {busy ? <LoaderCircle className="spin" size={16} /> : <Send size={15} />}
+                          {aiUsage?.assistant_prompts_remaining === 0 ? "Limit reached" : "Generate"}
                         </button>
                       </div>
                     </form>
@@ -1307,6 +1384,41 @@ function App() {
           <span>Built for thoughtful research.</span><span>OpenAlex · Crossref · OpenAI</span>
         </footer>
       </main>
+    </div>
+  );
+}
+
+function UsageMeter({
+  label,
+  detail,
+  used,
+  limit,
+  remaining,
+}: {
+  label: string;
+  detail: string;
+  used: number;
+  limit: number;
+  remaining: string;
+}) {
+  const percentage = Math.min(100, Math.max(0, (used / limit) * 100));
+  return (
+    <div className="ai-usage-meter">
+      <div className="ai-usage-meter-label">
+        <span><strong>{label}</strong><small>{detail}</small></span>
+        <b>{remaining}</b>
+      </div>
+      <div
+        className="ai-usage-track"
+        role="progressbar"
+        aria-label={`${label} used`}
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-valuenow={Math.min(used, limit)}
+      >
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+      <small>{used.toLocaleString()} of {limit.toLocaleString()} used</small>
     </div>
   );
 }
@@ -1473,8 +1585,16 @@ function StatusPill({ status }: { status: string }) {
     ready: "Ready",
     needs_api_key: "Needs API key",
     failed: "Failed",
+    quota_exceeded: "AI allowance reached",
   };
-  return <span className={`status-pill status-${status}`}>{["uploading", "processing"].includes(status) && <LoaderCircle size={12} className="spin" />}{labels[status] ?? status}</span>;
+  const label = labels[status] ?? status;
+  return (
+    <span className={`status-pill status-${status}`} aria-label={label} title={label}>
+      {["uploading", "processing"].includes(status) && <LoaderCircle size={12} className="spin" />}
+      {status === "quota_exceeded" && <AlertCircle size={12} />}
+      {label}
+    </span>
+  );
 }
 
 function PaperCard({

@@ -6,8 +6,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Document, DocumentChunk
+from app.models import Document, DocumentChunk, ResearchProject
 from app.services.documents import estimate_tokens, extract_document_pages, split_text
+from app.services.rate_limit import reserve_daily_embedding_tokens
 from app.services.storage import materialize_document
 
 
@@ -45,6 +46,19 @@ def reprocess_document(db: Session, document: Document) -> None:
         chunk_texts = [chunk for chunk, _ in chunks]
         vectors: list[list[float] | None] = [None] * len(chunks)
         if client is not None:
+            project = db.get(ResearchProject, document.project_id)
+            if project is None:
+                raise ValueError("The document's project is no longer available.")
+            embedding_tokens = sum(estimate_tokens(chunk) for chunk in chunk_texts)
+            if not reserve_daily_embedding_tokens(db, project.user_id, embedding_tokens):
+                document.processing_status = "quota_exceeded"
+                document.processing_error = (
+                    "Embedding was skipped because this file exceeds the remaining daily limit of "
+                    f"{settings.daily_embedding_token_limit:,} estimated tokens. Text is retained; "
+                    "retry after 00:00 UTC, or split a file larger than the daily cap."
+                )
+                db.commit()
+                return
             for start in range(0, len(chunks), 64):
                 batch = chunk_texts[start : start + 64]
                 result = client.embeddings.create(

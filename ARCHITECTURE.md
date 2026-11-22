@@ -64,7 +64,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance. PDF chunks retain their 1-based page number; other document chunks have no page locator. Existing research databases receive the nullable chunk page column additively at startup; already-processed PDFs need reprocessing once to populate page locators.
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper relationships with a persistent screening status (`unread`, `undecided`, `include`, or `exclude`) and optional short note. Existing databases receive these columns additively at startup.
 - **Assistant history:** conversations, reviewed user/assistant messages, and ordered references to document chunks or saved papers. A conversation is created only after the user approves a draft.
-- **Usage control:** a daily counter keyed by an HMAC hash of the client IP and UTC date. The raw client IP is not stored in that counter.
+- **Usage control:** assistant prompt counts are keyed by an HMAC hash of the client IP and UTC date; embedding token estimates are keyed by account ID and UTC date. The raw client IP is not stored.
 - **Authentication throttling:** 15-minute counters keyed by HMAC hashes of IP and IP/email pairs. Raw IP addresses and email addresses are not stored in these counters; successful sign-in clears the matching counters.
 - **Activity history:** action type, timestamp, actor account, and a small set of non-content details. Events deliberately exclude document names/text, search terms, assistant questions, and generated answers. User events are removed when that account is hard-deleted.
 - **Original files:** local files in development or private Supabase Storage objects in the hosted setup. PostgreSQL stores the storage path and metadata, not the file bytes.
@@ -79,7 +79,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 2. The API verifies project ownership, file type, non-empty content, and the configured per-file upload-size limit, then writes each valid original to local storage or the private Supabase bucket and persists its document record.
 3. After the bulk request is accepted, an in-process background task is scheduled for each saved document. Processing continues if the user closes the browser; reopening the project shows the persisted per-document status. This depends on the API process remaining available.
 4. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
-5. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure does not discard readable text. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. When an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
+5. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure or exhausted AI allowance does not discard readable text. Before calling OpenAI, the API atomically reserves the document's estimated embedding-token count against the account's daily allowance. Files that exceed the remaining allowance are marked **AI allowance reached**; their extracted text is retained and no embedding request is made. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. Without an OpenAI key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
 6. The UI refreshes each document's processing status and offers download, retry/reprocess, and delete actions. Failed items in the current bulk-upload list can also be retried; a failed document remains available for retry from the project document list after reopening. If a document is deleted while its in-process task is running, the task detects that the record is gone and stops without reporting a stale-processing error.
 
 ### Search, save, and import academic papers
@@ -114,14 +114,21 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 ### Ask the research assistant
 
-1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt. A prompt asking to find, search for, or pull up a paper additionally searches OpenAlex.
+1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt. A prompt asking to find, search for, or pull up a paper additionally searches OpenAlex. The workspace shows the remaining prompt and embedding allowances and aggregate document-processing statuses.
 2. The API checks authentication and project ownership, then enforces a limit of 20 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
 3. The API retrieves up to six relevant ready document chunks using query embeddings and pgvector cosine distance. It also ranks the project's saved papers using query-term overlap and can include up to six relevant papers. For explicit literature-finding prompts, it searches and semantically re-ranks OpenAlex results, caches their metadata, and includes up to three papers not already in the saved-paper results.
 4. OpenAI receives the question, selected source excerpts, PDF page locators, and prior user questions for conversational context; previous assistant answers are not reused as evidence. For question and research-direction modes, it generates atomic factual claims, each paired with a source index and verbatim quote. Compare mode instead generates per-source claims for research question, methods, sampling, findings, and limitations. The API rejects any claim whose quote is not present in the cited excerpt, then calls OpenAI again to assess whether every remaining claim is directly supported by its quote. The API constructs citation markers itself and omits claims that the verifier rejects. Comparison cells without verified claims are explicitly marked **Missing evidence**; unsupported details are not inferred.
 5. The verified answer and source excerpts are returned as an **unsaved draft**. `[S#]` answer citations map to the ordered source cards. PDF source cards include the document name, 1-based page number, and supporting chunk passage; opening a card or answer citation opens the document reader with the original PDF positioned at that page. Other document citations open the reader with the supporting passage, and paper citations link to the paper. The user can discard the draft or approve it. A signed approval token is bound to the user and project and expires after 15 minutes.
 6. Only approval stores the conversation, question, answer, and source references. Document page locators are restored from the referenced chunks when approved conversations are loaded. Approval is idempotent.
 
-The verifier is another model call and can still make mistakes; evidence checking reduces, but cannot eliminate, hallucinations. Human review remains necessary. The 20-request limit covers assistant drafts only. It does **not** limit embedding calls caused by upload or reprocessing, and it is not an OpenAI account-wide spending cap. People sharing one public IP share its quota; changing IP addresses can change the IP-based quota.
+The verifier is another model call and can still make mistakes; evidence checking reduces, but cannot eliminate, hallucinations. Human review remains necessary. The 20-request limit is shared by clients using the same IP address. Embedding usage is independently limited to 50,000 estimated input tokens per account per UTC day by default, configurable with `DAILY_EMBEDDING_TOKEN_LIMIT`; the limit covers uploads, open-access imports, and reprocessing. Token estimates are approximate and these limits are not OpenAI billing guarantees.
+
+### Usage and processing controls
+
+1. `GET /api/usage` reports prompts used/remaining for the current client IP and estimated embedding tokens used/remaining for the authenticated account, plus the UTC reset time.
+2. The usage panel refreshes after assistant requests and while documents are processing. It summarizes processing, failed, quota-limited, and API-key-blocked documents; the document list continues to show status and retry/reprocess controls per file.
+3. Before an embedding batch begins, the API atomically reserves the document's estimated input tokens in `daily_embedding_usage`. If the reservation would exceed the account's daily limit, it skips the provider call and marks the document `quota_exceeded`. Text extraction is retained, and the user may retry after the allowance resets or split a file larger than the daily cap.
+4. The prompt counter is the existing HMAC-hashed IP/day record. Both counters reset at 00:00 UTC. Usage is an estimate, not a dollar balance or an account-wide OpenAI spend cap.
 
 ### Export a cited research brief
 
@@ -177,6 +184,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Continue an approved conversation and review its stored messages and citations.
 - Discard an unapproved draft or explicitly approve it before the conversation is saved.
 - Make at most 20 assistant draft requests per client IP per UTC day.
+- View remaining daily assistant prompts and estimated embedding tokens, plus aggregate document-processing statuses. Embedding usage is capped at 50,000 estimated tokens per account per UTC day by default.
 
 ### Administrator console
 
@@ -192,6 +200,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | Method | Route | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Health check. |
+| `GET` | `/api/usage` | Read current-IP assistant prompt usage and current-account embedding-token usage and UTC reset time. |
 | `POST` | `/api/auth/register` | Register an account and return a token. |
 | `POST` | `/api/auth/login` | Sign in and return a token. |
 | `GET` | `/api/auth/me` | Return the authenticated user's profile. |
@@ -238,9 +247,10 @@ Interactive API documentation is available at `/docs` on the API host.
 - Administrator access is checked on every admin request against the server-side, comma-separated `ADMIN_EMAILS` allowlist. The admin interface is separate, but the allowlisted user signs in with their existing account credentials. Removing an email from the allowlist revokes admin access after the backend restarts/redeploys.
 - Activity logging is metadata-only by design. It does not record file names or contents, search terms, assistant prompts, or generated answers. User activity history is cascade-deleted with the user account.
 - API credentials and signing secrets, including `OPENALEX_API_KEY`, are backend environment variables. The browser receives only the public API base URL.
+- `DAILY_EMBEDDING_TOKEN_LIMIT` sets the per-account daily embedding-input estimate cap (50,000 by default). Assistant draft prompts remain limited to 20 per client IP per UTC day.
 - CORS allows the configured web origin; the hosted Render configuration allows `https://grace-pasion.github.io`.
 - Supabase Storage is configured as a private bucket. The API accesses files server-to-server.
 - The hosted backend defaults to `gpt-4o-mini` for chat and `text-embedding-3-small` for embeddings. OpenAI calls can incur charges.
-- The assistant IP quota is separate from document embeddings; OpenAI's own usage limits and billing controls should also be configured.
+- The application allowances do not change OpenAI account-level usage limits or billing controls; configure provider-side safeguards as well.
 - The Render and Supabase free tiers can sleep, pause, or impose storage/usage limits. They are suitable for demos, not a guaranteed production or backup strategy.
 - Processing runs in the API process. It is not a persistent queue, so long-running tasks are subject to the hosting service's runtime lifecycle.

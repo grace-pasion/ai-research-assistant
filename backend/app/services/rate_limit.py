@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import ipaddress
 from datetime import date, datetime, time, timedelta, timezone
+from uuid import UUID
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import case, delete
@@ -10,7 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import AuthRateLimit, DailyPromptUsage
+from app.models import AuthRateLimit, DailyEmbeddingUsage, DailyPromptUsage
 
 DAILY_PROMPT_LIMIT = 20
 AUTH_IP_ATTEMPT_LIMIT = 30
@@ -63,6 +64,11 @@ def _insert_for_dialect(db: Session):
     if dialect == "sqlite":
         return sqlite_insert
     raise RuntimeError(f"Request rate limits do not support the {dialect} database dialect.")
+
+
+def _as_utc(now: datetime | None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    return now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
 
 
 def consume_auth_attempt(
@@ -125,8 +131,8 @@ def consume_daily_prompt(
     request: Request,
     now: datetime | None = None,
 ) -> None:
-    now = now or datetime.now(timezone.utc)
-    usage_date = now.astimezone(timezone.utc).date()
+    now = _as_utc(now)
+    usage_date = now.date()
     insert = _insert_for_dialect(db)
 
     statement = insert(DailyPromptUsage).values(
@@ -148,9 +154,66 @@ def consume_daily_prompt(
             time.min,
             tzinfo=timezone.utc,
         )
-        retry_after = max(1, int((next_reset - now.astimezone(timezone.utc)).total_seconds()))
+        retry_after = max(1, int((next_reset - now).total_seconds()))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Daily AI prompt limit reached (20 prompts per IP address). Try again after 00:00 UTC.",
             headers={"Retry-After": str(retry_after)},
         )
+
+
+def get_daily_prompt_count(
+    db: Session,
+    request: Request,
+    now: datetime | None = None,
+) -> int:
+    now = _as_utc(now)
+    usage_date = now.date()
+    usage = db.get(
+        DailyPromptUsage,
+        (_client_hash(_client_ip(request)), usage_date),
+    )
+    return usage.prompt_count if usage is not None else 0
+
+
+def get_daily_embedding_token_count(
+    db: Session,
+    user_id: UUID,
+    now: datetime | None = None,
+) -> int:
+    now = _as_utc(now)
+    usage = db.get(
+        DailyEmbeddingUsage,
+        (user_id, now.date()),
+    )
+    return usage.token_count if usage is not None else 0
+
+
+def reserve_daily_embedding_tokens(
+    db: Session,
+    user_id: UUID,
+    token_count: int,
+    now: datetime | None = None,
+) -> bool:
+    if token_count < 1:
+        raise ValueError("Embedding token reservations must be positive.")
+    now = _as_utc(now)
+    usage_date = now.date()
+    limit = get_settings().daily_embedding_token_limit
+    if token_count > limit:
+        return False
+
+    insert = _insert_for_dialect(db)
+    statement = insert(DailyEmbeddingUsage).values(
+        user_id=user_id,
+        usage_date=usage_date,
+        token_count=token_count,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[DailyEmbeddingUsage.user_id, DailyEmbeddingUsage.usage_date],
+        set_={"token_count": DailyEmbeddingUsage.token_count + token_count},
+        where=DailyEmbeddingUsage.token_count + token_count <= limit,
+    ).returning(DailyEmbeddingUsage.token_count)
+    reserved = db.execute(statement).scalar_one_or_none() is not None
+    db.commit()
+    return reserved

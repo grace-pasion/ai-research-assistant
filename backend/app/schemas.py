@@ -150,6 +150,16 @@ class BulkDocumentUploadResponse(BaseModel):
     results: list[BulkDocumentUploadResult]
 
 
+class AIUsageResponse(BaseModel):
+    assistant_prompts_used: int
+    assistant_prompts_limit: int
+    assistant_prompts_remaining: int
+    embedding_tokens_used: int
+    embedding_tokens_limit: int
+    embedding_tokens_remaining: int
+    resets_at: datetime
+
+
 class DocumentSearchResult(BaseModel):
     document: DocumentResponse
     excerpt: str

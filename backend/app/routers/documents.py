@@ -307,6 +307,8 @@ def reprocess(
     project = db.get(ResearchProject, document.project_id)
     if project is None or project.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Document not found.")
+    if document.processing_status == "processing":
+        return document
     document.processing_status = "processing"
     document.processing_error = None
     record_activity(db, user.user_id, "document.reprocessed", {"file_type": document.file_type})

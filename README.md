@@ -26,7 +26,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - Assistant answers are built from atomic claims with verbatim source quotes, checked for an exact excerpt match, and passed through a second evidence-support and question-completeness review. Unsupported claims are omitted; if only part of the question is verified, the answer flags that limitation, and if no claims pass, it abstains. This reduces hallucination risk but cannot guarantee zero errors, so human review remains required.
 - **Compare sources** produces a source-by-source evidence matrix for each study's research question, methods, sampling, findings, and limitations. Every supported claim retains a clickable source citation; fields not established by the retrieved excerpts are marked **Missing evidence** rather than inferred.
 - Export an approved source comparison as an editable Word research brief with a cited findings synthesis, the evidence matrix, and a bibliography for every cited paper or document. Missing-evidence markers and source citations are retained so the brief can be reviewed and revised before sharing.
-- Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
+- Assistant drafts are limited to 20 prompts per client IP per UTC day. The project workspace shows prompts remaining, a 50,000 estimated embedding-token allowance per account per UTC day, and document-processing status totals. The embedding cap includes initial uploads, open-access imports, and reprocessing; when reached, extracted text is retained and documents can be retried after reset. Set `DAILY_EMBEDDING_TOKEN_LIMIT` in `.env` to change the per-account cap.
 - Separate administrator sign-in with an allowlisted account, user/account summaries, metadata-only activity history, and permanent account deletion.
 - A mandatory human approval step: generated answers and conversation messages are not saved until **Approve & save** is clicked. Draft approval tokens are signed, user/project-bound, expire after 15 minutes, and are idempotent.
 - Docker Compose setup, API health endpoint, interactive API docs, and focused backend tests.
@@ -45,6 +45,7 @@ Edit `.env` before starting:
 1. Replace `POSTGRES_PASSWORD` and `JWT_SECRET` with private random values. Use letters and digits only for `POSTGRES_PASSWORD` (for example, generate a hex value with `python -c "import secrets; print(secrets.token_hex(32))"`); the password is included in a database URL.
 2. Set `OPENAI_API_KEY` to your own OpenAI API key. Keep it in `.env`; **do not paste it into chat or commit it**. OpenAI usage may incur charges.
 3. Optionally set `OPENALEX_API_KEY` to use your OpenAlex account's higher API budget, and `OPENALEX_EMAIL` to identify polite requests. Keep the key in `.env`; do not paste it into chat or commit it.
+4. Optionally set `DAILY_EMBEDDING_TOKEN_LIMIT` to change the default 50,000 estimated embedding tokens per account per UTC day.
 
 Then start the stack:
 

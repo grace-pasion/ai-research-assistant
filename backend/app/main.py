@@ -13,7 +13,7 @@ from app.database import (
     make_engine,
 )
 from app.models import LiteratureBase, ResearchBase
-from app.routers import admin, annotations, assistant, auth, documents, latex, papers, projects
+from app.routers import admin, annotations, assistant, auth, documents, latex, papers, projects, usage
 from app.security_headers import security_headers_middleware
 
 
@@ -62,6 +62,7 @@ app.include_router(documents.router)
 app.include_router(papers.router)
 app.include_router(annotations.router)
 app.include_router(assistant.router)
+app.include_router(usage.router)
 
 
 @app.get("/api/health")

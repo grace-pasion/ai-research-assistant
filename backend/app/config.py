@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     admin_emails: str = ""
     openalex_email: str | None = None
     max_upload_mb: int = Field(default=25, ge=1, le=100)
+    daily_embedding_token_limit: int = Field(default=50_000, ge=1)
     storage_dir: str = "./uploads"
     storage_backend: Literal["local", "supabase"] = "local"
     supabase_url: str | None = None
