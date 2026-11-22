@@ -46,7 +46,7 @@ Document processing uses FastAPI in-process background tasks, not a durable exte
 
 | Provider | API used | What Fieldnotes sends/receives |
 |---|---|---|
-| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, and landing-page URL. Chat paper discovery also uses OpenAlex. The optional backend `OPENALEX_API_KEY` is sent as an Authorization bearer token to use the account's higher API budget; optional `OPENALEX_EMAIL` identifies requests. |
+| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, landing-page URL, and open-access PDF locations. Saved-paper full-text imports use OpenAlex's open-access status and PDF URL; downloads are size-limited and restricted to public HTTPS hosts. Chat paper discovery also uses OpenAlex. The optional backend `OPENALEX_API_KEY` is sent as an Authorization bearer token to use the account's higher API budget; optional `OPENALEX_EMAIL` identifies requests. |
 | Crossref | `https://api.crossref.org/works` | Bibliographic query and result metadata, including DOI, title, abstract when available, authors, publication year, venue, and citation count. |
 | OpenAI | Embeddings API and Chat Completions API, called through the Python SDK | Creates document/query embeddings, semantically re-ranks academic search candidates using paper titles and abstracts, and generates source-grounded assistant drafts. Default models are `text-embedding-3-small` and `gpt-4o-mini`, configurable on the backend. |
 | Supabase | PostgreSQL connection and Storage object REST API | Stores relational/vector data and private original files. The Storage bucket is accessed only by the API using backend credentials. |
@@ -58,7 +58,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 ## Data model and persistence
 
 - **Account data:** user email, display name, and password hash.
-- **Research workspace:** user-owned projects; uploaded-document metadata, extracted text, processing status, and chunk records.
+- **Research workspace:** user-owned projects; uploaded or open-access-imported document metadata, extracted text, processing status, and chunk records.
 - **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance.
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper relationships with a persistent screening status (`unread`, `undecided`, `include`, or `exclude`) and optional short note. Existing databases receive these columns additively at startup.
@@ -77,16 +77,17 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 1. The signed-in user uploads a PDF, DOCX, TXT, or Markdown file to a project.
 2. The API verifies project ownership, file type, non-empty content, and the configured upload-size limit, then writes the original to local storage or the private Supabase bucket.
 3. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
-4. Extracted text is split into overlapping chunks. When an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
+4. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure does not discard readable text. The text is split into overlapping chunks; when an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
 5. The UI refreshes processing status and offers download, reprocess, and delete actions.
 
-### Search and save academic papers
+### Search, save, and import academic papers
 
 1. The user enters a query and chooses OpenAlex or Crossref. OpenAlex requests use the optional backend API key as an Authorization bearer token; the credential is not sent to Crossref or exposed to the browser.
 2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
 3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
 5. In the project's saved-paper list, the user can mark each paper unread, undecided, include, or exclude, add an optional reason/note, and track reviewed, unread, and undecided totals. Undecided papers count as reviewed but remain separate from included and excluded papers. Screening decisions are scoped to the project and persist in the `project_papers` relationship.
+6. For a saved paper, **Extract full text** looks up an OpenAlex location marked open access and downloads its PDF when available. The API stores it as a project document linked through `document_papers`, then runs the existing extraction/chunking/embedding pipeline. If no open-access PDF is available, the user can upload a copy they have access to. Imported text is queryable through the existing document search and assistant retrieval flows.
 
 ### Annotate documents and papers
 
@@ -138,6 +139,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - Search by topic, title, author, or DOI using OpenAlex or Crossref; OpenAI embeddings re-rank results semantically when configured.
 - Review returned bibliographic details and open an external paper link when supplied.
 - Save papers to the current project, review the saved-paper list, and remove papers from it.
+- Import available open-access PDFs for saved papers; after processing, query their extracted full text through Documents search or the research assistant. Upload a copy when no open-access PDF is available.
 - Screen saved papers as unread, undecided, included, or excluded; add an optional short reason and track project-level screening progress.
 - Open a saved paper's available abstract to highlight passages and add, edit, or delete persistent project notes.
 
@@ -145,6 +147,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 
 - Ask research questions, compare saved sources, explore possible research directions, or ask chat to find/pull up a relevant paper.
 - Receive drafts with source citations/excerpts from the project's ready documents, saved papers, and any papers retrieved by an explicit chat search. Retrieved-paper citations link to the paper but do not save it to the project.
+- Query extracted full text from uploaded documents and imported open-access papers through document-chunk retrieval.
 - Continue an approved conversation and review its stored messages and citations.
 - Discard an unapproved draft or explicitly approve it before the conversation is saved.
 - Make at most 20 assistant draft requests per client IP per UTC day.
@@ -183,6 +186,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/papers` | List papers saved to a project. |
 | `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
+| `POST` | `/api/projects/{project_id}/papers/{paper_id}/full-text` | Import an available open-access PDF as a project document for extraction and querying. |
 | `PATCH` | `/api/projects/{project_id}/papers/{paper_id}/screening` | Update a saved paper's screening status and optional reason/note. |
 | `GET`, `POST` | `/api/projects/{project_id}/documents/{document_id}/annotations` | List or add notes/highlights for an owned document. |
 | `GET`, `POST` | `/api/projects/{project_id}/papers/{paper_id}/annotations` | List or add notes/highlights for a paper saved in the project. |

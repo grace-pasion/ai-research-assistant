@@ -1,13 +1,18 @@
+import logging
+import re
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db, get_literature_db
 from app.models import (
     Author,
+    Document,
+    DocumentPaper,
     Paper,
     PaperAuthor,
     ProjectPaper,
@@ -17,16 +22,27 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    DocumentResponse,
     PaperResponse,
     PaperScreeningResponse,
     PaperScreeningUpdate,
     PaperSearchResponse,
 )
 from app.security import get_current_user, require_project_owner
-from app.services.academic_search import search_papers, upsert_paper
+from app.services.academic_search import (
+    OpenAccessPDFTooLarge,
+    download_open_access_pdf,
+    open_access_pdf_url,
+    search_papers,
+    upsert_paper,
+)
 from app.services.audit import record_activity
+from app.services.processing import process_saved_document
+from app.services.storage import delete_document as delete_stored_document
+from app.services.storage import store_document
 
 router = APIRouter(prefix="/api/projects/{project_id}/papers", tags=["academic papers"])
+logger = logging.getLogger(__name__)
 
 
 def _paper_response(
@@ -183,6 +199,131 @@ def unsave_paper(
         db.delete(relation)
         record_activity(db, user.user_id, "paper.removed")
         db.commit()
+
+
+@router.post(
+    "/{paper_id}/full-text",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def import_open_access_full_text(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    if db.get(ProjectPaper, (project_id, paper_id)) is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found.")
+    paper = literature_db.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="Academic paper not found.")
+
+    existing = db.scalar(
+        select(Document)
+        .join(DocumentPaper, DocumentPaper.document_id == Document.document_id)
+        .where(
+            Document.project_id == project_id,
+            DocumentPaper.paper_id == paper_id,
+            DocumentPaper.relationship_type == "full_text",
+        )
+        .order_by(Document.uploaded_at.desc())
+    )
+    if existing is not None:
+        retry = existing.processing_status not in {"processing", "ready", "needs_api_key"}
+        if existing.processing_status == "needs_api_key":
+            openai_key = get_settings().openai_api_key
+            retry = bool(openai_key and openai_key.get_secret_value().strip())
+        if retry:
+            existing.processing_status = "processing"
+            existing.processing_error = None
+            db.commit()
+            background_tasks.add_task(process_saved_document, existing.document_id)
+        return existing
+
+    try:
+        pdf_url = open_access_pdf_url(paper)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not check OpenAlex for open-access full text."
+        ) from exc
+    if pdf_url is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No open-access PDF was found for this paper. You can upload a copy you have "
+                "access to from the Documents section."
+            ),
+        )
+
+    max_bytes = get_settings().max_upload_mb * 1024 * 1024
+    try:
+        contents = download_open_access_pdf(pdf_url, max_bytes)
+    except OpenAccessPDFTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The open-access PDF could not be downloaded or was not a valid PDF.",
+        ) from exc
+
+    document_id = uuid.uuid4()
+    title = re.sub(r"[^\w.-]+", "_", paper.title, flags=re.UNICODE).strip("._")[:200]
+    filename = f"{title or 'open-access-paper'}.pdf"
+    try:
+        storage_path = store_document(
+            project_id,
+            document_id,
+            ".pdf",
+            contents,
+            "application/pdf",
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="Cloud document storage is unavailable; retry the import."
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    document = Document(
+        document_id=document_id,
+        project_id=project_id,
+        filename=filename,
+        file_type="pdf",
+        storage_path=storage_path,
+        file_size=len(contents),
+        processing_status="processing",
+    )
+    db.add(document)
+    db.add(
+        DocumentPaper(
+            document_id=document_id,
+            paper_id=paper_id,
+            relationship_type="full_text",
+        )
+    )
+    record_activity(db, user.user_id, "paper.full_text.imported")
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            delete_stored_document(storage_path)
+        except (httpx.HTTPError, RuntimeError, ValueError) as cleanup_error:
+            logger.exception("Could not remove imported PDF after metadata insert failed")
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Full-text metadata could not be saved and cloud file cleanup failed; "
+                    "contact support."
+                ),
+            ) from cleanup_error
+        raise
+    db.refresh(document)
+    background_tasks.add_task(process_saved_document, document_id)
+    return document
 
 
 @router.patch("/{paper_id}/screening", response_model=PaperScreeningResponse)

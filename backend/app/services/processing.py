@@ -33,8 +33,8 @@ def reprocess_document(db: Session, document: Document) -> None:
         if not text or not chunks:
             raise ValueError("No readable text was found in this file.")
 
-        db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.document_id))
         document.extracted_text = text
+        db.commit()
         client = _client()
         vectors: list[list[float] | None] = [None] * len(chunks)
         if client is not None:
@@ -47,6 +47,7 @@ def reprocess_document(db: Session, document: Document) -> None:
                 for item in result.data:
                     vectors[start + item.index] = item.embedding
 
+        db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.document_id))
         db.add_all(
             [
                 DocumentChunk(
@@ -75,4 +76,14 @@ def reprocess_document(db: Session, document: Document) -> None:
         current.processing_error = str(exc)[:1000]
         db.commit()
         raise
+
+
+def process_saved_document(document_id: uuid.UUID) -> None:
+    from app.main import app
+
+    factory = app.state.research_session_factory
+    with factory() as db:
+        document = db.get(Document, document_id)
+        if document is not None:
+            reprocess_document(db, document)
 

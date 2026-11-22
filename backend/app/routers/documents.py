@@ -16,7 +16,7 @@ from app.schemas import DocumentReaderResponse, DocumentResponse, DocumentSearch
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
 from app.services.documents import SUPPORTED_EXTENSIONS
-from app.services.processing import reprocess_document
+from app.services.processing import process_saved_document, reprocess_document
 from app.services.storage import (
     delete_document as delete_stored_document,
     is_remote_storage_path,
@@ -209,18 +209,8 @@ async def upload_document(
             ) from cleanup_error
         raise
     db.refresh(document)
-    background_tasks.add_task(_process_saved_document, document_id)
+    background_tasks.add_task(process_saved_document, document_id)
     return document
-
-
-def _process_saved_document(document_id: uuid.UUID) -> None:
-    from app.main import app
-
-    factory = app.state.research_session_factory
-    with factory() as db:
-        document = db.get(Document, document_id)
-        if document is not None:
-            reprocess_document(db, document)
 
 
 @router.post("/api/documents/{document_id}/reprocess", response_model=DocumentResponse)
@@ -240,7 +230,7 @@ def reprocess(
     document.processing_error = None
     record_activity(db, user.user_id, "document.reprocessed", {"file_type": document.file_type})
     db.commit()
-    background_tasks.add_task(_process_saved_document, document_id)
+    background_tasks.add_task(process_saved_document, document_id)
     return document
 
 

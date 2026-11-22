@@ -1,6 +1,9 @@
+import ipaddress
 import math
 import re
+import socket
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -13,6 +16,10 @@ from app.models import Author, Paper, PaperAuthor
 
 OPENALEX_URL = "https://api.openalex.org/works"
 CROSSREF_URL = "https://api.crossref.org/works"
+
+
+class OpenAccessPDFTooLarge(ValueError):
+    pass
 
 
 def _year(date_value: Any) -> int | None:
@@ -211,6 +218,102 @@ def search_papers(query: str, provider: str, limit: int) -> list[dict[str, Any]]
             papers = [paper for item in items if (paper := normalize_crossref(item))]
             return _rerank_semantically(query, papers)[:limit]
     raise ValueError(f"Unsupported academic search provider: {provider}")
+
+
+def open_access_pdf_url(paper: Paper) -> str | None:
+    settings = get_settings()
+    headers = {"User-Agent": "AIResearchAssistant/1.0"}
+    if settings.openalex_api_key and settings.openalex_api_key.get_secret_value().strip():
+        headers["Authorization"] = f"Bearer {settings.openalex_api_key.get_secret_value()}"
+
+    params: dict[str, Any] = {}
+    if settings.openalex_email:
+        params["mailto"] = settings.openalex_email
+    with httpx.Client(timeout=20, headers=headers) as client:
+        if paper.api_provider == "openalex" and re.fullmatch(r"W\d+", paper.external_paper_id):
+            response = client.get(f"{OPENALEX_URL}/{paper.external_paper_id}", params=params)
+        else:
+            doi = paper.doi or (paper.external_paper_id if paper.api_provider == "crossref" else None)
+            if not doi:
+                return None
+            doi = re.sub(r"^https?://doi\.org/", "", doi.strip(), flags=re.IGNORECASE)
+            response = client.get(
+                OPENALEX_URL,
+                params={
+                    **params,
+                    "filter": f"doi:https://doi.org/{doi}",
+                    "per-page": 1,
+                },
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        if paper.api_provider == "openalex" and re.fullmatch(r"W\d+", paper.external_paper_id):
+            work = response.json()
+        else:
+            work = next(iter(response.json().get("results", [])), None)
+
+    if not work or not (work.get("open_access") or {}).get("is_oa"):
+        return None
+    locations = [work.get("primary_location"), *(work.get("locations") or [])]
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        if location.get("is_oa", True) and location.get("pdf_url"):
+            return location["pdf_url"]
+    return None
+
+
+def _validate_public_pdf_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("OpenAlex returned an unsupported PDF URL.")
+    try:
+        addresses = socket.getaddrinfo(
+            parsed.hostname,
+            parsed.port or 443,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise ValueError("The open-access PDF host could not be resolved.") from exc
+    if not addresses or any(
+        not ipaddress.ip_address(address[4][0].split("%", 1)[0]).is_global
+        for address in addresses
+    ):
+        raise ValueError("OpenAlex returned a non-public PDF host.")
+
+
+def download_open_access_pdf(url: str, max_bytes: int) -> bytes:
+    contents = bytearray()
+    current_url = url
+    with httpx.Client(timeout=60, follow_redirects=False, headers={"User-Agent": "AIResearchAssistant/1.0"}) as client:
+        for _ in range(4):
+            _validate_public_pdf_url(current_url)
+            with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("The open-access PDF redirect was invalid.")
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > max_bytes:
+                    raise OpenAccessPDFTooLarge(
+                        f"The open-access PDF exceeds the {max_bytes // (1024 * 1024)} MB limit."
+                    )
+                for chunk in response.iter_bytes():
+                    contents.extend(chunk)
+                    if len(contents) > max_bytes:
+                        raise OpenAccessPDFTooLarge(
+                            f"The open-access PDF exceeds the {max_bytes // (1024 * 1024)} MB limit."
+                        )
+                break
+        else:
+            raise ValueError("The open-access PDF redirected too many times.")
+    if not contents.startswith(b"%PDF-"):
+        raise ValueError("The open-access source did not return a readable PDF.")
+    return bytes(contents)
 
 
 def upsert_paper(literature_db: Session, data: dict[str, Any]) -> Paper:

@@ -356,6 +356,33 @@ function App() {
     }
   }
 
+  async function importPaperFullText(paper: Paper) {
+    if (!project) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const document = await request<DocumentRecord>(
+        `/api/projects/${project.project_id}/papers/${paper.paper_id}/full-text`,
+        { method: "POST" },
+      );
+      await loadProjectData(project);
+      setAnnotationDocumentId(document.document_id);
+      setView("documents");
+      if (document.processing_status === "needs_api_key") {
+        setNotice("Full text was extracted. Add an OpenAI API key to make it available to AI queries.");
+      } else if (document.processing_status === "ready") {
+        setNotice("Full text is ready to read and query.");
+      } else {
+        setNotice("Open-access PDF added. Text extraction is running; it will be available to query when processing finishes.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not import the paper's full text.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updatePaperScreening(
     paper: Paper,
     screeningStatus: Paper["screening_status"],
@@ -805,6 +832,8 @@ function App() {
                           onScreeningChange={(status, note) => void updatePaperScreening(paper, status, note)}
                           onRemove={() => void unsavePaper(paper)}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
+                          onImportFullText={() => void importPaperFullText(paper)}
+                          importingFullText={busy}
                         />
                         {annotationPaperId === paper.paper_id && (
                           <AnnotationEditor
@@ -984,6 +1013,8 @@ function PaperCard({
   onRemove,
   onAnnotate,
   onScreeningChange,
+  onImportFullText,
+  importingFullText,
 }: {
   paper: Paper;
   saved?: boolean;
@@ -991,6 +1022,8 @@ function PaperCard({
   onRemove?: () => void;
   onAnnotate?: () => void;
   onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
+  onImportFullText?: () => void;
+  importingFullText?: boolean;
 }) {
   const [screeningStatus, setScreeningStatus] = useState(paper.screening_status);
   const [screeningNote, setScreeningNote] = useState(paper.screening_note);
@@ -1053,6 +1086,10 @@ function PaperCard({
         {saved ? (
           <>
             <button className="button secondary small-button" onClick={onAnnotate}><Pencil size={13} /> Annotate</button>
+            <button className="button secondary small-button" onClick={onImportFullText} disabled={importingFullText}>
+              {importingFullText ? <LoaderCircle size={13} className="spin" /> : <FileText size={13} />}
+              {importingFullText ? "Importing…" : "Extract full text"}
+            </button>
             <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>
           </>
         ) : (
