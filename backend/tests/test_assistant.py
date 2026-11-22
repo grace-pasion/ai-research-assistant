@@ -212,3 +212,145 @@ def test_draft_answer_abstains_when_no_claim_has_a_matching_quote(monkeypatch):
     assert answer.startswith("I couldn")
     assert "[S1]" not in answer
     assert len(provider_calls) == 1
+
+
+def test_comparison_draft_builds_matrix_and_flags_unreported_fields(monkeypatch):
+    excerpt = "The study surveyed 120 teachers using a five-point questionnaire."
+    chunk = SimpleNamespace(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_text=excerpt,
+        page_number=2,
+    )
+    document = SimpleNamespace(document_id=chunk.document_id, filename="teacher-study.pdf")
+    provider_calls = []
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "source_index": 1,
+                            "cells": {
+                                "research_question": [
+                                    {
+                                        "text": "The study examined teachers' views.",
+                                        "evidence": [{"source_index": 1, "quote": excerpt}],
+                                    }
+                                ],
+                                "methods": [
+                                    {
+                                        "text": "The study used a questionnaire.",
+                                        "evidence": [{"source_index": 1, "quote": excerpt}],
+                                    }
+                                ],
+                                "sampling": [],
+                                "findings": [],
+                                "limitations": [],
+                            },
+                        }
+                    ]
+                }
+            ),
+            json.dumps(
+                {
+                    "question_fully_answered": False,
+                    "decisions": [
+                        {"claim_index": 1, "supported": True},
+                        {"claim_index": 2, "supported": True},
+                    ],
+                }
+            ),
+        ]
+    )
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            provider_calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=next(responses)))]
+            )
+
+    monkeypatch.setattr(
+        assistant,
+        "_openai_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    monkeypatch.setattr(assistant, "_retrieve_chunks", lambda *_args: [(chunk, document)])
+    monkeypatch.setattr(assistant, "_retrieve_papers", lambda *_args: [])
+    monkeypatch.setattr(assistant, "_discover_external_papers", lambda *_args: [])
+    monkeypatch.setattr(
+        assistant,
+        "get_settings",
+        lambda: SimpleNamespace(openai_model="test-model"),
+    )
+
+    answer, sources = assistant.draft_answer(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        uuid.uuid4(),
+        "Compare the study's research design and findings.",
+        "compare",
+    )
+
+    assert answer.startswith(
+        "| Source | Research question | Methods | Sampling | Findings | Limitations | Citations |"
+    )
+    assert "The study examined teachers' views. [S1]" in answer
+    assert "The study used a questionnaire. [S1]" in answer
+    assert answer.count("[Missing evidence]") == 3
+    assert answer.endswith("| [S1] |")
+    assert sources[0]["title"] == "teacher-study.pdf"
+    assert "research_question" in provider_calls[0]["messages"][0]["content"]
+
+
+def test_comparison_claims_cannot_cite_a_different_source_row():
+    sources = [
+        {"title": "first.pdf", "excerpt": "The first report examined outcomes in a regional sample."},
+        {"title": "second.pdf", "excerpt": "The second report used a national randomized controlled trial."},
+    ]
+    content = json.dumps(
+        {
+            "rows": [
+                {
+                    "source_index": 1,
+                    "cells": {
+                        "findings": [
+                            {
+                                "text": "The first study used a national randomized controlled trial.",
+                                "evidence": [
+                                    {
+                                        "source_index": 2,
+                                        "quote": sources[1]["excerpt"],
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+                {
+                    "source_index": 2,
+                    "cells": {
+                        "methods": [
+                            {
+                                "text": "The second report used a randomized controlled trial.",
+                                "evidence": [
+                                    {
+                                        "source_index": 2,
+                                        "quote": sources[1]["excerpt"],
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+            ]
+        }
+    )
+
+    claims = assistant._parse_comparison_claims(content, sources)
+
+    assert len(claims) == 1
+    assert claims[0]["source_index"] == 2
+    assert claims[0]["citations"] == [2]
+    assert claims[0]["field"] == "methods"

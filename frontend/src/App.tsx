@@ -1047,27 +1047,79 @@ function AnswerContent({
   sources: Source[];
   onSourceClick: (source: Source) => void;
 }) {
+  const matrixRows = parseComparisonMatrix(content);
+  if (matrixRows) {
+    const headers = [
+      "Source",
+      "Research question",
+      "Methods",
+      "Sampling",
+      "Findings",
+      "Limitations",
+      "Citations",
+    ];
+    return (
+      <div className="comparison-matrix-wrap">
+        <table className="comparison-matrix">
+          <caption>Evidence comparison matrix</caption>
+          <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+          <tbody>
+            {matrixRows.map((row, rowIndex) => (
+              <tr key={`${row[0]}-${rowIndex}`}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex}>
+                    {renderCitedText(cell, sources, onSourceClick)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   return (
     <div className="message-content">
-      {content.split(/(\[S\d+\])/g).map((part, index) => {
-        const citation = /^\[S(\d+)\]$/.exec(part);
-        const source = citation ? sources[Number(citation[1]) - 1] : undefined;
-        return source ? (
-          <button
-            className="citation-ref"
-            key={`${part}-${index}`}
-            onClick={() => onSourceClick(source)}
-            type="button"
-            aria-label={`Open cited source ${citation?.[1]}`}
-          >
-            {part}
-          </button>
-        ) : (
-          <Fragment key={index}>{part}</Fragment>
-        );
-      })}
+      {renderCitedText(content, sources, onSourceClick)}
     </div>
   );
+}
+
+function parseComparisonMatrix(content: string): string[][] | null {
+  const lines = content.split("\n");
+  const expectedHeader =
+    "| Source | Research question | Methods | Sampling | Findings | Limitations | Citations |";
+  if (lines[0] !== expectedHeader) return null;
+  const rows = lines.slice(2).map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()));
+  return rows.length && rows.every((row) => row.length === 7) ? rows : null;
+}
+
+function renderCitedText(
+  content: string,
+  sources: Source[],
+  onSourceClick: (source: Source) => void,
+) {
+  return content.split(/(\[S\d+\]|\[Missing evidence\])/g).map((part, index) => {
+    const citation = /^\[S(\d+)\]$/.exec(part);
+    const source = citation ? sources[Number(citation[1]) - 1] : undefined;
+    if (source) {
+      return (
+        <button
+          className="citation-ref"
+          key={`${part}-${index}`}
+          onClick={() => onSourceClick(source)}
+          type="button"
+          aria-label={`Open cited source ${citation?.[1]}`}
+        >
+          {part}
+        </button>
+      );
+    }
+    if (part === "[Missing evidence]") {
+      return <span className="missing-evidence" key={index}>Missing evidence</span>;
+    }
+    return <Fragment key={index}>{part}</Fragment>;
+  });
 }
 
 function DocumentPdfPreview({

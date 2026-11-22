@@ -269,6 +269,14 @@ h1, h2, h3, p { margin-top: 0; }
 .message.user { align-self: flex-end; background: #f3f6f3; border-radius: 9px 9px 2px 9px; padding: 11px 13px; }
 .message-label { color: #95a098; font-size: 8px; font-weight: 700; letter-spacing: 1px; margin-bottom: 6px; }
 .message-content { color: #4a554e; font-size: 11px; line-height: 1.75; overflow-wrap: anywhere; white-space: pre-wrap; }
+.comparison-matrix-wrap { max-width: 100%; overflow-x: auto; }
+.comparison-matrix { border-collapse: collapse; min-width: 900px; text-align: left; width: 100%; }
+.comparison-matrix caption { color: #78847b; font-size: 9px; font-weight: 600; padding: 0 0 7px; text-align: left; }
+.comparison-matrix th { background: #f7f9f7; color: #78847b; font-size: 9px; font-weight: 600; }
+.comparison-matrix th, .comparison-matrix td { border: 1px solid #e8ece8; padding: 8px; vertical-align: top; }
+.comparison-matrix td { color: #59645d; font-size: 10px; line-height: 1.6; white-space: normal; }
+.comparison-matrix td:first-child { color: #435148; font-weight: 600; min-width: 145px; }
+.missing-evidence { background: #fff4e3; border-radius: 3px; color: #8b6a2c; display: inline-block; font-size: 9px; padding: 2px 5px; }
 .approved-label { align-items: center; color: #4d8261; display: inline-flex; font-size: 9px; gap: 4px; margin-top: 8px; }
 .draft-review { background: #fffefa; border: 1px solid #e9e2cd; border-radius: 9px; padding: 14px; }
 .review-topline { align-items: center; color: #927b45; display: flex; font-size: 8px; gap: 7px; margin-bottom: 12px; }
