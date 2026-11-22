@@ -1,0 +1,235 @@
+import uuid
+from datetime import datetime
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class ResearchBase(DeclarativeBase):
+    pass
+
+
+class LiteratureBase(DeclarativeBase):
+    pass
+
+
+def uuid_column():
+    return mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+
+class User(ResearchBase):
+    __tablename__ = "users"
+
+    user_id: Mapped[uuid.UUID] = uuid_column()
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ResearchProject(ResearchBase):
+    __tablename__ = "research_projects"
+    __table_args__ = (Index("ix_projects_owner_updated", "user_id", "updated_at"),)
+
+    project_id: Mapped[uuid.UUID] = uuid_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    project_name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Document(ResearchBase):
+    __tablename__ = "documents"
+
+    document_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    file_type: Mapped[str] = mapped_column(String(32))
+    storage_path: Mapped[str] = mapped_column(Text)
+    file_size: Mapped[int] = mapped_column(Integer)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    processing_status: Mapped[str] = mapped_column(String(32), default="processing", index=True)
+    processing_error: Mapped[str | None] = mapped_column(Text)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocumentChunk(ResearchBase):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index"),
+        Index(
+            "ix_document_chunks_embedding",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    chunk_id: Mapped[uuid.UUID] = uuid_column()
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.document_id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    chunk_text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    token_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Conversation(ResearchBase):
+    __tablename__ = "conversations"
+
+    conversation_id: Mapped[uuid.UUID] = uuid_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Message(ResearchBase):
+    __tablename__ = "messages"
+    __table_args__ = (UniqueConstraint("approval_id"),)
+
+    message_id: Mapped[uuid.UUID] = uuid_column()
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.conversation_id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=True)
+    approval_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class MessageChunkSource(ResearchBase):
+    __tablename__ = "message_chunk_sources"
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.message_id", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("document_chunks.chunk_id", ondelete="CASCADE"), primary_key=True
+    )
+    source_order: Mapped[int] = mapped_column(Integer)
+
+
+class MessagePaperSource(ResearchBase):
+    __tablename__ = "message_paper_sources"
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.message_id", ondelete="CASCADE"), primary_key=True
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    source_order: Mapped[int] = mapped_column(Integer)
+
+
+class SearchQuery(ResearchBase):
+    __tablename__ = "search_queries"
+
+    query_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    query_text: Mapped[str] = mapped_column(Text)
+    api_provider: Mapped[str] = mapped_column(String(32))
+    searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SearchQueryResult(ResearchBase):
+    __tablename__ = "search_query_results"
+
+    query_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("search_queries.query_id", ondelete="CASCADE"), primary_key=True
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    relevance_score: Mapped[float | None] = mapped_column(Float)
+
+
+class ProjectPaper(ResearchBase):
+    __tablename__ = "project_papers"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), primary_key=True
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    relevance_score: Mapped[float | None] = mapped_column(Float)
+    relationship_type: Mapped[str] = mapped_column(String(64), default="saved")
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocumentPaper(ResearchBase):
+    __tablename__ = "document_papers"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.document_id", ondelete="CASCADE"), primary_key=True
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    relevance_score: Mapped[float | None] = mapped_column(Float)
+    relationship_type: Mapped[str] = mapped_column(String(64), default="related")
+
+
+class Paper(LiteratureBase):
+    __tablename__ = "papers"
+    __table_args__ = (UniqueConstraint("api_provider", "external_paper_id"),)
+
+    paper_id: Mapped[uuid.UUID] = uuid_column()
+    external_paper_id: Mapped[str] = mapped_column(String(255))
+    api_provider: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(Text)
+    abstract: Mapped[str | None] = mapped_column(Text)
+    publication_year: Mapped[int | None] = mapped_column(Integer)
+    doi: Mapped[str | None] = mapped_column(String(255), index=True)
+    paper_url: Mapped[str | None] = mapped_column(Text)
+    venue: Mapped[str | None] = mapped_column(String(512))
+    citation_count: Mapped[int | None] = mapped_column(Integer)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Author(LiteratureBase):
+    __tablename__ = "authors"
+    __table_args__ = (UniqueConstraint("api_provider", "external_author_id"),)
+
+    author_id: Mapped[uuid.UUID] = uuid_column()
+    author_name: Mapped[str] = mapped_column(String(255))
+    external_author_id: Mapped[str] = mapped_column(String(255))
+    api_provider: Mapped[str] = mapped_column(String(32))
+
+
+class PaperAuthor(LiteratureBase):
+    __tablename__ = "paper_authors"
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.paper_id", ondelete="CASCADE"), primary_key=True
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("authors.author_id", ondelete="CASCADE"), primary_key=True
+    )
+    author_order: Mapped[int] = mapped_column(Integer)

@@ -1,0 +1,62 @@
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+export function getToken(): string | null {
+  return localStorage.getItem("research_assistant_token");
+}
+
+export function setToken(token: string | null): void {
+  if (token) localStorage.setItem("research_assistant_token", token);
+  else localStorage.removeItem("research_assistant_token");
+}
+
+export async function api<T>(
+  path: string,
+  options: RequestInit = {},
+  token = getToken(),
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export function jsonBody(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}

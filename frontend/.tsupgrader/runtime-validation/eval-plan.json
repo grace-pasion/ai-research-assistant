@@ -1,0 +1,91 @@
+{
+  "generatedAt": "2026-11-22T04:45:00Z",
+  "generatedOnPlatform": "win32",
+  "projectType": "webapp",
+  "setup": [
+    {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=C:\\Users\\grpas\\Downloads\\cs452-final-project\\frontend,target=/app",
+        "--workdir",
+        "/app",
+        "node:22-alpine",
+        "npm",
+        "ci"
+      ],
+      "timeoutSeconds": 600
+    }
+  ],
+  "assertions": [
+    {
+      "name": "production-build",
+      "kind": "process",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=C:\\Users\\grpas\\Downloads\\cs452-final-project\\frontend,target=/app",
+        "--workdir",
+        "/app",
+        "node:22-alpine",
+        "npm",
+        "run",
+        "build"
+      ],
+      "verificationMethod": "exit-code",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "tests-pass",
+      "kind": "process",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=C:\\Users\\grpas\\Downloads\\cs452-final-project\\frontend,target=/app",
+        "--workdir",
+        "/app",
+        "node:22-alpine",
+        "npm",
+        "test"
+      ],
+      "verificationMethod": "test-results",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "frontend-home-200",
+      "kind": "http-probe",
+      "startCommand": "docker",
+      "startArgs": [
+        "run",
+        "--rm",
+        "-p",
+        "127.0.0.1:5174:5173",
+        "--mount",
+        "type=bind,source=C:\\Users\\grpas\\Downloads\\cs452-final-project\\frontend,target=/app",
+        "--workdir",
+        "/app",
+        "node:22-alpine",
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5173"
+      ],
+      "url": "http://localhost:5174/",
+      "verificationMethod": "http-status",
+      "expected": "200",
+      "timeoutSeconds": 120
+    }
+  ]
+}
