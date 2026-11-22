@@ -46,7 +46,7 @@ Document processing uses FastAPI in-process background tasks, not a durable exte
 
 | Provider | API used | What Fieldnotes sends/receives |
 |---|---|---|
-| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, and landing-page URL. Chat paper discovery also uses OpenAlex. An optional `OPENALEX_EMAIL` identifies requests. |
+| OpenAlex | `https://api.openalex.org/works` | Topic search and result metadata, including title, abstract, authors, year, DOI, venue, citation count, and landing-page URL. Chat paper discovery also uses OpenAlex. The optional backend `OPENALEX_API_KEY` is sent as an Authorization bearer token to use the account's higher API budget; optional `OPENALEX_EMAIL` identifies requests. |
 | Crossref | `https://api.crossref.org/works` | Bibliographic query and result metadata, including DOI, title, abstract when available, authors, publication year, venue, and citation count. |
 | OpenAI | Embeddings API and Chat Completions API, called through the Python SDK | Creates document/query embeddings, semantically re-ranks academic search candidates using paper titles and abstracts, and generates source-grounded assistant drafts. Default models are `text-embedding-3-small` and `gpt-4o-mini`, configurable on the backend. |
 | Supabase | PostgreSQL connection and Storage object REST API | Stores relational/vector data and private original files. The Storage bucket is accessed only by the API using backend credentials. |
@@ -81,7 +81,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables at startu
 
 ### Search and save academic papers
 
-1. The user enters a query and chooses OpenAlex or Crossref.
+1. The user enters a query and chooses OpenAlex or Crossref. OpenAlex requests use the optional backend API key as an Authorization bearer token; the credential is not sent to Crossref or exposed to the browser.
 2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
 3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
@@ -184,7 +184,7 @@ Interactive API documentation is available at `/docs` on the API host.
 - API responses include `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Permissions-Policy`; HTTPS responses include HSTS, and `/api/` responses use `Cache-Control: no-store`.
 - Administrator access is checked on every admin request against the server-side, comma-separated `ADMIN_EMAILS` allowlist. The admin interface is separate, but the allowlisted user signs in with their existing account credentials. Removing an email from the allowlist revokes admin access after the backend restarts/redeploys.
 - Activity logging is metadata-only by design. It does not record file names or contents, search terms, assistant prompts, or generated answers. User activity history is cascade-deleted with the user account.
-- API credentials and signing secrets are backend environment variables. The browser receives only the public API base URL.
+- API credentials and signing secrets, including `OPENALEX_API_KEY`, are backend environment variables. The browser receives only the public API base URL.
 - CORS allows the configured web origin; the hosted Render configuration allows `https://grace-pasion.github.io`.
 - Supabase Storage is configured as a private bucket. The API accesses files server-to-server.
 - The hosted backend defaults to `gpt-4o-mini` for chat and `text-embedding-3-small` for embeddings. OpenAI calls can incur charges.

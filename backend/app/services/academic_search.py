@@ -184,6 +184,12 @@ def _rerank_semantically(query: str, papers: list[dict[str, Any]]) -> list[dict[
 def search_papers(query: str, provider: str, limit: int) -> list[dict[str, Any]]:
     settings = get_settings()
     headers = {"User-Agent": "AIResearchAssistant/1.0 (mailto:contact@example.com)"}
+    if (
+        provider == "openalex"
+        and settings.openalex_api_key
+        and settings.openalex_api_key.get_secret_value().strip()
+    ):
+        headers["Authorization"] = f"Bearer {settings.openalex_api_key.get_secret_value()}"
     candidate_limit = min(max(limit * 3, limit), 75)
     with httpx.Client(timeout=20, headers=headers) as client:
         if provider == "openalex":

@@ -47,6 +47,48 @@ def test_normalizers_skip_incomplete_metadata():
     assert normalize_crossref({"title": ["No DOI"]}) is None
 
 
+def test_search_papers_sends_openalex_api_key_as_bearer_header(monkeypatch):
+    request = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": []}
+
+    class FakeClient:
+        def __init__(self, *, headers, **_kwargs):
+            request["headers"] = headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def get(self, url, *, params):
+            request["url"] = url
+            request["params"] = params
+            return FakeResponse()
+
+    monkeypatch.setattr(academic_search.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        academic_search,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openalex_api_key=SecretStr("openalex-test-key"),
+            openalex_email="researcher@example.com",
+        ),
+    )
+    monkeypatch.setattr(academic_search, "_rerank_semantically", lambda _query, papers: papers)
+
+    assert academic_search.search_papers("climate", "openalex", 5) == []
+    assert request["headers"]["Authorization"] == "Bearer openalex-test-key"
+    assert "api_key" not in request["params"]
+    assert request["params"]["mailto"] == "researcher@example.com"
+
+
 def test_semantic_ranking_can_promote_related_abstracts(monkeypatch):
     class FakeEmbeddings:
         def create(self, **_kwargs):

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("development-only-change-this-secret")
     jwt_expire_minutes: int = 60 * 24
     openai_api_key: SecretStr | None = None
+    openalex_api_key: SecretStr | None = None
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
     admin_emails: str = ""

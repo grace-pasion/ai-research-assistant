@@ -32,7 +32,7 @@ Edit `.env` before starting:
 
 1. Replace `POSTGRES_PASSWORD` and `JWT_SECRET` with private random values. Use letters and digits only for `POSTGRES_PASSWORD` (for example, generate a hex value with `python -c "import secrets; print(secrets.token_hex(32))"`); the password is included in a database URL.
 2. Set `OPENAI_API_KEY` to your own OpenAI API key. Keep it in `.env`; **do not paste it into chat or commit it**. OpenAI usage may incur charges.
-3. Optionally set `OPENALEX_EMAIL` to identify polite OpenAlex API requests.
+3. Optionally set `OPENALEX_API_KEY` to use your OpenAlex account's higher API budget, and `OPENALEX_EMAIL` to identify polite requests. Keep the key in `.env`; do not paste it into chat or commit it.
 
 Then start the stack:
 
@@ -62,7 +62,7 @@ The workflow uses the repository Actions variable `VITE_API_URL` when set; other
 ### 2. Deploy the API on Render
 
 1. In Render, choose **New → Blueprint**, connect `grace-pasion/ai-research-assistant`, and deploy the repository's `render.yaml`.
-2. When prompted, enter the Supabase session-pooler connection string as `DATABASE_URL`, the Supabase project URL as `SUPABASE_URL`, and the `sb_secret_...` key as `SUPABASE_SECRET_KEY`. Enter your OpenAI API key as `OPENAI_API_KEY` if you want embeddings and AI answers; this key is optional for accounts, projects, file text extraction, and academic search. Do not send secrets in chat or commit them.
+2. When prompted, enter the Supabase session-pooler connection string as `DATABASE_URL`, the Supabase project URL as `SUPABASE_URL`, and the `sb_secret_...` key as `SUPABASE_SECRET_KEY`. Enter your OpenAI API key as `OPENAI_API_KEY` if you want embeddings and AI answers; this key is optional for accounts, projects, file text extraction, and academic search. Enter your OpenAlex API key as `OPENALEX_API_KEY` to use your account's higher OpenAlex API budget. Do not send secrets in chat or commit them.
 3. Render generates a private `JWT_SECRET` for the backend. Leave `STORAGE_BACKEND=supabase`, `SUPABASE_STORAGE_BUCKET=research-documents`, and `CORS_ORIGINS=https://grace-pasion.github.io` as configured by the blueprint. Do not add a Render disk; Supabase Storage is the persistent file store.
 4. Wait for the deployment to finish, then open `https://<your-render-service>.onrender.com/api/health`. A healthy service returns `{"status":"ok"}`.
 
