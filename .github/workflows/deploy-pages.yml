@@ -19,7 +19,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_API_URL: ${{ vars.VITE_API_URL }}
+      VITE_API_URL: ${{ vars.VITE_API_URL || 'https://fieldnotes-api-l1bc.onrender.com' }}
     outputs:
       deploy: ${{ steps.backend.outputs.deploy }}
     steps:
