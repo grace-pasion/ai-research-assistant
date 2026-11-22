@@ -91,6 +91,19 @@ class ResearchProject(ResearchBase):
     )
 
 
+class LatexWorkspace(ResearchBase):
+    __tablename__ = "latex_workspaces"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), primary_key=True
+    )
+    main_tex: Mapped[str] = mapped_column(Text, nullable=False)
+    references_bib: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Document(ResearchBase):
     __tablename__ = "documents"
 

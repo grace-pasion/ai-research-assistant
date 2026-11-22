@@ -119,6 +119,16 @@ class ProjectResponse(APIModel):
     updated_at: datetime
 
 
+class LatexWorkspaceUpdate(BaseModel):
+    main_tex: str = Field(max_length=1_000_000)
+    references_bib: str = Field(max_length=500_000)
+
+
+class LatexWorkspaceResponse(BaseModel):
+    main_tex: str
+    references_bib: str
+
+
 class DocumentResponse(APIModel):
     document_id: uuid.UUID
     project_id: uuid.UUID

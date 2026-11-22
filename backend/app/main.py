@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
 from app.database import ensure_project_paper_screening_columns, initialize_database, make_engine
 from app.models import LiteratureBase, ResearchBase
-from app.routers import admin, annotations, assistant, auth, documents, papers, projects
+from app.routers import admin, annotations, assistant, auth, documents, latex, papers, projects
 from app.security_headers import security_headers_middleware
 
 
@@ -43,7 +43,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origin_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.middleware("http")(security_headers_middleware)
@@ -51,6 +51,7 @@ app.middleware("http")(security_headers_middleware)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(projects.router)
+app.include_router(latex.router)
 app.include_router(documents.router)
 app.include_router(papers.router)
 app.include_router(annotations.router)

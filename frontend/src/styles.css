@@ -183,6 +183,65 @@ h1, h2, h3, p { margin-top: 0; }
 .muted { color: #858f88; }
 .compact { font-size: 11px; }
 
+.latex-workspace-hidden { display: none; }
+.latex-workspace { background: #fff; border: 1px solid #e7ebe7; border-radius: 9px; margin-top: 23px; overflow: hidden; padding: 0; }
+.latex-header { align-items: center; border-bottom: 1px solid #e9ede9; display: flex; flex-wrap: wrap; gap: 14px; justify-content: space-between; padding: 18px 20px; }
+.latex-header h2 { color: #2e3933; font: 650 17px var(--serif); margin: 0 0 5px; }
+.latex-header p:not(.eyebrow) { color: #89938b; font-size: 10px; margin: 0; }
+.latex-header .eyebrow { margin-bottom: 5px; }
+.latex-header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.latex-save-status { align-items: center; color: #63816b; display: inline-flex; font-size: 10px; gap: 5px; margin-right: 4px; white-space: nowrap; }
+.latex-save-status.unsaved, .latex-save-status.error { color: #a56d38; }
+.latex-error { margin: 10px 18px; }
+.latex-loading { align-items: center; color: #77837a; display: flex; font-size: 11px; gap: 8px; min-height: 250px; justify-content: center; }
+.latex-layout { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 650px; }
+.latex-sources { background: #fbfcfa; border-right: 1px solid #e9ede9; max-height: 760px; overflow-y: auto; }
+.latex-files { border-bottom: 1px solid #e9ede9; padding: 15px 11px 12px; }
+.latex-label, .latex-group-heading { color: #89938b; font-size: 8px; font-weight: 700; letter-spacing: 1.1px; }
+.latex-label { display: block; margin: 0 8px 8px; }
+.latex-file { align-items: center; background: transparent; border: 0; border-radius: 5px; color: #657168; display: flex; font: 11px/1.3 Consolas, "Courier New", monospace; gap: 8px; padding: 8px; text-align: left; width: 100%; }
+.latex-file:hover, .latex-file.active { background: #eaf2ed; color: #2d654f; }
+.latex-source-group { border-bottom: 1px solid #e9ede9; padding: 13px 11px; }
+.latex-group-heading { align-items: center; display: flex; gap: 6px; margin: 0 4px 10px; }
+.latex-group-heading svg { color: #718779; }
+.latex-group-heading small { font-size: 9px; font-weight: 400; letter-spacing: 0; margin-left: auto; }
+.latex-source-card { border-top: 1px solid #eef1ee; padding: 10px 3px 8px; }
+.latex-source-card strong { color: #46534b; display: -webkit-box; font-size: 10px; font-weight: 600; line-height: 1.45; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.latex-source-card > span { color: #8c968e; display: block; font-size: 9px; line-height: 1.5; margin-top: 4px; }
+.latex-source-actions { display: flex; gap: 6px; margin-top: 7px; }
+.latex-source-actions button, .latex-load-excerpt, .latex-insert-excerpt { align-items: center; background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #52715e; display: inline-flex; font-size: 9px; gap: 4px; padding: 5px 7px; }
+.latex-source-actions button:hover, .latex-load-excerpt:hover, .latex-insert-excerpt:hover { background: #edf4ee; }
+.latex-document-source { border-top: 1px solid #eef1ee; padding: 9px 3px; }
+.latex-document-source summary { color: #556259; cursor: pointer; font-size: 10px; overflow-wrap: anywhere; }
+.latex-document-source summary small { color: #929b95; display: block; font-size: 8px; margin: 3px 0 0; text-transform: capitalize; }
+.latex-document-source textarea { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #57635b; font-size: 9px; line-height: 1.5; margin-top: 8px; padding: 7px; resize: vertical; width: 100%; }
+.latex-document-source .latex-load-excerpt { margin-top: 8px; }
+.latex-document-source .latex-insert-excerpt { margin-top: 6px; }
+.latex-empty { color: #969f98; font-size: 9px; line-height: 1.5; margin: 8px 3px 2px; }
+.latex-editor-panel { display: flex; flex-direction: column; min-width: 0; }
+.latex-toolbar { align-items: center; background: #fbfcfa; border-bottom: 1px solid #e9ede9; display: flex; justify-content: space-between; min-height: 44px; padding: 6px 12px; }
+.latex-current-file { align-items: center; color: #5b685f; display: inline-flex; font: 10px Consolas, "Courier New", monospace; gap: 7px; }
+.latex-current-file svg { color: #63816b; }
+.latex-view-toggle { align-items: center; background: #f0f3f0; border: 1px solid #e8ece8; border-radius: 6px; display: flex; gap: 2px; padding: 2px; }
+.latex-view-toggle button { align-items: center; background: transparent; border: 0; border-radius: 4px; color: #7d8981; display: inline-flex; font-size: 9px; gap: 4px; padding: 5px 7px; }
+.latex-view-toggle button.active { background: #fff; box-shadow: 0 1px 3px #2533291c; color: #38644d; }
+.latex-panes { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 605px; }
+.latex-panes.mode-source, .latex-panes.mode-preview { grid-template-columns: minmax(0, 1fr); }
+.latex-source-pane, .latex-preview-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.latex-source-pane { border-right: 1px solid #e9ede9; }
+.latex-editor-caption { align-items: center; background: #fbfcfa; border-bottom: 1px solid #eef1ee; color: #78847b; display: flex; font-size: 9px; gap: 6px; padding: 9px 12px; }
+.latex-source-pane textarea { background: #222b26; border: 0; color: #e5eee7; flex: 1; font: 11px/1.75 Consolas, "Courier New", monospace; min-height: 550px; outline: 0; padding: 15px; resize: vertical; tab-size: 2; white-space: pre; }
+.latex-source-pane textarea::selection { background: #476d58; }
+.latex-preview-pane { background: #f7f8f6; overflow: hidden; }
+.latex-paper-preview { background: #fff; box-shadow: 0 2px 12px #2533290d; color: #303833; flex: 1; font: 11px/1.8 Georgia, "Times New Roman", serif; margin: 17px; min-height: 510px; overflow: auto; padding: 34px 30px; }
+.latex-paper-preview h1 { font: 700 19px/1.35 Georgia, "Times New Roman", serif; margin: 12px 0; text-align: center; }
+.latex-paper-preview h2 { border-bottom: 1px solid #e8ebe7; font: 700 14px Georgia, "Times New Roman", serif; margin: 20px 0 8px; padding-bottom: 4px; }
+.latex-paper-preview h3 { font: italic 700 12px Georgia, "Times New Roman", serif; margin: 15px 0 6px; }
+.latex-paper-preview p { margin: 8px 0; white-space: pre-wrap; }
+.latex-paper-preview .latex-preview-author { color: #737e76; font-style: italic; text-align: center; }
+.latex-bib-preview { background: #fff; color: #566158; flex: 1; font: 10px/1.7 Consolas, "Courier New", monospace; margin: 17px; min-height: 510px; overflow: auto; padding: 20px; white-space: pre-wrap; }
+.latex-preview-note { color: #929b95; font-size: 8px; margin: 0 17px 12px; }
+
 .assistant-layout { background: #fff; border: 1px solid #e7ebe7; border-radius: 9px; display: grid; grid-template-columns: 220px minmax(0, 1fr); margin-top: 23px; min-height: 600px; overflow: hidden; }
 .conversation-sidebar { background: #fbfcfa; border-right: 1px solid #edf0ed; padding: 17px 11px; }
 .conversation-heading { align-items: center; display: flex; justify-content: space-between; margin: 1px 5px 13px; }
@@ -260,6 +319,9 @@ h1, h2, h3, p { margin-top: 0; }
   .content-area { padding: 35px 28px 45px; }
   .assistant-layout { grid-template-columns: 180px minmax(0, 1fr); }
   .topbar { padding: 0 28px; }
+  .latex-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .latex-view-toggle button { padding: 5px; }
+  .latex-view-toggle button span { display: none; }
 }
 @media (max-width: 650px) {
   body { min-width: 360px; }
@@ -278,6 +340,8 @@ h1, h2, h3, p { margin-top: 0; }
   .tab-bar { gap: 13px; justify-content: space-between; }
   .tab-button { font-size: 10px; gap: 5px; }
   .tab-caret { display: none; }
+  .tab-bar { overflow-x: auto; }
+  .tab-button { flex: 0 0 auto; white-space: nowrap; }
   .section-heading { align-items: flex-start; gap: 12px; }
   .document-row { gap: 8px; padding: 10px; }
   .document-row .button { padding: 0 7px; }
@@ -295,6 +359,17 @@ h1, h2, h3, p { margin-top: 0; }
   .chat-header { padding: 13px; }
   .chat-messages { padding: 13px; }
   .app-footer { padding: 13px 15px; }
+  .latex-header { align-items: flex-start; padding: 14px; }
+  .latex-header-actions { gap: 6px; }
+  .latex-save-status { flex-basis: 100%; }
+  .latex-layout { display: flex; flex-direction: column; }
+  .latex-sources { border-bottom: 1px solid #e9ede9; border-right: 0; max-height: 310px; }
+  .latex-panes { grid-template-columns: minmax(0, 1fr); }
+  .latex-source-pane { border-bottom: 1px solid #e9ede9; border-right: 0; }
+  .latex-source-pane textarea { min-height: 360px; }
+  .latex-paper-preview, .latex-bib-preview { min-height: 360px; padding: 23px 18px; }
+  .latex-view-toggle button { padding: 5px 7px; }
+  .latex-view-toggle button span { display: inline; }
 }
 
 .admin-page { background: var(--canvas); min-height: 100vh; padding: 28px; }

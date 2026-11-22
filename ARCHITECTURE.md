@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, source annotations, and assistant review UI. |
+| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, LaTeX editor, source annotations, and assistant review UI. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -59,6 +59,7 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 
 - **Account data:** user email, display name, and password hash.
 - **Research workspace:** user-owned projects; uploaded or open-access-imported document metadata, extracted text, processing status, and chunk records.
+- **LaTeX workspaces:** one project-owned `latex_workspaces` row per project stores `main.tex`, `references.bib`, and its last-update timestamp in the research database. The project foreign key cascades on project deletion; content is not sent to an external TeX service.
 - **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance.
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper relationships with a persistent screening status (`unread`, `undecided`, `include`, or `exclude`) and optional short note. Existing databases receive these columns additively at startup.
@@ -88,6 +89,13 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 4. The user can save a result to the current project or remove a saved paper later.
 5. In the project's saved-paper list, the user can mark each paper unread, undecided, include, or exclude, add an optional reason/note, and track reviewed, unread, and undecided totals. Undecided papers count as reviewed but remain separate from included and excluded papers. Screening decisions are scoped to the project and persist in the `project_papers` relationship.
 6. For a saved paper, **Extract full text** looks up an OpenAlex location marked open access and downloads its PDF when available. The API stores it as a project document linked through `document_papers`, then runs the existing extraction/chunking/embedding pipeline. If no open-access PDF is available, the user can upload a copy they have access to. Imported text is queryable through the existing document search and assistant retrieval flows.
+
+### LaTeX workspace
+
+1. The signed-in user opens **Main document** in a project. The API checks project ownership and returns the saved source files or a starter article template and empty bibliography.
+2. The editor keeps `main.tex` and `references.bib` separately, autosaves edits to the project database, and offers source-only, live-preview-only, and split layouts. The browser preview renders common article structure and citation keys; it is not a TeX engine and does not produce a PDF.
+3. Saved project papers can insert a `\cite{...}` command and a matching BibTeX entry; papers with abstracts can also insert the abstract as a quoted passage. Ready project documents can load an editable excerpt from the existing extracted-text reader and insert it into the article with a source label. The user can edit both inserted content and bibliography entries in the normal source editor.
+4. The workspace is project-local, remains private behind the usual ownership checks, and is deleted with its project. Users can download the currently selected source file.
 
 ### Annotate documents and papers
 
@@ -130,6 +138,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - Download the original file, retry processing when it is not already processing or ready, and delete it.
 - Search extracted document text and inspect matching excerpts.
 - Open a document from the Documents list to read its extracted text and view its highlights and notes in the document reader. Add, edit, or delete notes and highlights there; they persist with the project.
+- Open **Main document** for a per-project LaTeX workspace with `main.tex`, `references.bib`, autosave, downloadable source, and source/preview/split layouts. Insert citations and abstracts from saved literature, or edit and insert excerpts from ready project documents.
 - Use OCR for scanned PDFs when Tesseract is available.
 - Upload limit: 25 MB by default in the hosted configuration (backend setting permits configuration up to 100 MB); PDF extraction is limited to 100 pages.
 - Continue to use extracted-text search when no OpenAI key is configured; embeddings and AI answers require the backend OpenAI key.
@@ -176,6 +185,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `DELETE` | `/api/admin/users/{user_id}` | Permanently delete another user and their associated data/files. |
 | `GET`, `POST` | `/api/projects` | List or create the authenticated user's projects. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
+| `GET`, `PUT` | `/api/projects/{project_id}/latex` | Read or save the project's `main.tex` and `references.bib` files. |
 | `GET` | `/api/projects/{project_id}/documents` | List project documents and processing states. |
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
 | `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Download,
   FileText,
+  FileCode2,
   FolderPlus,
   Library,
   LoaderCircle,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, getToken, jsonBody, setToken } from "./api";
+import { LatexWorkspace } from "./LatexWorkspace";
 import type {
   Annotation,
   Conversation,
@@ -35,7 +37,7 @@ import type {
   User,
 } from "./types";
 
-type View = "documents" | "papers" | "assistant";
+type View = "documents" | "papers" | "latex" | "assistant";
 type LoginResponse = { access_token: string; user: User };
 
 function App() {
@@ -676,7 +678,18 @@ function App() {
               <div className="tab-bar" role="tablist" aria-label="Project sections">
                 <TabButton active={view === "documents"} onClick={() => setView("documents")} icon={<FileText size={16} />}>Documents</TabButton>
                 <TabButton active={view === "papers"} onClick={() => setView("papers")} icon={<Library size={16} />}>Literature</TabButton>
+                <TabButton active={view === "latex"} onClick={() => setView("latex")} icon={<FileCode2 size={16} />}>Main document</TabButton>
                 <TabButton active={view === "assistant"} onClick={() => setView("assistant")} icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
+              </div>
+
+              <div className={view === "latex" ? "" : "latex-workspace-hidden"} aria-hidden={view !== "latex"}>
+                <LatexWorkspace
+                  key={project.project_id}
+                  project={project}
+                  documents={documents}
+                  papers={papers}
+                  request={request}
+                />
               </div>
 
               {view === "documents" && (
