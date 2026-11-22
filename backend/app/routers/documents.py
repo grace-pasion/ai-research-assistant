@@ -1,8 +1,11 @@
+import logging
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,8 +16,15 @@ from app.schemas import DocumentResponse, DocumentSearchResult
 from app.security import get_current_user, require_project_owner
 from app.services.documents import SUPPORTED_EXTENSIONS
 from app.services.processing import reprocess_document
+from app.services.storage import (
+    delete_document as delete_stored_document,
+    is_remote_storage_path,
+    read_document,
+    store_document,
+)
 
 router = APIRouter(tags=["documents"])
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -80,10 +90,24 @@ def download_document(
     project = db.get(ResearchProject, document.project_id)
     if project is None or project.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Document not found.")
-    path = Path(document.storage_path)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Stored document file is missing.")
-    return FileResponse(path, filename=document.filename, media_type="application/octet-stream")
+    if not is_remote_storage_path(document.storage_path):
+        path = Path(document.storage_path)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Stored document file is missing.")
+        return FileResponse(path, filename=document.filename, media_type="application/octet-stream")
+    try:
+        contents = read_document(document.storage_path)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail="Cloud document storage is unavailable; retry the download."
+        ) from exc
+    return Response(
+        content=contents,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(document.filename)}"
+        },
+    )
 
 
 @router.post(
@@ -112,16 +136,26 @@ async def upload_document(
             detail=f"File exceeds the {get_settings().max_upload_mb} MB upload limit.",
         )
     document_id = uuid.uuid4()
-    project_dir = Path(get_settings().storage_dir) / str(project_id)
-    project_dir.mkdir(parents=True, exist_ok=True)
-    storage_path = project_dir / f"{document_id}{extension}"
-    storage_path.write_bytes(data)
+    try:
+        storage_path = store_document(
+            project_id,
+            document_id,
+            extension,
+            data,
+            file.content_type,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="Cloud document storage is unavailable; retry the upload."
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     document = Document(
         document_id=document_id,
         project_id=project_id,
         filename=original_name[:255],
         file_type=extension.lstrip("."),
-        storage_path=str(storage_path),
+        storage_path=storage_path,
         file_size=len(data),
         processing_status="processing",
     )
@@ -130,7 +164,19 @@ async def upload_document(
         db.commit()
     except Exception:
         db.rollback()
-        storage_path.unlink(missing_ok=True)
+        try:
+            delete_stored_document(storage_path)
+        except (httpx.HTTPError, RuntimeError, ValueError) as cleanup_error:
+            logger.exception(
+                "Could not remove uploaded object after document metadata insert failed"
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Document metadata could not be saved and cloud file cleanup failed; "
+                    "contact support."
+                ),
+            ) from cleanup_error
         raise
     db.refresh(document)
     background_tasks.add_task(_process_saved_document, document_id)
@@ -179,8 +225,12 @@ def delete_document(
     project = db.get(ResearchProject, document.project_id)
     if project is None or project.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="Document not found.")
-    path = Path(document.storage_path)
     db.delete(document)
     db.commit()
-    if path.is_file():
-        path.unlink()
+    try:
+        delete_stored_document(document.storage_path)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Document was removed from the project, but its stored file could not be deleted.",
+        ) from exc

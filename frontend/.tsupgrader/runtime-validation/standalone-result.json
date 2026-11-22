@@ -1,13 +1,13 @@
 {
   "planHash": "6392b0629d7a7ef1e97caef60264227f10f619a97ec4a0f42b6b079c4544b1b9",
   "phase": "standalone",
-  "recordedAtUtc": "2026-11-22T04:45:22.7478554Z",
+  "recordedAtUtc": "2026-11-22T05:09:58.4189720Z",
   "retryCount": 0,
   "resetBaseline": false,
   "complete": true,
   "result": {
     "setupSucceeded": true,
-    "setupDurationMs": 46941,
+    "setupDurationMs": 43758,
     "setupFailureOutput": null,
     "assertions": [
       {
@@ -19,8 +19,8 @@
         "skipped": false,
         "skippedReason": null,
         "exitCode": 0,
-        "outputSample": "\r\n\u003E ai-research-assistant-web@1.0.0 build\r\n\u003E tsc -b \u0026\u0026 vite build\r\n\r\nvite v6.4.6 building for production...\r\ntransforming...\r\n\u2713 1578 modules transformed.\r\nrendering chunks...\r\ncomputing gzip size...\r\ndist/index.html                   0.62 kB \u2502 gzip:  0.39 kB\r\ndist/assets/index-BrXZKWMw.css   17.36 kB \u2502 gzip:  4.62 kB\r\ndist/assets/index-BML7CcVd.js   178.87 kB \u2502 gzip: 55.34 kB\r\n\u2713 built in 41.90s\r\nnpm notice\r\nnpm notice New major version of npm available! 10.9.9 -\u003E 12.2.3\r\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3\r\nnpm notice To update run: npm install -g npm@12.2.3\r\nnpm notice\r\n",
-        "durationMs": 52224
+        "outputSample": "\r\n\u003E ai-research-assistant-web@1.0.0 build\r\n\u003E tsc -b \u0026\u0026 vite build\r\n\r\nvite v6.4.6 building for production...\r\ntransforming...\r\n\u2713 1578 modules transformed.\r\nrendering chunks...\r\ncomputing gzip size...\r\ndist/index.html                   0.62 kB \u2502 gzip:  0.39 kB\r\ndist/assets/index-BrXZKWMw.css   17.36 kB \u2502 gzip:  4.62 kB\r\ndist/assets/index-BML7CcVd.js   178.87 kB \u2502 gzip: 55.34 kB\r\n\u2713 built in 41.27s\r\nnpm notice\r\nnpm notice New major version of npm available! 10.9.9 -\u003E 12.2.3\r\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3\r\nnpm notice To update run: npm install -g npm@12.2.3\r\nnpm notice\r\n",
+        "durationMs": 51863
       },
       {
         "name": "tests-pass",
@@ -31,8 +31,8 @@
         "skipped": false,
         "skippedReason": null,
         "exitCode": 0,
-        "outputSample": "\r\n\u003E ai-research-assistant-web@1.0.0 test\r\n\u003E vitest run\r\n\r\n\r\n\u001B[1m\u001B[30m\u001B[46m RUN \u001B[49m\u001B[39m\u001B[22m \u001B[36mv4.1.12 \u001B[39m\u001B[90m/app\u001B[39m\r\n\r\n \u001B[32m\u2713\u001B[39m src/api.test.ts \u001B[2m(\u001B[22m\u001B[2m2 tests\u001B[22m\u001B[2m)\u001B[22m\u001B[32m 35\u001B[2mms\u001B[22m\u001B[39m\r\n\r\n\u001B[2m Test Files \u001B[22m \u001B[1m\u001B[32m1 passed\u001B[39m\u001B[22m\u001B[90m (1)\u001B[39m\r\n\u001B[2m      Tests \u001B[22m \u001B[1m\u001B[32m2 passed\u001B[39m\u001B[22m\u001B[90m (2)\u001B[39m\r\n\u001B[2m   Start at \u001B[22m 04:45:14\r\n\u001B[2m   Duration \u001B[22m 3.41s\u001B[2m (transform 102ms, setup 0ms, import 350ms, tests 35ms, environment 0ms)\u001B[22m\r\n\r\nnpm notice\r\nnpm notice New major version of npm available! 10.9.9 -\u003E 12.2.3\r\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3\r\nnpm notice To update run: npm install -g npm@12.2.3\r\nnpm notice\r\n",
-        "durationMs": 9303,
+        "outputSample": "\r\n\u003E ai-research-assistant-web@1.0.0 test\r\n\u003E vitest run\r\n\r\n\r\n\u001B[1m\u001B[30m\u001B[46m RUN \u001B[49m\u001B[39m\u001B[22m \u001B[36mv4.1.12 \u001B[39m\u001B[90m/app\u001B[39m\r\n\r\n \u001B[32m\u2713\u001B[39m src/api.test.ts \u001B[2m(\u001B[22m\u001B[2m2 tests\u001B[22m\u001B[2m)\u001B[22m\u001B[32m 35\u001B[2mms\u001B[22m\u001B[39m\r\n\r\n\u001B[2m Test Files \u001B[22m \u001B[1m\u001B[32m1 passed\u001B[39m\u001B[22m\u001B[90m (1)\u001B[39m\r\n\u001B[2m      Tests \u001B[22m \u001B[1m\u001B[32m2 passed\u001B[39m\u001B[22m\u001B[90m (2)\u001B[39m\r\n\u001B[2m   Start at \u001B[22m 05:09:49\r\n\u001B[2m   Duration \u001B[22m 4.08s\u001B[2m (transform 124ms, setup 0ms, import 448ms, tests 35ms, environment 0ms)\u001B[22m\r\n\r\nnpm notice\r\nnpm notice New major version of npm available! 10.9.9 -\u003E 12.2.3\r\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3\r\nnpm notice To update run: npm install -g npm@12.2.3\r\nnpm notice\r\n",
+        "durationMs": 10596,
         "testResults": {
           "testFramework": "vitest",
           "runnerDetectedFrom": "package_json",
@@ -52,8 +52,8 @@
         "skipped": false,
         "skippedReason": null,
         "exitCode": null,
-        "outputSample": "HTTP 200\n\u003C!doctype html\u003E\r\n\u003Chtml lang=\u0022en\u0022\u003E\r\n  \u003Chead\u003E\n    \u003Cscript type=\u0022module\u0022\u003Eimport { injectIntoGlobalHook } from \u0022/@react-refresh\u0022;\ninjectIntoGlobalHook(window);\nwindow.$RefreshReg$ = () =\u003E {};\nwindow.$RefreshSig$ = () =\u003E (type) =\u003E type;\u003C/script\u003E\n\n    \u003Cscript type=\u0022module\u0022 src=\u0022/@vite/client\u0022\u003E\u003C/script\u003E\n\r\n    \u003Cmeta charset=\u0022UTF-8\u0022 /\u003E\r\n    \u003Cmeta name=\u0022viewport\u0022 content=\u0022width=device-width, initial-scale=1.0\u0022 /\u003E\r\n    \u003Cmeta name=\u0022theme-color\u0022 content=\u0022#f6f7f4\u0022 /\u003E\r\n    \u003Cmeta\r\n      name=\u0022description\u0022\r\n      content=\u0022Organize research, discover scholarly literature, and explore your sources.\u0022\r\n    /\u003E\r\n    \u003Ctitle\u003EFieldnotes \u2014 AI Research Assistant\u003C/title\u003E\r\n  \u003C/head\u003E\r\n  \u003Cbody\u003E\r\n    \u003Cdiv id=\u0022root\u0022\u003E\u003C/div\u003E\r\n    \u003Cscript type=\u0022module\u0022 src=\u0022/src/main.tsx\u0022\u003E\u003C/script\u003E\r\n  \u003C/body\u003E\r\n\u003C/html\u003E\r\n\n--- server output ---\n\r\n\u003E ai-research-assistant-web@1.0.0 dev\r\n\u003E vite --host 0.0.0.0 --host 0.0.0.0 --port 5173\r\n\r\n\r\n  VITE v6.4.6  ready in 1680 ms\r\n\r\n  \u279C  Local:   http://localhost:5173/\r\n  \u279C  Network: http://172.17.0.2:5173/\r\n",
-        "durationMs": 4184
+        "outputSample": "HTTP 200\n\u003C!doctype html\u003E\r\n\u003Chtml lang=\u0022en\u0022\u003E\r\n  \u003Chead\u003E\n    \u003Cscript type=\u0022module\u0022\u003Eimport { injectIntoGlobalHook } from \u0022/@react-refresh\u0022;\ninjectIntoGlobalHook(window);\nwindow.$RefreshReg$ = () =\u003E {};\nwindow.$RefreshSig$ = () =\u003E (type) =\u003E type;\u003C/script\u003E\n\n    \u003Cscript type=\u0022module\u0022 src=\u0022/@vite/client\u0022\u003E\u003C/script\u003E\n\r\n    \u003Cmeta charset=\u0022UTF-8\u0022 /\u003E\r\n    \u003Cmeta name=\u0022viewport\u0022 content=\u0022width=device-width, initial-scale=1.0\u0022 /\u003E\r\n    \u003Cmeta name=\u0022theme-color\u0022 content=\u0022#f6f7f4\u0022 /\u003E\r\n    \u003Cmeta\r\n      name=\u0022description\u0022\r\n      content=\u0022Organize research, discover scholarly literature, and explore your sources.\u0022\r\n    /\u003E\r\n    \u003Ctitle\u003EFieldnotes \u2014 AI Research Assistant\u003C/title\u003E\r\n  \u003C/head\u003E\r\n  \u003Cbody\u003E\r\n    \u003Cdiv id=\u0022root\u0022\u003E\u003C/div\u003E\r\n    \u003Cscript type=\u0022module\u0022 src=\u0022/src/main.tsx\u0022\u003E\u003C/script\u003E\r\n  \u003C/body\u003E\r\n\u003C/html\u003E\r\n\n--- server output ---\n\r\n\u003E ai-research-assistant-web@1.0.0 dev\r\n\u003E vite --host 0.0.0.0 --host 0.0.0.0 --port 5173\r\n\r\n\r\n  VITE v6.4.6  ready in 1746 ms\r\n\r\n  \u279C  Local:   http://localhost:5173/\r\n  \u279C  Network: http://172.17.0.2:5173/\r\n",
+        "durationMs": 4136
       }
     ],
     "executions": [

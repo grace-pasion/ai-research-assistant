@@ -1,5 +1,6 @@
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -64,9 +65,14 @@ def delete_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    from pathlib import Path
+
     from app.config import get_settings
     from app.models import Document
-    from pathlib import Path
+    from app.services.storage import (
+        delete_document as delete_stored_document,
+        is_remote_storage_path,
+    )
 
     project = require_project_owner(db, project_id, user.user_id)
     document_paths = db.scalars(
@@ -74,10 +80,17 @@ def delete_project(
     ).all()
     db.delete(project)
     db.commit()
-    for storage_path in document_paths:
-        path = Path(storage_path)
-        if path.is_file():
-            path.unlink()
-    project_dir = Path(get_settings().storage_dir) / str(project_id)
-    if project_dir.is_dir():
-        project_dir.rmdir()
+    try:
+        for storage_path in document_paths:
+            delete_stored_document(storage_path)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Project was deleted, but one or more stored files could not be deleted."
+            ),
+        ) from exc
+    if document_paths and not any(is_remote_storage_path(path) for path in document_paths):
+        project_dir = Path(get_settings().storage_dir) / str(project_id)
+        if project_dir.is_dir():
+            project_dir.rmdir()

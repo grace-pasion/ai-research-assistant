@@ -42,15 +42,31 @@ The database and uploaded files persist in Docker volumes. To stop the app, pres
 
 ## GitHub Pages deployment
 
-GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. This repository includes a workflow that builds and publishes the frontend on pushes to `main` and on manual runs. The workflow also runs the frontend tests and requires the backend URL before publishing.
+GitHub Pages hosts only the static React frontend; it does not run the FastAPI backend, PostgreSQL, or uploaded-file storage. The included workflow builds and publishes the frontend on pushes to `main` and on manual runs. For a no-cost demo, the API can run on Render Free, with Supabase Free PostgreSQL and a private Storage bucket. This is not a production hosting setup: both providers impose limits, and Render's free service sleeps when idle.
 
-To enable it:
+### 1. Create Supabase database and private file bucket
 
-1. Deploy the API, both PostgreSQL databases (with pgvector), and durable file storage to a backend host. Configure that host with private `JWT_SECRET` and `OPENAI_API_KEY` values, persistent database/storage, HTTPS, and `CORS_ORIGINS=https://grace-pasion.github.io`. A Docker host with persistent volumes is also supported.
-2. In the GitHub repository, open **Settings → Secrets and variables → Actions → Variables** and add `VITE_API_URL` with the public HTTPS API base URL (for example `https://api.example.com`). This URL is public configuration, not a secret. Never put the OpenAI key or database credentials in frontend variables.
-3. Open **Settings → Pages**, select **GitHub Actions** as the build and deployment source, and push to `main` (or run **Deploy frontend to GitHub Pages** from the Actions tab).
+1. Create a Supabase project on its Free plan. Keep the database password private.
+2. In **Storage**, create a bucket named `research-documents` and leave it **private**.
+3. In **Project Settings → API Keys**, copy the project URL and a **Secret key** beginning with `sb_secret_`. The secret key is privileged: enter it only in Render's backend environment variables; never put it in GitHub variables or frontend code. The backend also accepts the legacy `service_role` key if your project only provides that.
+4. Open **Connect** in the project dashboard and copy the **Session pooler** PostgreSQL connection string. Use the pooler rather than the direct database connection for Render's IPv4 network. Its database name should be `postgres`.
 
-The site URL for this repository will be `https://grace-pasion.github.io/ai-research-assistant/`. GitHub Pages can host the frontend for free, but a dependable, zero-cost backend with durable Postgres and file storage is not guaranteed. Free backend/database tiers can sleep, pause, impose quotas, or have ephemeral disks; verify their current limits and keep backups before storing important research.
+### 2. Deploy the API on Render
+
+1. In Render, choose **New → Blueprint**, connect `grace-pasion/ai-research-assistant`, and deploy the repository's `render.yaml`.
+2. When prompted, enter the Supabase session-pooler connection string as `DATABASE_URL`, the Supabase project URL as `SUPABASE_URL`, and the `sb_secret_...` key as `SUPABASE_SECRET_KEY`. Enter your OpenAI API key as `OPENAI_API_KEY` if you want embeddings and AI answers; this key is optional for accounts, projects, file text extraction, and academic search. Do not send secrets in chat or commit them.
+3. Render generates a private `JWT_SECRET` for the backend. Leave `STORAGE_BACKEND=supabase`, `SUPABASE_STORAGE_BUCKET=research-documents`, and `CORS_ORIGINS=https://grace-pasion.github.io` as configured by the blueprint. Do not add a Render disk; Supabase Storage is the persistent file store.
+4. Wait for the deployment to finish, then open `https://<your-render-service>.onrender.com/api/health`. A healthy service returns `{"status":"ok"}`.
+
+The same Supabase database stores the application's research and literature tables; `LITERATURE_DATABASE_URL` automatically falls back to `DATABASE_URL`. The API creates its tables and enables the `vector` extension on first startup.
+
+### 3. Connect GitHub Pages to the API
+
+1. In the GitHub repository, open **Settings → Secrets and variables → Actions → Variables**, then create the repository variable `VITE_API_URL` with the Render service's public HTTPS base URL, such as `https://fieldnotes-api.onrender.com`. Do not add `/api` or a trailing slash. This URL is public configuration; never put API keys or database credentials here.
+2. Open **Settings → Pages** and choose **GitHub Actions** as the build and deployment source.
+3. Push the changes to `main` (or run **Deploy frontend to GitHub Pages** from **Actions**). Check the workflow result and visit <https://grace-pasion.github.io/ai-research-assistant/>.
+
+Render Free services sleep after 15 minutes without traffic and can take time to wake up. Supabase Free projects may pause after a period of inactivity and have storage/database quotas. Free plans do not provide production uptime guarantees or a reliable backup plan; do not store the only copy of important research there. Check each provider's current limits before deploying.
 
 ## Human review and data writes
 

@@ -29,7 +29,12 @@ services:
       OPENALEX_EMAIL: ${OPENALEX_EMAIL:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       STORAGE_DIR: /app/uploads
-      CORS_ORIGINS: http://localhost:5173
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-research-documents}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     volumes:
       - uploads:/app/uploads
     depends_on:

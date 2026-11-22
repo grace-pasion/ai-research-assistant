@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import Document, DocumentChunk
 from app.services.documents import estimate_tokens, extract_text, split_text
+from app.services.storage import materialize_document
 
 
 def _client() -> OpenAI | None:
@@ -23,7 +24,11 @@ def reprocess_document(db: Session, document: Document) -> None:
     document.processing_error = None
     db.commit()
     try:
-        text = extract_text(Path(document.storage_path), Path(document.filename).suffix.lower())
+        with materialize_document(
+            document.storage_path,
+            Path(document.filename).suffix.lower(),
+        ) as path:
+            text = extract_text(path, Path(document.filename).suffix.lower())
         chunks = split_text(text)
         if not text or not chunks:
             raise ValueError("No readable text was found in this file.")

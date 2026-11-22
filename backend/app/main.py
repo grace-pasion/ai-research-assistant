@@ -15,7 +15,7 @@ from app.routers import assistant, auth, documents, papers, projects
 async def lifespan(app: FastAPI):
     settings = get_settings()
     research_engine = make_engine(settings.database_url)
-    literature_engine = make_engine(settings.literature_database_url)
+    literature_engine = make_engine(settings.effective_literature_database_url)
     app.state.research_engine = research_engine
     app.state.literature_engine = literature_engine
     app.state.research_session_factory = sessionmaker(

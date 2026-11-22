@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def make_engine(url: str):
+    if url.startswith("postgres://"):
+        url = f"postgresql+psycopg://{url[len('postgres://') :]}"
+    elif url.startswith("postgresql://"):
+        url = f"postgresql+psycopg://{url[len('postgresql://') :]}"
     return create_engine(url, pool_pre_ping=True)
 
 
