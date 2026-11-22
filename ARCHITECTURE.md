@@ -89,7 +89,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 ### Annotate documents and papers
 
-1. The user opens **Annotate** for an uploaded document or a saved paper. The document reader shows extracted text; the paper reader shows its available abstract.
+1. The user opens an uploaded document from the Documents list or selects **Annotate** on a saved paper. The document reader shows extracted text; the paper reader shows its available abstract.
 2. The browser lets the user select text and save it as a highlight, optionally with a note. Notes can also be saved without a selection; existing notes can be edited or deleted.
 3. The API verifies project ownership and that paper annotations target a paper saved in that project. It validates selected text offsets against the current source, then stores annotations in the research database. Offsets use Unicode code points so the saved highlight can be restored after reload.
 4. Annotations are private to the project and persist across sessions. Annotation activity does not include passage or note contents in the metadata-only activity log.
@@ -127,7 +127,7 @@ The 20-request limit covers assistant drafts only. It does **not** limit embeddi
 - View each file's size, upload date, processing state, and any processing error.
 - Download the original file, retry processing when it is not already processing or ready, and delete it.
 - Search extracted document text and inspect matching excerpts.
-- Open extracted document text, highlight selected passages, and add, edit, or delete notes. Highlights and notes persist with the project.
+- Open a document from the Documents list to read its extracted text and view its highlights and notes in the document reader. Add, edit, or delete notes and highlights there; they persist with the project.
 - Use OCR for scanned PDFs when Tesseract is available.
 - Upload limit: 25 MB by default in the hosted configuration (backend setting permits configuration up to 100 MB); PDF extraction is limited to 100 pages.
 - Continue to use extracted-text search when no OpenAI key is configured; embeddings and AI answers require the backend OpenAI key.

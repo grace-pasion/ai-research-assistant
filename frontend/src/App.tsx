@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowLeft,
   ArrowUpRight,
   BookOpen,
   Check,
@@ -124,6 +125,9 @@ function App() {
     () => documents.some((document) => document.processing_status === "processing"),
     [documents],
   );
+  const openedDocument = annotationDocumentId
+    ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
+    : null;
 
   useEffect(() => {
     if (!processing || !project) return;
@@ -619,76 +623,103 @@ function App() {
 
               {view === "documents" && (
                 <section className="section-content">
-                  <div className="section-heading">
-                    <div><h2>Research documents</h2><p>Upload source material to make it searchable in your assistant.</p></div>
-                    <div className="upload-control">
-                      <label className="button primary upload-button">
-                        <Upload size={16} /> Add document
-                        <input name="file" type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => {
-                          const file = event.currentTarget.files?.[0];
-                          if (file) void uploadDocument(file);
-                          event.currentTarget.value = "";
-                        }} />
-                      </label>
+                  {openedDocument ? (
+                    <div className="document-reader-page">
+                      <div className="document-reader-header">
+                        <button className="button secondary small-button" onClick={() => setAnnotationDocumentId(null)}>
+                          <ArrowLeft size={14} /> Back to documents
+                        </button>
+                        <div className="document-reader-title">
+                          <h2>{openedDocument.filename}</h2>
+                          <p>{formatBytes(openedDocument.file_size)} · Added {new Date(openedDocument.uploaded_at).toLocaleDateString()}</p>
+                        </div>
+                        <StatusPill status={openedDocument.processing_status} />
+                        <button className="icon-button" title="Download original" onClick={() => void downloadDocument(openedDocument)}>
+                          <Download size={16} />
+                        </button>
+                      </div>
+                      {openedDocument.processing_error && <p className="inline-error">{openedDocument.processing_error}</p>}
+                      <AnnotationEditor
+                        key={openedDocument.document_id}
+                        annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
+                        sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
+                        sourceStatus={openedDocument.processing_status}
+                      />
                     </div>
-                  </div>
-                  {!!documents.length && (
-                    <form className="document-search" onSubmit={(event) => void searchDocuments(event)}>
-                      <Search size={16} />
-                      <input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Find text within your documents…" minLength={2} maxLength={200} />
-                      <button className="button secondary small-button" disabled={documentQuery.trim().length < 2}>Search documents</button>
-                    </form>
-                  )}
-                  {documentMatches && (
-                    <div className="document-search-results">
-                      <div className="result-label"><span>Matches for “{documentQuery}”</span><button className="text-button" onClick={() => setDocumentMatches(null)} type="button">Clear</button></div>
-                      {documentMatches.length ? documentMatches.map((match) => (
-                        <article className="document-match" key={match.document.document_id}>
-                          <strong>{match.document.filename}</strong><p>{match.excerpt}</p>
-                        </article>
-                      )) : <p className="muted compact">No extracted text matched that search.</p>}
-                    </div>
-                  )}
-                  {!documents.length ? (
-                    <EmptyState icon={<FileText size={22} />} title="No documents yet" text="Add a PDF, Word document, plain text, or Markdown file to begin." />
                   ) : (
-                    <div className="document-list">
-                      {documents.map((document) => (
-                        <article className="document-row" key={document.document_id}>
-                          <div className="file-icon"><FileText size={18} /></div>
-                          <div className="document-info">
-                            <strong>{document.filename}</strong>
-                            <span>{formatBytes(document.file_size)} · {new Date(document.uploaded_at).toLocaleDateString()}</span>
-                            {document.processing_error && <small className="inline-error">{document.processing_error}</small>}
-                          </div>
-                          <StatusPill status={document.processing_status} />
-                          <button className="icon-button" title="Download original" onClick={() => void downloadDocument(document)}>
-                            <Download size={16} />
-                          </button>
-                          {document.processing_status !== "processing" && document.processing_status !== "ready" && (
-                            <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>Reprocess</button>
-                          )}
-                          <button
-                            className="button secondary small-button"
-                            onClick={() => setAnnotationDocumentId((current) => current === document.document_id ? null : document.document_id)}
-                          >
-                            <Pencil size={13} /> Annotate
-                          </button>
-                          <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </article>
-                      ))}
-                    </div>
+                    <>
+                      <div className="section-heading">
+                        <div><h2>Research documents</h2><p>Upload source material to make it searchable in your assistant.</p></div>
+                        <div className="upload-control">
+                          <label className="button primary upload-button">
+                            <Upload size={16} /> Add document
+                            <input name="file" type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => {
+                              const file = event.currentTarget.files?.[0];
+                              if (file) void uploadDocument(file);
+                              event.currentTarget.value = "";
+                            }} />
+                          </label>
+                        </div>
+                      </div>
+                      {!!documents.length && (
+                        <form className="document-search" onSubmit={(event) => void searchDocuments(event)}>
+                          <Search size={16} />
+                          <input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Find text within your documents…" minLength={2} maxLength={200} />
+                          <button className="button secondary small-button" disabled={documentQuery.trim().length < 2}>Search documents</button>
+                        </form>
+                      )}
+                      {documentMatches && (
+                        <div className="document-search-results">
+                          <div className="result-label"><span>Matches for “{documentQuery}”</span><button className="text-button" onClick={() => setDocumentMatches(null)} type="button">Clear</button></div>
+                          {documentMatches.length ? documentMatches.map((match) => (
+                            <article className="document-match" key={match.document.document_id}>
+                              <button
+                                className="document-open-link"
+                                type="button"
+                                onClick={() => setAnnotationDocumentId(match.document.document_id)}
+                              >
+                                {match.document.filename}
+                              </button>
+                              <p>{match.excerpt}</p>
+                            </article>
+                          )) : <p className="muted compact">No extracted text matched that search.</p>}
+                        </div>
+                      )}
+                      {!documents.length ? (
+                        <EmptyState icon={<FileText size={22} />} title="No documents yet" text="Add a PDF, Word document, plain text, or Markdown file to begin." />
+                      ) : (
+                        <div className="document-list">
+                          {documents.map((document) => (
+                            <article className="document-row" key={document.document_id}>
+                              <div className="file-icon"><FileText size={18} /></div>
+                              <div className="document-info">
+                                <button
+                                  className="document-open-link"
+                                  type="button"
+                                  onClick={() => setAnnotationDocumentId(document.document_id)}
+                                >
+                                  {document.filename}
+                                </button>
+                                <span>{formatBytes(document.file_size)} · {new Date(document.uploaded_at).toLocaleDateString()}</span>
+                                {document.processing_error && <small className="inline-error">{document.processing_error}</small>}
+                              </div>
+                              <StatusPill status={document.processing_status} />
+                              <button className="icon-button" title="Download original" onClick={() => void downloadDocument(document)}>
+                                <Download size={16} />
+                              </button>
+                              {document.processing_status !== "processing" && document.processing_status !== "ready" && (
+                                <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>Reprocess</button>
+                              )}
+                              <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
+                                <Trash2 size={16} />
+                              </button>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                      {processing && <p className="processing-note"><LoaderCircle className="spin" size={15} /> Extracting text and preparing documents…</p>}
+                    </>
                   )}
-                  {annotationDocumentId && documents.some((item) => item.document_id === annotationDocumentId) && (
-                    <AnnotationEditor
-                      key={annotationDocumentId}
-                      annotationsPath={`/api/projects/${project.project_id}/documents/${annotationDocumentId}/annotations`}
-                      sourcePath={`/api/documents/${annotationDocumentId}/reader`}
-                    />
-                  )}
-                  {processing && <p className="processing-note"><LoaderCircle className="spin" size={15} /> Extracting text and preparing documents…</p>}
                 </section>
               )}
 
@@ -928,10 +959,12 @@ function AnnotationEditor({
   annotationsPath,
   sourcePath,
   sourceText,
+  sourceStatus,
 }: {
   annotationsPath: string;
   sourcePath?: string;
   sourceText?: string;
+  sourceStatus?: string;
 }) {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [text, setText] = useState(sourceText ?? "");
@@ -967,7 +1000,7 @@ function AnnotationEditor({
     return () => {
       active = false;
     };
-  }, [annotationsPath, sourcePath, sourceText]);
+  }, [annotationsPath, sourcePath, sourceStatus, sourceText]);
 
   function captureSelection() {
     const container = sourceRef.current;
