@@ -23,6 +23,7 @@ class APIModel(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
+    username: str | None = Field(default=None, min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9._-]+$")
     name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=12, max_length=128)
 
@@ -33,6 +34,11 @@ class RegisterRequest(BaseModel):
         if not value:
             raise ValueError("Name cannot be blank.")
         return value
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else value
 
     @field_validator("password")
     @classmethod
@@ -52,6 +58,7 @@ class LoginRequest(BaseModel):
 class UserResponse(APIModel):
     user_id: uuid.UUID
     email: EmailStr
+    username: str | None
     name: str
 
 
@@ -113,20 +120,95 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(APIModel):
     project_id: uuid.UUID
+    user_id: uuid.UUID
     project_name: str
     description: str
     created_at: datetime
     updated_at: datetime
 
 
+class ProjectInvitationCreate(BaseModel):
+    identifier: str = Field(min_length=1, max_length=320)
+
+
+class ProjectInvitationResponse(APIModel):
+    invitation_id: uuid.UUID
+    project_id: uuid.UUID
+    inviter_id: uuid.UUID
+    invitee_id: uuid.UUID
+    status: Literal["pending", "accepted", "declined"]
+    created_at: datetime
+    updated_at: datetime
+    invitee_name: str
+    invitee_username: str
+    invitee_email: EmailStr
+
+
+class InvitationResponseRequest(BaseModel):
+    response: Literal["accepted", "declined"]
+
+
+class ColleagueResponse(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    name: str
+    email: EmailStr
+
+
+class DirectMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message cannot be blank.")
+        return value
+
+
+class DirectMessageResponse(APIModel):
+    message_id: uuid.UUID
+    sender_id: uuid.UUID
+    recipient_id: uuid.UUID
+    content: str
+    created_at: datetime
+    read_at: datetime | None
+
+
+class MessageThreadResponse(BaseModel):
+    user: ColleagueResponse
+    last_message: str
+    updated_at: datetime
+    unread_count: int
+
+
+class NotificationResponse(BaseModel):
+    notification_id: uuid.UUID
+    kind: Literal["project_invitation", "invitation_response", "message"]
+    actor_id: uuid.UUID
+    actor_name: str
+    actor_username: str | None
+    actor_email: EmailStr
+    project_id: uuid.UUID | None
+    project_name: str | None
+    invitation_id: uuid.UUID | None
+    invitation_status: Literal["pending", "accepted", "declined"] | None
+    message_id: uuid.UUID | None
+    created_at: datetime
+    read_at: datetime | None
+
+
 class LatexWorkspaceUpdate(BaseModel):
     main_tex: str = Field(max_length=1_000_000)
     references_bib: str = Field(max_length=500_000)
+    expected_updated_at: datetime | None = None
 
 
 class LatexWorkspaceResponse(BaseModel):
     main_tex: str
     references_bib: str
+    updated_at: datetime | None = None
 
 
 class DocumentResponse(APIModel):

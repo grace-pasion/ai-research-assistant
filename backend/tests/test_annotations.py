@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Annotation, Document, Paper, ProjectPaper, ResearchProject, User
+from app.models import Annotation, Document, Paper, ProjectInvitation, ProjectPaper, ResearchProject, User
 from app.routers import annotations, documents
 from app.schemas import AnnotationCreate, AnnotationUpdate
 
@@ -14,7 +14,7 @@ from app.schemas import AnnotationCreate, AnnotationUpdate
 def annotation_databases(tmp_path):
     research_engine = create_engine(f"sqlite:///{tmp_path / 'research.sqlite'}")
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
-    for model in (User, ResearchProject, Document, ProjectPaper, Annotation):
+    for model in (User, ResearchProject, ProjectInvitation, Document, ProjectPaper, Annotation):
         model.__table__.create(research_engine)
     Paper.__table__.create(literature_engine)
     with Session(research_engine) as research_db, Session(literature_engine) as literature_db:

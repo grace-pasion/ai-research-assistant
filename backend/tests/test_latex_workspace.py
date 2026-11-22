@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.models import LatexWorkspace, ResearchProject, User, UserActivity
+from app.models import LatexWorkspace, ProjectInvitation, ResearchProject, User, UserActivity
 from app.routers.latex import DEFAULT_MAIN_TEX, get_latex_workspace, save_latex_workspace
 from app.schemas import LatexWorkspaceUpdate
 
@@ -14,7 +14,7 @@ from app.schemas import LatexWorkspaceUpdate
 @pytest.fixture
 def latex_database(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'latex.sqlite'}")
-    for model in (User, ResearchProject, LatexWorkspace, UserActivity):
+    for model in (User, ResearchProject, ProjectInvitation, LatexWorkspace, UserActivity):
         model.__table__.create(engine)
     with Session(engine) as db:
         user = User(email="writer@example.com", name="Writer", password_hash="hashed")
@@ -64,6 +64,54 @@ def test_latex_workspace_is_private_to_the_project_owner(latex_database):
     with pytest.raises(HTTPException) as error:
         get_latex_workspace(project.project_id, db, other_user)
     assert error.value.status_code == 404
+
+
+def test_stale_collaborative_workspace_save_is_rejected(latex_database):
+    db, owner, project = latex_database
+    initially_loaded = get_latex_workspace(project.project_id, db, owner)
+    collaborator = User(
+        email="collaborator@example.com",
+        username="collaborator",
+        name="Collaborator",
+        password_hash="hashed",
+    )
+    db.add(collaborator)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=collaborator.user_id,
+            status="accepted",
+        )
+    )
+    db.commit()
+    saved = save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex="First edit",
+            references_bib="",
+            expected_updated_at=initially_loaded.updated_at,
+        ),
+        db,
+        owner,
+    )
+    assert saved.updated_at is not None
+    assert get_latex_workspace(project.project_id, db, collaborator).main_tex == "First edit"
+
+    with pytest.raises(HTTPException) as stale:
+        save_latex_workspace(
+            project.project_id,
+            LatexWorkspaceUpdate(
+                main_tex="Outdated edit",
+                references_bib="",
+                expected_updated_at=initially_loaded.updated_at,
+            ),
+            db,
+            owner,
+        )
+    assert stale.value.status_code == 409
+    assert get_latex_workspace(project.project_id, db, owner).main_tex == "First edit"
 
 
 def test_latex_workspace_rejects_oversized_source():

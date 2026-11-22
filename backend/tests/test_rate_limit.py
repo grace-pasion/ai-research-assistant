@@ -244,7 +244,7 @@ def test_daily_prompt_limit_resets_at_utc_midnight_and_is_per_ip(
 
 def test_draft_rejects_over_limit_before_calling_openai(monkeypatch):
     draft_answer = Mock()
-    monkeypatch.setattr(assistant_router, "require_project_owner", lambda *args: None)
+    monkeypatch.setattr(assistant_router, "require_project_access", lambda *args: None)
     monkeypatch.setattr(assistant_router, "draft_answer", draft_answer)
 
     def reject_prompt(db, request):

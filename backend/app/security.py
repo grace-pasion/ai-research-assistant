@@ -88,3 +88,23 @@ def require_project_owner(db: Session, project_id: UUID, user_id: UUID):
     if project is None:
         raise HTTPException(status_code=404, detail="Research project not found")
     return project
+
+
+def require_project_access(db: Session, project_id: UUID, user_id: UUID):
+    from app.models import ProjectInvitation, ResearchProject
+
+    project = db.get(ResearchProject, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    if project.user_id == user_id:
+        return project
+    invitation = db.scalar(
+        select(ProjectInvitation.invitation_id).where(
+            ProjectInvitation.project_id == project_id,
+            ProjectInvitation.invitee_id == user_id,
+            ProjectInvitation.status == "accepted",
+        )
+    )
+    if invitation is None:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    return project

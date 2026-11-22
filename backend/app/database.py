@@ -31,6 +31,23 @@ def initialize_database(engine, metadata) -> None:
     metadata.create_all(engine)
 
 
+def ensure_user_username_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    with engine.begin() as connection:
+        if "username" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(32)"))
+        connection.execute(
+            text(
+                "UPDATE users SET username = 'researcher_' || "
+                "substr(replace(cast(user_id AS VARCHAR), '-', ''), 1, 12) "
+                "WHERE username IS NULL"
+            )
+        )
+        connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)")
+        )
+
+
 def ensure_project_paper_screening_columns(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("project_papers")}
     with engine.begin() as connection:

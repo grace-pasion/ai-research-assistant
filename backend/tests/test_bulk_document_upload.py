@@ -43,7 +43,7 @@ def test_bulk_upload_returns_per_file_status_and_schedules_accepted_documents(mo
     tasks = BackgroundTasks()
     project_id = uuid.uuid4()
     user = SimpleNamespace(user_id=uuid.uuid4())
-    monkeypatch.setattr(documents_router, "require_project_owner", lambda *_args: None)
+    monkeypatch.setattr(documents_router, "require_project_access", lambda *_args: None)
     monkeypatch.setattr(
         documents_router,
         "get_settings",
@@ -98,7 +98,7 @@ def test_bulk_upload_returns_per_file_status_and_schedules_accepted_documents(mo
 
 
 def test_bulk_upload_rejects_batches_over_the_limit(monkeypatch):
-    monkeypatch.setattr(documents_router, "require_project_owner", lambda *_args: None)
+    monkeypatch.setattr(documents_router, "require_project_access", lambda *_args: None)
     project_id = uuid.uuid4()
 
     with pytest.raises(HTTPException) as error:

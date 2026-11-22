@@ -18,6 +18,7 @@ import { parseLatexPreview } from "./latexPreview";
 type WorkspaceFiles = {
   main_tex: string;
   references_bib: string;
+  updated_at: string | null;
 };
 
 type WorkspaceRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -32,7 +33,7 @@ type Props = {
 type EditorFile = "main.tex" | "references.bib";
 type PaneMode = "split" | "source" | "preview";
 
-const EMPTY_WORKSPACE: WorkspaceFiles = { main_tex: "", references_bib: "" };
+const EMPTY_WORKSPACE: WorkspaceFiles = { main_tex: "", references_bib: "", updated_at: null };
 
 function encodeLatex(value: string): string {
   const escaped: Record<string, string> = {
@@ -148,11 +149,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       try {
         const saved = await request<WorkspaceFiles>(`/api/projects/${project.project_id}/latex`, {
           method: "PUT",
-          body: JSON.stringify(snapshot),
+          body: JSON.stringify({ ...snapshot, expected_updated_at: snapshot.updated_at }),
         });
         if (!mountedRef.current) return;
         savedContentRef.current = JSON.stringify(saved);
-        setSaveStatus(JSON.stringify(workspaceRef.current) === savedContentRef.current ? "saved" : "unsaved");
+          const current = { ...workspaceRef.current, updated_at: saved.updated_at };
+          workspaceRef.current = current;
+          setWorkspace(current);
+          setSaveStatus(JSON.stringify(current) === savedContentRef.current ? "saved" : "unsaved");
         setWorkspaceError("");
       } catch (cause) {
         if (!mountedRef.current) return;
@@ -169,6 +173,46 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     const timer = window.setTimeout(() => void persist(workspace), 700);
     return () => window.clearTimeout(timer);
   }, [loaded, persist, saveStatus, workspace]);
+
+  useEffect(() => {
+    if (!loaded || saveStatus !== "saved") return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      request<WorkspaceFiles>(`/api/projects/${project.project_id}/latex`)
+        .then((latest) => {
+          if (!active || saveStatus !== "saved"
+            || JSON.stringify(workspaceRef.current) !== savedContentRef.current
+            || JSON.stringify(latest) === savedContentRef.current) return;
+          workspaceRef.current = latest;
+          savedContentRef.current = JSON.stringify(latest);
+          setWorkspace(latest);
+          setWorkspaceError("");
+        })
+        .catch((cause: unknown) => {
+          if (active) setWorkspaceError(cause instanceof Error ? cause.message : "Could not sync the shared workspace.");
+        });
+    }, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [loaded, project.project_id, request, saveStatus]);
+
+  async function reloadWorkspace() {
+    setLoading(true);
+    setWorkspaceError("");
+    try {
+      const latest = await request<WorkspaceFiles>(`/api/projects/${project.project_id}/latex`);
+      workspaceRef.current = latest;
+      savedContentRef.current = JSON.stringify(latest);
+      setWorkspace(latest);
+      setSaveStatus("saved");
+    } catch (cause) {
+      setWorkspaceError(cause instanceof Error ? cause.message : "Could not reload the shared workspace.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const preview = useMemo(() => parseLatexPreview(workspace.main_tex), [workspace.main_tex]);
   const currentValue = activeFile === "main.tex" ? workspace.main_tex : workspace.references_bib;
@@ -275,6 +319,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
         </div>
       </header>
       {workspaceError && <p className="inline-error latex-error" role="alert">{workspaceError}</p>}
+      {workspaceError.includes("changed in another session") && (
+        <button type="button" className="button secondary small-button latex-reload" onClick={() => void reloadWorkspace()}>
+          Reload latest version
+        </button>
+      )}
       {loading ? (
         <div className="latex-loading"><LoaderCircle className="spin" size={18} /> Loading project files…</div>
       ) : (

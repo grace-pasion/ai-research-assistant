@@ -31,7 +31,7 @@ from app.schemas import (
     ConversationSummaryResponse,
     SourceResponse,
 )
-from app.security import get_current_user, require_project_owner
+from app.security import get_current_user, require_project_access
 from app.services.assistant import draft_answer
 from app.services.audit import record_activity
 from app.services.rate_limit import consume_daily_prompt
@@ -161,7 +161,7 @@ def list_conversations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     return list(
         db.scalars(
             select(Conversation)
@@ -185,7 +185,7 @@ def get_conversation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     conversation = _conversation_for_user(db, conversation_id, user.user_id, project_id)
     messages = db.scalars(
         select(Message)
@@ -204,7 +204,7 @@ def export_research_brief(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     conversation = _conversation_for_user(db, conversation_id, user.user_id, project_id)
     message = db.scalar(
         select(Message).where(
@@ -314,7 +314,7 @@ def create_draft(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     if payload.conversation_id is not None:
         _conversation_for_user(db, payload.conversation_id, user.user_id, project_id)
     consume_daily_prompt(db, request)
@@ -368,7 +368,7 @@ def approve_draft(
         raise HTTPException(status_code=400, detail="Invalid approval token.") from None
     if draft.get("user_id") != str(user.user_id) or draft.get("project_id") != str(project_id):
         raise HTTPException(status_code=403, detail="This review belongs to a different user or project.")
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     approval_id = hashlib.sha256(payload.approval_token.encode("utf-8")).hexdigest()
 
     existing_message = db.scalar(select(Message).where(Message.approval_id == approval_id))

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, get_literature_db
 from app.models import Annotation, Document, Paper, ProjectPaper, User
 from app.schemas import AnnotationCreate, AnnotationResponse, AnnotationUpdate
-from app.security import get_current_user, require_project_owner
+from app.security import get_current_user, require_project_access
 
 router = APIRouter(tags=["annotations"])
 
@@ -95,7 +95,7 @@ def list_document_annotations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_document(db, project_id, document_id)
     return _annotation_query(db, project_id, document_id=document_id)
 
@@ -112,7 +112,7 @@ def create_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     document = _require_document(db, project_id, document_id)
     _validate_offsets(payload, document.extracted_text or "")
     annotation = Annotation(
@@ -140,7 +140,7 @@ def list_paper_annotations(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_saved_paper(db, literature_db, project_id, paper_id)
     return _annotation_query(db, project_id, paper_id=paper_id)
 
@@ -158,7 +158,7 @@ def create_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     paper = _require_saved_paper(db, literature_db, project_id, paper_id)
     _validate_offsets(payload, _plain_abstract(paper.abstract))
     annotation = Annotation(
@@ -187,7 +187,7 @@ def update_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
     if not payload.note and not annotation.quote:
@@ -211,7 +211,7 @@ def update_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
     if not payload.note and not annotation.quote:
@@ -233,7 +233,7 @@ def delete_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
     db.delete(annotation)
@@ -252,7 +252,7 @@ def delete_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
     db.delete(annotation)

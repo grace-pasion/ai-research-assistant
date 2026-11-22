@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowUpRight,
   BookOpen,
+  Bell,
   Check,
   ChevronDown,
   Download,
@@ -17,13 +18,16 @@ import {
   Pencil,
   Search,
   Send,
+  Share2,
   ShieldCheck,
   Trash2,
   Upload,
+  Users,
   X,
 } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
+import { InboxDialog, ShareDialog } from "./Collaboration";
 import { LatexWorkspace } from "./LatexWorkspace";
 import type {
   AIUsageResponse,
@@ -55,6 +59,16 @@ type UploadQueueItem = {
   error: string | null;
 };
 
+function retainProjectSelection(current: Project | null, loaded: Project[]): Project | null {
+  if (!current) return loaded[0] ?? null;
+  const updated = loaded.find((item) => item.project_id === current.project_id);
+  if (!updated) return loaded[0] ?? null;
+  if (updated.project_name === current.project_name
+    && updated.description === current.description
+    && updated.updated_at === current.updated_at) return current;
+  return updated;
+}
+
 function App() {
   const [token, setAuthToken] = useState<string | null>(getToken());
   const [user, setUser] = useState<User | null>(null);
@@ -82,6 +96,9 @@ function App() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [showNewProject, setShowNewProject] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
+  const [showShareProject, setShowShareProject] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [provider, setProvider] = useState("openalex");
   const [referenceBusy, setReferenceBusy] = useState(false);
@@ -93,6 +110,17 @@ function App() {
     async <T,>(path: string, options?: RequestInit) => api<T>(path, options, token),
     [token],
   );
+
+  const refreshProjects = useCallback(async () => {
+    const loaded = await request<Project[]>("/api/projects");
+    setProjects(loaded);
+    setProject((selected) => retainProjectSelection(selected, loaded));
+  }, [request]);
+
+  const refreshUnreadCount = useCallback(async () => {
+    const result = await request<{ count: number }>("/api/inbox/unread-count");
+    setUnreadCount(result.count);
+  }, [request]);
 
   const refreshUsage = useCallback(async () => {
     try {
@@ -214,6 +242,52 @@ function App() {
   }, [processing, project, refreshUsage, request]);
 
   useEffect(() => {
+    if (!token) {
+      setUnreadCount(0);
+      return;
+    }
+    const refresh = () => refreshUnreadCount().catch((cause: unknown) =>
+      setError((current) => current || (
+        cause instanceof Error ? cause.message : "Could not refresh inbox notifications."
+      )),
+    );
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshUnreadCount, token]);
+
+  useEffect(() => {
+    if (!project || !token) return;
+    let active = true;
+    const refreshSharedProject = async () => {
+      try {
+        const [loadedProjects, docs, savedPapers, chats] = await Promise.all([
+          request<Project[]>("/api/projects"),
+          request<DocumentRecord[]>(`/api/projects/${project.project_id}/documents`),
+          request<Paper[]>(`/api/projects/${project.project_id}/papers`),
+          request<Conversation[]>(`/api/projects/${project.project_id}/assistant/conversations`),
+        ]);
+        if (!active) return;
+        setProjects(loadedProjects);
+        setProject((selected) => retainProjectSelection(selected, loadedProjects));
+        setDocuments(docs);
+        setPapers(savedPapers);
+        setConversations(chats);
+      } catch (cause) {
+        if (!active) return;
+        setError((current) => current || (
+          cause instanceof Error ? cause.message : "Could not refresh shared project updates."
+        ));
+      }
+    };
+    const timer = window.setInterval(() => void refreshSharedProject(), 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [project, request, token]);
+
+  useEffect(() => {
     if (!aiUsage) return;
     const delay = Date.parse(aiUsage.resets_at) - Date.now();
     if (delay <= 0) {
@@ -253,7 +327,10 @@ function App() {
       email: String(form.get("email") ?? ""),
       password: String(form.get("password") ?? ""),
     };
-    if (authMode === "register") body.name = String(form.get("name") ?? "");
+    if (authMode === "register") {
+      body.name = String(form.get("name") ?? "");
+      body.username = String(form.get("username") ?? "");
+    }
     try {
       const result = await api<LoginResponse>(
         `/api/auth/${authMode === "register" ? "register" : "login"}`,
@@ -762,10 +839,16 @@ function App() {
           {error && <Notice kind="error" text={error} />}
           <form onSubmit={handleAuth} className="stack-form">
             {authMode === "register" && (
-              <label>
-                Name
-                <input name="name" autoComplete="name" required maxLength={120} />
-              </label>
+              <>
+                <label>
+                  Name
+                  <input name="name" autoComplete="name" required maxLength={120} />
+                </label>
+                <label>
+                  Username <span className="field-note">3–32 letters, numbers, dots, underscores, or hyphens</span>
+                  <input name="username" autoComplete="username" required minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" />
+                </label>
+              </>
             )}
             <label>
               Email
@@ -851,11 +934,28 @@ function App() {
             <span className="crumb-current">{project?.project_name ?? "No project selected"}</span>
           </div>
           <div className="topbar-right">
-            <span className="private-badge"><ShieldCheck size={14} /> Private workspace</span>
+            <span className="private-badge">
+              {project && user && project.user_id !== user.user_id
+                ? <><Users size={14} /> Shared project</>
+                : <><ShieldCheck size={14} /> Private workspace</>}
+            </span>
+            <button className="icon-button inbox-button" title="Inbox and messages" onClick={() => setShowInbox(true)}>
+              <Bell size={17} />
+              {unreadCount > 0 && <span className="unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+            </button>
             {project && (
-              <button className="icon-button danger-hover" title="Delete project" onClick={deleteProject}>
-                <Trash2 size={16} />
-              </button>
+              <>
+                {user && project.user_id === user.user_id && (
+                  <button className="icon-button" title="Share project" onClick={() => setShowShareProject(true)}>
+                    <Share2 size={16} />
+                  </button>
+                )}
+                {user && project.user_id === user.user_id && (
+                  <button className="icon-button danger-hover" title="Delete project" onClick={deleteProject}>
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </>
             )}
           </div>
         </header>
@@ -879,6 +979,21 @@ function App() {
                 <button className="button primary" disabled={busy}>Create project</button>
               </form>
             </div>
+          )}
+          {showShareProject && project && (
+            <ShareDialog
+              project={project}
+              request={request}
+              onClose={() => setShowShareProject(false)}
+            />
+          )}
+          {showInbox && (
+            <InboxDialog
+              request={request}
+              onClose={() => setShowInbox(false)}
+              onProjectsUpdated={refreshProjects}
+              onUnreadCount={refreshUnreadCount}
+            />
           )}
           {showEditProject && project && (
             <div className="modal-backdrop" onMouseDown={(event) => {
@@ -921,9 +1036,11 @@ function App() {
                   <i />
                   <span>{papers.length}</span><small>saved papers</small>
                 </div>
-                <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>
-                  <Pencil size={14} /> Edit
-                </button>
+                {user && project.user_id === user.user_id && (
+                  <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>
+                    <Pencil size={14} /> Edit
+                  </button>
+                )}
               </section>
 
               <section className="ai-usage-panel" aria-label="Daily AI allowance and processing status">
@@ -1737,6 +1854,24 @@ function AnnotationEditor({
       active = false;
     };
   }, [annotationsPath, sourcePath, sourceStatus, sourceText]);
+
+  useEffect(() => {
+    if (busy || editingId) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      api<Annotation[]>(annotationsPath)
+        .then((loadedAnnotations) => {
+          if (active) setAnnotations(loadedAnnotations);
+        })
+        .catch((cause: unknown) => {
+          if (active) setError(cause instanceof Error ? cause.message : "Could not sync shared annotations.");
+        });
+    }, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [annotationsPath, busy, editingId]);
 
   function captureSelection() {
     const container = sourceRef.current;

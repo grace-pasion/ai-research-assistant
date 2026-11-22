@@ -17,6 +17,7 @@ from app.models import (
     MessagePaperSource,
     Paper,
     PaperAuthor,
+    ProjectInvitation,
     ResearchProject,
     User,
 )
@@ -31,6 +32,7 @@ def brief_databases(tmp_path):
     for model in (
         User,
         ResearchProject,
+        ProjectInvitation,
         Conversation,
         Message,
         Document,

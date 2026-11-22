@@ -4,13 +4,13 @@ This document describes the application as implemented. It is the reference for 
 
 ## At a glance
 
-Fieldnotes is a browser-based research workspace. The browser serves the React application and sends authenticated HTTPS requests to a FastAPI service. The API owns authentication, access checks, document processing, academic-search integration, retrieval, and AI calls. Research data and literature metadata are stored in PostgreSQL; original uploads are stored in a private file store.
+Fieldnotes is a browser-based research workspace. The browser serves the React application and sends authenticated HTTPS requests to a FastAPI service. The API owns authentication, project access checks, collaboration, document processing, academic-search integration, retrieval, and AI calls. Research data and literature metadata are stored in PostgreSQL; original uploads are stored in a private file store.
 
 ## Architecture and hosting
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
+| Web client | React 18, TypeScript, Vite | Login and registration, project workspace and sharing, inbox and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -35,7 +35,7 @@ flowchart LR
 ### Backend organization
 
 - `backend/app/main.py` creates the FastAPI application, CORS policy, database engines/session factories, startup schema initialization, and route registration.
-- `backend/app/routers/` implements authentication, administrator, projects, documents, papers, and assistant endpoints.
+- `backend/app/routers/` implements authentication, administrator, projects, collaboration, documents, papers, and assistant endpoints.
 - `backend/app/services/` implements academic search, extraction/chunking, document processing, local/Supabase file storage, AI retrieval/generation, activity recording, and atomic sign-in/daily prompt limits.
 - `backend/app/models.py` defines separate SQLAlchemy metadata for research data and literature data. The literature models use their own session factory even when both URLs point at the same physical PostgreSQL database.
 - `backend/app/config.py` loads backend settings from environment variables (and `.env` for local development). OpenAI, database, JWT, and Supabase credentials belong on the backend, never in the frontend.
@@ -57,9 +57,11 @@ Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or 
 
 ## Data model and persistence
 
-- **Account data:** user email, display name, and password hash.
-- **Research workspace:** user-owned projects; uploaded or open-access-imported document metadata, extracted text, processing status, and chunk records.
-- **LaTeX workspaces:** one project-owned `latex_workspaces` row per project stores `main.tex`, `references.bib`, and its last-update timestamp in the research database. The project foreign key cascades on project deletion; content is not sent to an external TeX service.
+- **Account data:** user email, unique username, display name, and password hash. Existing accounts receive a generated username during the additive startup migration.
+- **Research workspace:** owner-managed projects; accepted `project_invitations` grant collaborators access to project documents, papers, annotations, and LaTeX content. Assistant conversations remain scoped to the individual user. Project/document metadata and extracted text are in the research database; original uploads are stored in the private file store.
+- **Project invitations:** `project_invitations` stores inviter, invitee, project, status (`pending`, `accepted`, or `declined`), and timestamps. `notifications` records invitations, invitation responses, and new direct messages for inbox display.
+- **Direct messages:** `direct_messages` stores sender, recipient, message text, creation time, and read time. Messages are private to the two users; notification rows link to the original message.
+- **LaTeX workspaces:** one project-owned `latex_workspaces` row per project stores `main.tex`, `references.bib`, and its last-update timestamp in the research database. Accepted collaborators can read and edit it. Polling syncs saved changes, and timestamp checks reject stale saves rather than silently overwriting another user's newer edit.
 - **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance. PDF chunks retain their 1-based page number; other document chunks have no page locator. Existing research databases receive the nullable chunk page column additively at startup; already-processed PDFs need reprocessing once to populate page locators.
 - **Literature:** cached paper and author metadata, search-query history/results, and project-to-paper relationships with a persistent screening status (`unread`, `undecided`, `include`, or `exclude`) and optional short note. Existing databases receive these columns additively at startup.
@@ -76,7 +78,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 ### Upload and prepare a document
 
 1. The signed-in user uploads one or more PDF, DOCX, TXT, or Markdown files to a project. Bulk requests accept up to 20 files and return an individual result for each file.
-2. The API verifies project ownership, file type, non-empty content, and the configured per-file upload-size limit, then writes each valid original to local storage or the private Supabase bucket and persists its document record.
+2. The API verifies project access, file type, non-empty content, and the configured per-file upload-size limit, then writes each valid original to local storage or the private Supabase bucket and persists its document record.
 3. After the bulk request is accepted, an in-process background task is scheduled for each saved document. Processing continues if the user closes the browser; reopening the project shows the persisted per-document status. This depends on the API process remaining available.
 4. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
 5. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure or exhausted AI allowance does not discard readable text. Before calling OpenAI, the API atomically reserves the document's estimated embedding-token count against the account's daily allowance. Files that exceed the remaining allowance are marked **AI allowance reached**; their extracted text is retained and no embedding request is made. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. Without an OpenAI key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
@@ -100,22 +102,29 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 ### LaTeX workspace
 
-1. The signed-in user opens **Main document** in a project. The API checks project ownership and returns the saved source files or a starter article template and empty bibliography.
+1. The signed-in owner or accepted collaborator opens **Main document** in a project. The API checks project access and returns the saved source files or a starter article template and empty bibliography.
 2. The editor keeps `main.tex` and `references.bib` separately, autosaves edits to the project database, and offers source-only, live-preview-only, and split layouts. The browser preview renders common article structure and citation keys; it is not a TeX engine and does not produce a PDF.
 3. Saved project papers can insert a `\cite{...}` command and a matching BibTeX entry; papers with abstracts can also insert the abstract as a quoted passage. Ready project documents can load an editable excerpt from the existing extracted-text reader and insert it into the article with a source label. The user can edit both inserted content and bibliography entries in the normal source editor.
-4. The workspace is project-local, remains private behind the usual ownership checks, and is deleted with its project. Users can download the currently selected source file.
+4. The workspace is project-local and is deleted with its project. Owners and accepted collaborators can read and edit it; stale autosaves receive a conflict response and can reload the latest version. Users can download the currently selected source file.
+
+### Project collaboration and messaging
+
+1. A project owner enters a registered colleague's username or email in **Share**. The API creates a pending invitation and an inbox notification. Unknown accounts are not emailed or invited; there is no external email-delivery integration.
+2. The invitee accepts or declines from **Inbox**. Acceptance immediately grants access to the project and its shared documents, literature, annotations, and LaTeX workspace. The owner receives an invitation-response notification and can revoke access at any time. Owners alone can edit project details, manage invitations, or delete the project. Assistant conversations remain private to the user who created them.
+3. The frontend polls inbox counts, project summaries, active project data, and open annotation lists every five seconds; the LaTeX editor polls saved workspace content every 2.5 seconds when there are no local unsaved edits. This gives near-real-time updates without a persistent WebSocket connection. Concurrent stale LaTeX saves are rejected with HTTP 409.
+4. Authenticated users can search colleague usernames, names, or email addresses and send direct messages. The API scopes each thread to its two participants, records unread notifications, marks messages read when the recipient opens the thread, and returns at most the latest 100 messages per thread request.
 
 ### Annotate documents and papers
 
 1. The user opens an uploaded document from the Documents list or selects **Annotate** on a saved paper. The document reader shows extracted text; the paper reader shows its available abstract.
 2. The browser lets the user select text and save it as a highlight, optionally with a note. Notes can also be saved without a selection; existing notes can be edited or deleted.
-3. The API verifies project ownership and that paper annotations target a paper saved in that project. It validates selected text offsets against the current source, then stores annotations in the research database. Offsets use Unicode code points so the saved highlight can be restored after reload.
-4. Annotations are private to the project and persist across sessions. Annotation activity does not include passage or note contents in the metadata-only activity log.
+3. The API verifies project access and that paper annotations target a paper saved in that project. It validates selected text offsets against the current source, then stores annotations in the research database. Offsets use Unicode code points so the saved highlight can be restored after reload.
+4. Annotations are shared with project collaborators and persist across sessions. Annotation activity does not include passage or note contents in the metadata-only activity log.
 
 ### Ask the research assistant
 
 1. The user chooses **Ask a question**, **Compare sources**, or **Explore research gaps**, and enters a prompt. A prompt asking to find, search for, or pull up a paper additionally searches OpenAlex. The workspace shows the remaining prompt and embedding allowances and aggregate document-processing statuses.
-2. The API checks authentication and project ownership, then enforces a limit of 20 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
+2. The API checks authentication and project access, then enforces a limit of 20 assistant draft requests per client IP per UTC day. The quota is enforced atomically in PostgreSQL and excess requests receive HTTP 429 with a retry time.
 3. The API retrieves up to six relevant ready document chunks using query embeddings and pgvector cosine distance. It also ranks the project's saved papers using query-term overlap and can include up to six relevant papers. For explicit literature-finding prompts, it searches and semantically re-ranks OpenAlex results, caches their metadata, and includes up to three papers not already in the saved-paper results.
 4. OpenAI receives the question, selected source excerpts, PDF page locators, and prior user questions for conversational context; previous assistant answers are not reused as evidence. For question and research-direction modes, it generates atomic factual claims, each paired with a source index and verbatim quote. Compare mode instead generates per-source claims for research question, methods, sampling, findings, and limitations. The API rejects any claim whose quote is not present in the cited excerpt, then calls OpenAI again to assess whether every remaining claim is directly supported by its quote. The API constructs citation markers itself and omits claims that the verifier rejects. Comparison cells without verified claims are explicitly marked **Missing evidence**; unsupported details are not inferred.
 5. The verified answer and source excerpts are returned as an **unsaved draft**. `[S#]` answer citations map to the ordered source cards. PDF source cards include the document name, 1-based page number, and supporting chunk passage; opening a card or answer citation opens the document reader with the original PDF positioned at that page. Other document citations open the reader with the supporting passage, and paper citations link to the paper. The user can discard the draft or approve it. A signed approval token is bound to the user and project and expires after 15 minutes.
@@ -132,7 +141,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 
 ### Export a cited research brief
 
-1. From an approved **Compare sources** response, the user selects **Export cited brief**. The API checks project ownership, the approved response and its source records; other answer types are not eligible because they do not contain the structured evidence matrix.
+1. From an approved **Compare sources** response, the user selects **Export cited brief**. The API checks project access, the user's approved response and its source records; other answer types are not eligible because they do not contain the structured evidence matrix.
 2. The API creates an editable Word DOCX without another AI request. Its synthesis restates verified findings source-by-source without implying consensus, followed by the complete research-question/methods/sampling/findings/limitations matrix and a bibliography.
 3. Matrix citation markers such as `[S1]` are retained and map to bibliography entries for papers or project documents, including DOI/URL metadata or PDF page numbers when available. Missing-evidence fields remain explicit, with a note that an excerpt gap does not prove the full source lacks the information.
 
@@ -140,10 +149,11 @@ The verifier is another model call and can still make mistakes; evidence checkin
 
 ### Accounts and workspace access
 
-- Create an account with name, email, and a 12–128 character password. A small local denylist blocks common passwords and passwords made of one repeated character; this applies to new registrations, not existing passwords.
+- Create an account with username, name, email, and a 12–128 character password. A small local denylist blocks common passwords and passwords made of one repeated character; this applies to new registrations, not existing passwords.
 - Sign in and sign out. Researcher and administrator sign-in allow 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window; a successful sign-in clears matching counters.
-- Keep an authenticated session in the browser using a bearer token. The backend validates signed tokens and checks that the current user owns the requested project.
-- Use a private, account-scoped workspace. There is no multi-user project sharing in the current UI.
+- Keep an authenticated session in the browser using a bearer token. The backend validates signed tokens and checks project ownership or accepted collaborator access on every project resource route.
+- Invite registered colleagues by username or email from the project's share control. Recipients can accept or decline in **Inbox**; owners can remove invited or accepted collaborators. Accepted collaborators share project documents, papers, annotations, and LaTeX content. Only owners can edit project details or delete projects.
+- Use **Inbox** to review invitations, invitation responses, and direct messages. Search for a colleague by username, name, or email to start a private conversation. Messages, notification changes, project lists, documents, papers, and saved LaTeX content refresh in the background while open.
 
 ### Research projects
 
@@ -204,14 +214,24 @@ Routes require a bearer token except health, registration, and login routes. The
 | `POST` | `/api/auth/register` | Register an account and return a token. |
 | `POST` | `/api/auth/login` | Sign in and return a token. |
 | `GET` | `/api/auth/me` | Return the authenticated user's profile. |
+| `GET` | `/api/users/search?q=...` | Search registered colleagues by username, name, or email. |
+| `GET` | `/api/inbox` | List recent invitation, invitation-response, and direct-message notifications. |
+| `GET` | `/api/inbox/unread-count` | Read the authenticated user's unread notification count. |
+| `PATCH` | `/api/inbox/{notification_id}/read` | Mark one owned notification as read. |
+| `GET` | `/api/messages/threads` | List recent direct-message threads and unread counts. |
+| `GET`, `POST` | `/api/messages/{other_user_id}` | Read the latest messages with a colleague or send a message to them. |
 | `POST` | `/api/admin/auth/login` | Sign in through the separate admin portal; account email must be allowlisted. |
 | `GET` | `/api/admin/me` | Return the current administrator profile. |
 | `GET` | `/api/admin/users?limit=...&offset=...` | List paginated account summaries and activity timestamps. |
 | `GET` | `/api/admin/activity?user_id=...&limit=...&offset=...` | List paginated activity metadata, optionally for one user. |
 | `DELETE` | `/api/admin/users/{user_id}` | Permanently delete another user and their associated data/files. |
-| `GET`, `POST` | `/api/projects` | List or create the authenticated user's projects. |
+| `GET`, `POST` | `/api/projects` | List owned and accepted shared projects, or create a project owned by the authenticated user. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
-| `GET`, `PUT` | `/api/projects/{project_id}/latex` | Read or save the project's `main.tex` and `references.bib` files. |
+| `POST`, `GET` | `/api/projects/{project_id}/invitations` | Owner-only: send an invite by registered username/email or list project invitations and access statuses. |
+| `DELETE` | `/api/projects/{project_id}/invitations/{invitation_id}` | Owner-only: revoke a pending invitation or accepted collaborator's access. |
+| `GET` | `/api/invitations` | List pending project invitations received by the current user. |
+| `POST` | `/api/invitations/{invitation_id}/respond` | Accept or decline a pending invitation; notify its owner. |
+| `GET`, `PUT` | `/api/projects/{project_id}/latex` | Read or save the project's `main.tex` and `references.bib` files; timestamp-based conflict checks protect concurrent edits. |
 | `GET` | `/api/projects/{project_id}/documents` | List project documents and processing states. |
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
 | `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |
@@ -231,9 +251,9 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET`, `POST` | `/api/projects/{project_id}/papers/{paper_id}/annotations` | List or add notes/highlights for a paper saved in the project. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}/documents/{document_id}/annotations/{annotation_id}` | Edit or delete a document annotation. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/annotations/{annotation_id}` | Edit or delete a saved-paper annotation. |
-| `GET` | `/api/projects/{project_id}/assistant/conversations` | List approved conversations for a project. |
-| `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read an approved conversation and its sources. |
-| `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}/brief?message_id=...` | Download an approved comparison response as an editable cited DOCX research brief. |
+| `GET` | `/api/projects/{project_id}/assistant/conversations` | List the current user's approved conversations for a project. |
+| `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read the current user's approved conversation and its sources. |
+| `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}/brief?message_id=...` | Download the current user's approved comparison response as an editable cited DOCX research brief. |
 | `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; explicit literature-finding prompts also retrieve papers from OpenAlex. |
 | `POST` | `/api/projects/{project_id}/assistant/approve` | Validate a review token and save the approved conversation. |
 
@@ -241,7 +261,7 @@ Interactive API documentation is available at `/docs` on the API host.
 
 ## Security, configuration, and operating limits
 
-- Passwords are hashed; new registrations require 12–128 characters and reject a small denylist of common passwords and all-one-character passwords. API access uses signed HS256 bearer tokens. Project and document operations perform ownership checks.
+- Passwords are hashed; new registrations require 12–128 characters and reject a small denylist of common passwords and all-one-character passwords. API access uses signed HS256 bearer tokens. Project resource operations check owner or accepted-collaborator access; project details, invitations, and deletion are owner-only.
 - Researcher and administrator sign-in share atomic database-backed throttling: 5 attempts per IP/email pair and 30 attempts per IP in a 15-minute window. Counters contain HMAC-hashed identifiers and are cleared after successful sign-in.
 - API responses include `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and `Permissions-Policy`; HTTPS responses include HSTS, and `/api/` responses use `Cache-Control: no-store`.
 - Administrator access is checked on every admin request against the server-side, comma-separated `ADMIN_EMAILS` allowlist. The admin interface is separate, but the allowlisted user signs in with their existing account credentials. Removing an email from the allowlist revokes admin access after the backend restarts/redeploys.

@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -18,12 +20,34 @@ from app.services.rate_limit import clear_auth_attempts, consume_auth_attempt
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 
+def _available_username(db: Session, requested: str | None, email: str) -> str:
+    if requested:
+        username = requested.lower()
+        if db.scalar(select(User.user_id).where(User.username == username)):
+            raise HTTPException(status_code=409, detail="That username is already in use.")
+        return username
+
+    base = re.sub(r"[^a-z0-9._-]", "", email.split("@", 1)[0].lower())[:24] or "researcher"
+    username = base
+    suffix = 1
+    while db.scalar(select(User.user_id).where(User.username == username)):
+        suffix_text = str(suffix)
+        username = f"{base[:32 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    return username
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = str(payload.email).lower()
     if db.scalar(select(User.user_id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
-    user = User(email=email, name=payload.name.strip(), password_hash=hash_password(payload.password))
+    user = User(
+        email=email,
+        username=_available_username(db, payload.username, email),
+        name=payload.name.strip(),
+        password_hash=hash_password(payload.password),
+    )
     db.add(user)
     try:
         db.flush()

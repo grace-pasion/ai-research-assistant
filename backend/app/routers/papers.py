@@ -32,7 +32,7 @@ from app.schemas import (
     PaperScreeningUpdate,
     PaperSearchResponse,
 )
-from app.security import get_current_user, require_project_owner
+from app.security import get_current_user, require_project_access
 from app.services.academic_search import (
     OpenAccessPDFTooLarge,
     download_open_access_pdf,
@@ -95,7 +95,7 @@ def list_saved_papers(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     saved = db.scalars(
         select(ProjectPaper)
         .where(ProjectPaper.project_id == project_id)
@@ -128,7 +128,7 @@ async def import_reference_file(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     extension = Path((file.filename or "").replace("\\", "/")).suffix.casefold()
     if extension not in {".ris", ".bib", ".bibtex"}:
         raise HTTPException(status_code=415, detail="Choose a RIS or BibTeX (.bib/.bibtex) file.")
@@ -204,7 +204,7 @@ def search(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     try:
         results = search_papers(q.strip(), provider, limit)
     except httpx.HTTPStatusError as exc:
@@ -257,7 +257,7 @@ def save_paper(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     if literature_db.get(Paper, paper_id) is None:
         raise HTTPException(status_code=404, detail="Academic paper not found.")
     if db.get(ProjectPaper, (project_id, paper_id)) is None:
@@ -279,7 +279,7 @@ def unsave_paper(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is not None:
         db.delete(relation)
@@ -300,7 +300,7 @@ def import_open_access_full_text(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     if db.get(ProjectPaper, (project_id, paper_id)) is None:
         raise HTTPException(status_code=404, detail="Saved paper not found.")
     paper = literature_db.get(Paper, paper_id)
@@ -420,7 +420,7 @@ def update_paper_screening(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is None:
         raise HTTPException(status_code=404, detail="Saved paper not found in this project.")

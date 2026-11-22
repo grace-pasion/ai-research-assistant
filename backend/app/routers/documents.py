@@ -18,7 +18,7 @@ from app.schemas import (
     DocumentResponse,
     DocumentSearchResult,
 )
-from app.security import get_current_user, require_project_owner
+from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
 from app.services.documents import SUPPORTED_EXTENSIONS
 from app.services.processing import process_saved_document, reprocess_document
@@ -47,7 +47,7 @@ def search_documents(
     query = q.strip()
     if len(query) < 2 or len(query) > 200:
         raise HTTPException(status_code=422, detail="Search text must be between 2 and 200 characters.")
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     documents = db.scalars(
         select(Document)
@@ -77,7 +77,7 @@ def list_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     return list(
         db.scalars(
             select(Document)
@@ -97,8 +97,9 @@ def download_document(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     project = db.get(ResearchProject, document.project_id)
-    if project is None or project.user_id != user.user_id:
+    if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
+    require_project_access(db, project.project_id, user.user_id)
     if not is_remote_storage_path(document.storage_path):
         path = Path(document.storage_path)
         if not path.is_file():
@@ -132,7 +133,7 @@ def read_document_text(
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    require_project_owner(db, document.project_id, user.user_id)
+    require_project_access(db, document.project_id, user.user_id)
     return DocumentReaderResponse(
         document_id=document.document_id,
         filename=document.filename,
@@ -152,7 +153,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     document = await _prepare_document_upload(project_id, file, db, user)
     storage_path = document.storage_path
     try:
@@ -242,7 +243,7 @@ async def upload_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_owner(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id)
     if not files:
         raise HTTPException(status_code=422, detail="Choose at least one document to upload.")
     if len(files) > MAX_BULK_UPLOAD_COUNT:

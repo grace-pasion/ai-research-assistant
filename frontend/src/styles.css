@@ -345,6 +345,64 @@ h1, h2, h3, p { margin-top: 0; }
 .notice.success { background: #edf6ee; color: #39704e; }
 .modal-backdrop { align-items: center; background: rgba(31, 41, 35, .28); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: 20; }
 .modal-card { background: #fff; border: 1px solid #e5e9e5; border-radius: 12px; box-shadow: 0 20px 60px rgba(28, 41, 32, .16); max-width: 430px; padding: 24px; width: 100%; }
+.collaboration-modal { max-height: 85vh; max-width: 620px; overflow: auto; }
+.collaboration-help { color: #7d8980; font-size: 11px; line-height: 1.6; margin: 13px 0; }
+.collaboration-invite-form { display: flex; gap: 8px; }
+.collaboration-invite-form input, .inbox-search input, .inbox-compose input { background: #fff; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 11px; min-width: 0; outline: 0; padding: 10px 11px; }
+.collaboration-invite-form input { flex: 1; }
+.collaboration-list { border-top: 1px solid #edf0ed; margin-top: 20px; padding-top: 13px; }
+.collaboration-list-heading { color: #667269; font-size: 10px; font-weight: 700; margin-bottom: 8px; }
+.collaboration-person { align-items: center; border-bottom: 1px solid #f0f2f0; display: flex; gap: 10px; min-height: 57px; padding: 7px 0; }
+.collaboration-person-info { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.collaboration-person-info strong { color: #455149; font-size: 10px; }
+.collaboration-person-info strong small { color: #829087; font-size: 9px; font-weight: 400; }
+.collaboration-person-info > span { color: #919a94; font-size: 9px; overflow: hidden; text-overflow: ellipsis; }
+.collaboration-status { border-radius: 12px; font-size: 9px; padding: 4px 8px; text-transform: capitalize; }
+.status-pending { background: #f5f0e5; color: #8d7449; }
+.status-accepted { background: #eaf4ed; color: #39704e; }
+.status-declined { background: #f4eeee; color: #9c625d; }
+.text-button.danger-text { color: #a7564c; margin: 0; }
+.inbox-button { position: relative; }
+.unread-badge { align-items: center; background: #a94d45; border: 2px solid #fff; border-radius: 12px; color: #fff; display: flex; font-size: 8px; height: 17px; justify-content: center; min-width: 17px; padding: 0 4px; position: absolute; right: -3px; top: -3px; }
+.inbox-modal { display: flex; flex-direction: column; height: min(720px, 85vh); max-width: 930px; min-height: 400px; }
+.inbox-tabs { border-bottom: 1px solid #e9ede9; display: flex; gap: 20px; margin-top: 10px; }
+.inbox-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: #828d85; font-size: 10px; padding: 10px 2px; }
+.inbox-tabs button.active { border-bottom-color: var(--green); color: #2d654f; font-weight: 600; }
+.inbox-notifications { flex: 1; overflow: auto; padding: 8px 1px; }
+.inbox-notification { align-items: flex-start; border-bottom: 1px solid #edf0ed; display: flex; gap: 11px; padding: 13px 5px; }
+.inbox-notification.unread { background: #f8fbf8; }
+.notification-icon { align-items: center; background: #edf3ee; border-radius: 50%; color: #547462; display: flex; flex: 0 0 31px; height: 31px; justify-content: center; }
+.notification-copy { color: #748078; font-size: 10px; line-height: 1.6; }
+.notification-copy strong { color: #46534b; }
+.notification-copy > small { color: #9aa39c; display: block; font-size: 8px; margin-top: 5px; }
+.notification-actions { align-items: center; display: flex; gap: 7px; margin-top: 7px; }
+.notification-actions .button { min-height: 28px; }
+.inbox-messages { display: grid; flex: 1; grid-template-columns: minmax(210px, 290px) minmax(0, 1fr); min-height: 0; }
+.inbox-threads { border-right: 1px solid #edf0ed; overflow: auto; padding: 10px 9px 10px 0; }
+.inbox-search { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.inbox-search span { color: #8b958e; font-size: 9px; }
+.inbox-search input { font-size: 10px; padding: 8px; }
+.inbox-thread { align-items: center; background: transparent; border: 0; border-radius: 7px; display: flex; gap: 8px; margin: 2px 0; min-width: 0; padding: 8px 5px; text-align: left; width: 100%; }
+.inbox-thread:hover, .inbox-thread.selected { background: #f1f5f1; }
+.inbox-thread > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.inbox-thread strong { color: #4d5a51; font-size: 9px; }
+.inbox-thread small { color: #939c95; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-unread { align-items: center; background: #3a7459; border-radius: 10px; color: #fff; display: inline-flex; font-size: 8px; height: 17px; justify-content: center; min-width: 17px; padding: 0 4px; }
+.inbox-conversation { display: flex; flex-direction: column; min-height: 0; padding: 10px 0 0 13px; }
+.inbox-conversation-header { align-items: center; border-bottom: 1px solid #edf0ed; display: flex; gap: 8px; padding-bottom: 9px; }
+.inbox-conversation-header > span { display: flex; flex-direction: column; gap: 3px; }
+.inbox-conversation-header strong { color: #4d5a51; font-size: 10px; }
+.inbox-conversation-header small { color: #939c95; font-size: 8px; }
+.inbox-message-list { align-items: flex-start; display: flex; flex: 1; flex-direction: column; gap: 8px; overflow: auto; padding: 12px 4px; }
+.direct-message { border-radius: 9px; max-width: 82%; padding: 8px 10px; }
+.direct-message.received { align-self: flex-start; background: #f1f4f1; }
+.direct-message.sent { align-self: flex-end; background: #eaf3ed; }
+.direct-message p { color: #46534b; font-size: 10px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.direct-message small { color: #929b95; display: block; font-size: 8px; margin-top: 4px; text-align: right; }
+.inbox-compose { border-top: 1px solid #edf0ed; display: flex; gap: 7px; padding-top: 10px; }
+.inbox-compose input { flex: 1; }
+.inbox-empty { align-items: center; color: #a0aaa2; display: flex; flex: 1; flex-direction: column; font-size: 10px; gap: 9px; justify-content: center; text-align: center; }
+.inbox-empty p { max-width: 220px; }
 .modal-heading { align-items: flex-start; display: flex; justify-content: space-between; }
 .modal-heading h2 { color: #2d3932; font: 700 20px var(--serif); margin: 0 0 4px; }
 .stack-form { display: flex; flex-direction: column; gap: 14px; }
@@ -390,6 +448,12 @@ h1, h2, h3, p { margin-top: 0; }
   .account-card { justify-content: center; padding-left: 0; padding-right: 0; }
   .topbar { height: 54px; padding: 0 13px; }
   .private-badge { display: none; }
+  .inbox-modal { height: 85vh; min-height: 350px; padding: 17px; }
+  .inbox-messages { grid-template-columns: minmax(125px, 38%) minmax(0, 1fr); }
+  .inbox-threads { padding-right: 5px; }
+  .inbox-conversation { padding-left: 7px; }
+  .inbox-conversation-header small { overflow-wrap: anywhere; }
+  .collaboration-person { flex-wrap: wrap; }
   .content-area { padding: 26px 15px 35px; }
   .project-heading { align-items: flex-start; flex-direction: column; gap: 15px; }
   .project-heading h1 { font-size: 26px; }

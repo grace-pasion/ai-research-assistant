@@ -1,11 +1,13 @@
 export type User = {
   user_id: string;
   email: string;
+  username: string | null;
   name: string;
 };
 
 export type Project = {
   project_id: string;
+  user_id: string;
   project_name: string;
   description: string;
   created_at: string;
@@ -132,4 +134,56 @@ export type Conversation = {
   created_at: string;
   updated_at: string;
   messages?: Message[];
+};
+
+export type Colleague = {
+  user_id: string;
+  username: string;
+  name: string;
+  email: string;
+};
+
+export type ProjectInvitation = {
+  invitation_id: string;
+  project_id: string;
+  inviter_id: string;
+  invitee_id: string;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+  updated_at: string;
+  invitee_name: string;
+  invitee_username: string;
+  invitee_email: string;
+};
+
+export type DirectMessage = {
+  message_id: string;
+  sender_id: string;
+  recipient_id: string;
+  content: string;
+  created_at: string;
+  read_at: string | null;
+};
+
+export type MessageThread = {
+  user: Colleague;
+  last_message: string;
+  updated_at: string;
+  unread_count: number;
+};
+
+export type Notification = {
+  notification_id: string;
+  kind: "project_invitation" | "invitation_response" | "message";
+  actor_id: string;
+  actor_name: string;
+  actor_username: string | null;
+  actor_email: string;
+  project_id: string | null;
+  project_name: string | null;
+  invitation_id: string | null;
+  invitation_status: "pending" | "accepted" | "declined" | null;
+  message_id: string | null;
+  created_at: string;
+  read_at: string | null;
 };

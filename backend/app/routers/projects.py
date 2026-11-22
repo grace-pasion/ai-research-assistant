@@ -2,11 +2,11 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ResearchProject, User
+from app.models import ProjectInvitation, ResearchProject, User
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
@@ -22,7 +22,17 @@ def list_projects(
     return list(
         db.scalars(
             select(ResearchProject)
-            .where(ResearchProject.user_id == user.user_id)
+            .where(
+                or_(
+                    ResearchProject.user_id == user.user_id,
+                    ResearchProject.project_id.in_(
+                        select(ProjectInvitation.project_id).where(
+                            ProjectInvitation.invitee_id == user.user_id,
+                            ProjectInvitation.status == "accepted",
+                        )
+                    ),
+                )
+            )
             .order_by(ResearchProject.updated_at.desc())
         ).all()
     )
