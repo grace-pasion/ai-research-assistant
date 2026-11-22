@@ -35,7 +35,7 @@ flowchart LR
 ### Backend organization
 
 - `backend/app/main.py` creates the FastAPI application, CORS policy, database engines/session factories, startup schema initialization, and route registration.
-- `backend/app/routers/` implements authentication, administrator, projects, collaboration, documents, papers, and assistant endpoints.
+- `backend/app/routers/` implements authentication, administrator, projects, collaboration and messaging, documents, papers, annotations, LaTeX workspaces, usage, and assistant endpoints.
 - `backend/app/services/` implements academic search, extraction/chunking, document processing, local/Supabase file storage, AI retrieval/generation, activity recording, and atomic sign-in/daily prompt limits.
 - `backend/app/models.py` defines separate SQLAlchemy metadata for research data and literature data. The literature models use their own session factory even when both URLs point at the same physical PostgreSQL database.
 - `backend/app/config.py` loads backend settings from environment variables (and `.env` for local development). OpenAI, database, JWT, and Supabase credentials belong on the backend, never in the frontend.
@@ -135,7 +135,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 ### Usage and processing controls
 
 1. `GET /api/usage` reports prompts used/remaining for the current client IP and estimated embedding tokens used/remaining for the authenticated account, plus the UTC reset time.
-2. The usage panel refreshes after assistant requests and while documents are processing. It summarizes processing, failed, quota-limited, and API-key-blocked documents; the document list continues to show status and retry/reprocess controls per file.
+2. The **AI usage** page refreshes after assistant requests and while documents are processing. It summarizes processing, failed, quota-limited, and API-key-blocked documents; the document list continues to show status and retry/reprocess controls per file.
 3. Before an embedding batch begins, the API atomically reserves the document's estimated input tokens in `daily_embedding_usage`. If the reservation would exceed the account's daily limit, it skips the provider call and marks the document `quota_exceeded`. Text extraction is retained, and the user may retry after the allowance resets or split a file larger than the daily cap.
 4. The prompt counter is the existing HMAC-hashed IP/day record. Both counters reset at 00:00 UTC. Usage is an estimate, not a dollar balance or an account-wide OpenAI spend cap.
 
