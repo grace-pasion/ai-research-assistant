@@ -93,6 +93,23 @@ def test_screening_defaults_to_unread_and_note_can_be_cleared(screening_database
     assert updated.screening_note == ""
 
 
+def test_undecided_is_a_valid_persisted_screening_status(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+
+    updated = update_paper_screening(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningUpdate(screening_status="undecided", screening_note="Needs team discussion"),
+        db,
+        user,
+    )
+    listed = list_saved_papers(project.project_id, db, literature_db, user)
+
+    assert updated.screening_status == "undecided"
+    assert listed[0].screening_status == "undecided"
+    assert listed[0].screening_note == "Needs team discussion"
+
+
 def test_screening_requires_owned_project_and_saved_paper(screening_databases):
     db, _, user, project, paper = screening_databases
 
@@ -146,5 +163,6 @@ def test_existing_project_paper_table_gets_screening_columns(tmp_path):
 def test_screening_update_rejects_unknown_decisions_and_long_notes():
     with pytest.raises(ValidationError):
         PaperScreeningUpdate(screening_status="maybe")
+    assert PaperScreeningUpdate(screening_status="undecided").screening_status == "undecided"
     with pytest.raises(ValidationError):
         PaperScreeningUpdate(screening_status="include", screening_note="x" * 501)

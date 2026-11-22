@@ -54,7 +54,7 @@ export type Paper = {
   citation_count: number | null;
   authors: { author_id: string; author_name: string }[];
   saved: boolean;
-  screening_status: "unread" | "include" | "exclude";
+  screening_status: "unread" | "undecided" | "include" | "exclude";
   screening_note: string;
 };
 

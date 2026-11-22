@@ -127,9 +127,11 @@ function App() {
   );
   const screeningCounts = useMemo(() => ({
     unread: papers.filter((paper) => paper.screening_status === "unread").length,
+    undecided: papers.filter((paper) => paper.screening_status === "undecided").length,
     include: papers.filter((paper) => paper.screening_status === "include").length,
     exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
   }), [papers]);
+  const reviewedPaperCount = screeningCounts.undecided + screeningCounts.include + screeningCounts.exclude;
   const openedDocument = annotationDocumentId
     ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
     : null;
@@ -781,15 +783,16 @@ function App() {
                     <section className="screening-progress" aria-label="Literature screening progress">
                       <div className="screening-progress-heading">
                         <strong>Screening progress</strong>
-                        <span>{screeningCounts.include + screeningCounts.exclude} of {papers.length} reviewed</span>
+                        <span>{reviewedPaperCount} of {papers.length} reviewed</span>
                       </div>
                       <progress
                         max={Math.max(papers.length, 1)}
-                        value={screeningCounts.include + screeningCounts.exclude}
-                        aria-label={`${screeningCounts.include + screeningCounts.exclude} of ${papers.length} papers screened`}
+                        value={reviewedPaperCount}
+                        aria-label={`${reviewedPaperCount} of ${papers.length} papers screened`}
                       />
                       <div className="screening-counts">
                         <span>{screeningCounts.unread} unread</span>
+                        <span>{screeningCounts.undecided} undecided</span>
                         <span>{screeningCounts.include} included</span>
                         <span>{screeningCounts.exclude} excluded</span>
                       </div>
@@ -1017,6 +1020,7 @@ function PaperCard({
                 aria-label={`Screening decision for ${paper.title}`}
               >
                 <option value="unread">Unread</option>
+                <option value="undecided">Undecided</option>
                 <option value="include">Include</option>
                 <option value="exclude">Exclude</option>
               </select>

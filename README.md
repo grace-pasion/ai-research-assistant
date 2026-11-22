@@ -15,7 +15,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - Open an uploaded document to read its extracted text and view its highlights and notes in the document reader. On saved papers, annotate the available abstract; notes persist across sessions.
 - Document chunking and OpenAI embeddings, stored in pgvector.
 - OpenAlex and Crossref literature search with semantic re-ranking of paper abstracts when an OpenAI key is configured, cached paper and author metadata, query history, and saving/removing papers from projects.
-- Project literature screening: mark saved papers unread, include, or exclude, record an optional short reason, and track reviewed/unread totals.
+- Project literature screening: mark saved papers unread, undecided, include, or exclude, record an optional short reason, and track reviewed/unread/undecided totals. Undecided papers count as reviewed.
 - Project conversations with question, comparison, and research-direction modes. Retrieval combines relevant document chunks and saved-paper abstracts; prompts asking to find a paper also search OpenAlex and show retrieved results as linked chat sources.
 - Assistant drafts are limited to 20 prompts per client IP per UTC day. This caps question-answer requests, not document-embedding requests made during upload or reprocessing.
 - Separate administrator sign-in with an allowlisted account, user/account summaries, metadata-only activity history, and permanent account deletion.

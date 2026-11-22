@@ -204,12 +204,12 @@ class PaperResponse(BaseModel):
     citation_count: int | None
     authors: list[PaperAuthorResponse] = []
     saved: bool = False
-    screening_status: Literal["unread", "include", "exclude"] = "unread"
+    screening_status: Literal["unread", "undecided", "include", "exclude"] = "unread"
     screening_note: str = ""
 
 
 class PaperScreeningUpdate(BaseModel):
-    screening_status: Literal["unread", "include", "exclude"]
+    screening_status: Literal["unread", "undecided", "include", "exclude"]
     screening_note: str = Field(default="", max_length=500)
 
     @field_validator("screening_note")
@@ -219,7 +219,7 @@ class PaperScreeningUpdate(BaseModel):
 
 
 class PaperScreeningResponse(BaseModel):
-    screening_status: Literal["unread", "include", "exclude"]
+    screening_status: Literal["unread", "undecided", "include", "exclude"]
     screening_note: str
 
 
