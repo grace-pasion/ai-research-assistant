@@ -79,7 +79,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 2. The API verifies project ownership, file type, non-empty content, and the configured upload-size limit, then writes the original to local storage or the private Supabase bucket.
 3. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
 4. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure does not discard readable text. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. When an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
-5. The UI refreshes processing status and offers download, reprocess, and delete actions.
+5. The UI refreshes processing status and offers download, reprocess, and delete actions. If a document is deleted while its in-process task is running, the task detects that the record is gone and stops without reporting a stale-processing error.
 
 ### Search, save, and import academic papers
 

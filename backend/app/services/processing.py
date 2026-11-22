@@ -2,7 +2,7 @@ import uuid
 from pathlib import Path
 
 from openai import OpenAI
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -20,6 +20,7 @@ def _client() -> OpenAI | None:
 
 def reprocess_document(db: Session, document: Document) -> None:
     settings = get_settings()
+    document_id = document.document_id
     document.processing_status = "processing"
     document.processing_error = None
     db.commit()
@@ -76,7 +77,12 @@ def reprocess_document(db: Session, document: Document) -> None:
         db.commit()
     except Exception as exc:
         db.rollback()
-        current = db.get(Document, document.document_id)
+        still_exists = db.scalar(
+            select(Document.document_id).where(Document.document_id == document_id)
+        )
+        if still_exists is None:
+            return
+        current = db.get(Document, document_id)
         if current is None:
             raise
         current.processing_status = "failed"

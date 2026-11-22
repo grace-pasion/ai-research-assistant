@@ -107,6 +107,47 @@ def test_extracted_document_is_chunked_for_semantic_queries(tmp_path: Path, monk
     engine.dispose()
 
 
+def test_processing_ignores_a_document_deleted_during_extraction(tmp_path: Path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'processing.sqlite'}")
+    Document.__table__.create(engine)
+    DocumentChunk.__table__.create(engine)
+    source = tmp_path / "study.txt"
+    source.write_text("Extracted evidence.", encoding="utf-8")
+    document_id = uuid.uuid4()
+    with Session(engine) as db:
+        document = Document(
+            document_id=document_id,
+            project_id=uuid.uuid4(),
+            filename=source.name,
+            file_type="txt",
+            storage_path=str(source),
+            file_size=source.stat().st_size,
+            processing_status="processing",
+        )
+        db.add(document)
+        db.commit()
+        monkeypatch.setattr(
+            processing,
+            "get_settings",
+            lambda: SimpleNamespace(openai_embedding_model="test-embedding-model"),
+        )
+        monkeypatch.setattr(processing, "_client", lambda: None)
+
+        def delete_during_extraction(_path, _extension):
+            with Session(engine) as concurrent_db:
+                concurrent_document = concurrent_db.get(Document, document_id)
+                concurrent_db.delete(concurrent_document)
+                concurrent_db.commit()
+            return [(None, "Extracted evidence.")]
+
+        monkeypatch.setattr(processing, "extract_document_pages", delete_during_extraction)
+
+        processing.reprocess_document(db, document)
+
+        assert db.get(Document, document_id) is None
+    engine.dispose()
+
+
 def test_pdf_chunks_retain_their_page_numbers(tmp_path: Path, monkeypatch):
     engine = create_engine("sqlite://")
     Document.__table__.create(engine)
