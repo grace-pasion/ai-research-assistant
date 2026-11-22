@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import Document, ResearchProject, User
-from app.schemas import DocumentReaderResponse, DocumentResponse, DocumentSearchResult
+from app.schemas import (
+    BulkDocumentUploadResponse,
+    DocumentReaderResponse,
+    DocumentResponse,
+    DocumentSearchResult,
+)
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
 from app.services.documents import SUPPORTED_EXTENSIONS
@@ -26,6 +31,7 @@ from app.services.storage import (
 
 router = APIRouter(tags=["documents"])
 logger = logging.getLogger(__name__)
+MAX_BULK_UPLOAD_COUNT = 20
 
 
 @router.get(
@@ -147,6 +153,37 @@ async def upload_document(
     user: User = Depends(get_current_user),
 ):
     require_project_owner(db, project_id, user.user_id)
+    document = await _prepare_document_upload(project_id, file, db, user)
+    storage_path = document.storage_path
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            delete_stored_document(storage_path)
+        except (httpx.HTTPError, RuntimeError, ValueError) as cleanup_error:
+            logger.exception(
+                "Could not remove uploaded object after document metadata insert failed"
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Document metadata could not be saved and cloud file cleanup failed; "
+                    "contact support."
+                ),
+            ) from cleanup_error
+        raise
+    db.refresh(document)
+    background_tasks.add_task(process_saved_document, document.document_id)
+    return document
+
+
+async def _prepare_document_upload(
+    project_id: uuid.UUID,
+    file: UploadFile,
+    db: Session,
+    user: User,
+) -> Document:
     original_name = Path((file.filename or "").replace("\\", "/")).name.strip()
     extension = Path(original_name).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
@@ -190,27 +227,71 @@ async def upload_document(
         "document.uploaded",
         {"file_type": extension.lstrip("."), "size_bytes": len(data)},
     )
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        try:
-            delete_stored_document(storage_path)
-        except (httpx.HTTPError, RuntimeError, ValueError) as cleanup_error:
-            logger.exception(
-                "Could not remove uploaded object after document metadata insert failed"
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Document metadata could not be saved and cloud file cleanup failed; "
-                    "contact support."
-                ),
-            ) from cleanup_error
-        raise
-    db.refresh(document)
-    background_tasks.add_task(process_saved_document, document_id)
     return document
+
+
+@router.post(
+    "/api/projects/{project_id}/documents/bulk",
+    response_model=BulkDocumentUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_documents(
+    project_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    if not files:
+        raise HTTPException(status_code=422, detail="Choose at least one document to upload.")
+    if len(files) > MAX_BULK_UPLOAD_COUNT:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload no more than {MAX_BULK_UPLOAD_COUNT} documents at once.",
+        )
+
+    results = []
+    documents = []
+    for file in files:
+        filename = Path((file.filename or "").replace("\\", "/")).name.strip()
+        try:
+            document = await _prepare_document_upload(project_id, file, db, user)
+        except HTTPException as exc:
+            results.append({"filename": filename, "document": None, "error": str(exc.detail)})
+        else:
+            documents.append(document)
+            results.append({"filename": document.filename, "document": document, "error": None})
+
+    if documents:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            cleanup_error = None
+            for document in documents:
+                try:
+                    delete_stored_document(document.storage_path)
+                except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+                    logger.exception(
+                        "Could not remove uploaded object after bulk document metadata insert failed"
+                    )
+                    cleanup_error = exc
+            if cleanup_error is not None:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Document metadata could not be saved and cloud file cleanup failed; "
+                        "contact support."
+                    ),
+                ) from cleanup_error
+            raise
+
+        for document in documents:
+            db.refresh(document)
+            background_tasks.add_task(process_saved_document, document.document_id)
+
+    return {"results": results}
 
 
 @router.post("/api/documents/{document_id}/reprocess", response_model=DocumentResponse)

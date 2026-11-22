@@ -140,6 +140,16 @@ class DocumentResponse(APIModel):
     uploaded_at: datetime
 
 
+class BulkDocumentUploadResult(BaseModel):
+    filename: str
+    document: DocumentResponse | None
+    error: str | None
+
+
+class BulkDocumentUploadResponse(BaseModel):
+    results: list[BulkDocumentUploadResult]
+
+
 class DocumentSearchResult(BaseModel):
     document: DocumentResponse
     excerpt: str

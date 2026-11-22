@@ -23,6 +23,16 @@ export type DocumentRecord = {
   uploaded_at: string;
 };
 
+export type BulkDocumentUploadResult = {
+  filename: string;
+  document: DocumentRecord | null;
+  error: string | null;
+};
+
+export type BulkDocumentUploadResponse = {
+  results: BulkDocumentUploadResult[];
+};
+
 export type DocumentSearchResult = {
   document: DocumentRecord;
   excerpt: string;

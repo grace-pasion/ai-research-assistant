@@ -75,11 +75,12 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 ### Upload and prepare a document
 
-1. The signed-in user uploads a PDF, DOCX, TXT, or Markdown file to a project.
-2. The API verifies project ownership, file type, non-empty content, and the configured upload-size limit, then writes the original to local storage or the private Supabase bucket.
-3. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
-4. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure does not discard readable text. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. When an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
-5. The UI refreshes processing status and offers download, reprocess, and delete actions. If a document is deleted while its in-process task is running, the task detects that the record is gone and stops without reporting a stale-processing error.
+1. The signed-in user uploads one or more PDF, DOCX, TXT, or Markdown files to a project. Bulk requests accept up to 20 files and return an individual result for each file.
+2. The API verifies project ownership, file type, non-empty content, and the configured per-file upload-size limit, then writes each valid original to local storage or the private Supabase bucket and persists its document record.
+3. After the bulk request is accepted, an in-process background task is scheduled for each saved document. Processing continues if the user closes the browser; reopening the project shows the persisted per-document status. This depends on the API process remaining available.
+4. An in-process background task extracts text. PDFs use PyMuPDF; DOCX uses `python-docx`; scanned PDF pages use Tesseract OCR.
+5. Extracted text is committed to PostgreSQL before optional embedding generation, so an embedding-provider failure does not discard readable text. PDF pages are extracted and chunked independently, with each chunk retaining its 1-based PDF page number; other supported formats use unpaged chunks. When an OpenAI key is configured, the API creates embeddings and stores them with the chunks in PostgreSQL/pgvector. Without the key, extracted text can still be searched, but the document is marked as needing an API key for semantic retrieval.
+6. The UI refreshes each document's processing status and offers download, retry/reprocess, and delete actions. Failed items in the current bulk-upload list can also be retried; a failed document remains available for retry from the project document list after reopening. If a document is deleted while its in-process task is running, the task detects that the record is gone and stops without reporting a stale-processing error.
 
 ### Search, save, and import academic papers
 
@@ -192,6 +193,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
 | `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |
 | `POST` | `/api/projects/{project_id}/documents` | Upload a document. |
+| `POST` | `/api/projects/{project_id}/documents/bulk` | Upload up to 20 documents with an independent accepted/error result for each file; accepted documents are processed in the API background. |
 | `GET` | `/api/documents/{document_id}/download` | Download the original document. |
 | `POST` | `/api/documents/{document_id}/reprocess` | Reprocess an owned document. |
 | `DELETE` | `/api/documents/{document_id}` | Delete an owned document and its stored file. |

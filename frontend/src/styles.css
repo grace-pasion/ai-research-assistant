@@ -96,6 +96,15 @@ h1, h2, h3, p { margin-top: 0; }
 .upload-control { margin: 0; }
 .upload-button { cursor: pointer; position: relative; }
 .upload-button input { cursor: pointer; height: 100%; inset: 0; opacity: 0; position: absolute; width: 100%; }
+.bulk-upload-status { background: #fff; border: 1px solid #e8ece8; border-radius: 8px; margin: -8px 0 16px; overflow: hidden; }
+.bulk-upload-heading { align-items: center; background: #f8faf8; border-bottom: 1px solid #edf0ed; color: #647168; display: flex; font-size: 10px; justify-content: space-between; padding: 9px 12px; }
+.bulk-upload-heading span { color: #8a958d; font-size: 9px; }
+.bulk-upload-item { align-items: center; border-bottom: 1px solid #f0f2f0; display: flex; gap: 10px; min-height: 48px; padding: 8px 12px; }
+.bulk-upload-item:last-child { border-bottom: 0; }
+.bulk-upload-file { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.bulk-upload-file strong { color: #4b584f; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bulk-upload-file small { color: #a64e47; font-size: 9px; line-height: 1.4; }
+.status-uploading { background: #f4f1e8; color: #927344; }
 .document-list { border: 1px solid #e8ece8; border-radius: 9px; overflow: hidden; }
 .document-row { align-items: center; background: #fff; border-bottom: 1px solid #edf0ed; display: flex; gap: 13px; min-height: 72px; padding: 12px 15px; }
 .document-row:last-child { border-bottom: 0; }

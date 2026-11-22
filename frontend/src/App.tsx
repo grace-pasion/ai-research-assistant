@@ -27,6 +27,7 @@ import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } fr
 import { LatexWorkspace } from "./LatexWorkspace";
 import type {
   Annotation,
+  BulkDocumentUploadResponse,
   Conversation,
   DocumentRecord,
   DocumentSearchResult,
@@ -40,6 +41,16 @@ import type {
 
 type View = "documents" | "papers" | "latex" | "assistant";
 type LoginResponse = { access_token: string; user: User };
+const MAX_BULK_UPLOAD_COUNT = 20;
+type UploadQueueItem = {
+  key: string;
+  projectId: string;
+  file: File;
+  filename: string;
+  status: string;
+  documentId: string | null;
+  error: string | null;
+};
 
 function App() {
   const [token, setAuthToken] = useState<string | null>(getToken());
@@ -48,6 +59,8 @@ function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("documents");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
   const [citationPage, setCitationPage] = useState<number | null>(null);
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
@@ -172,6 +185,26 @@ function App() {
     return () => window.clearInterval(timer);
   }, [processing, project, request]);
 
+  useEffect(() => {
+    if (!documents.length) return;
+    setBulkUploads((current) => {
+      let changed = false;
+      const updated = current.map((item) => {
+        if (!item.documentId) return item;
+        const document = documents.find((candidate) => candidate.document_id === item.documentId);
+        if (!document || (item.status === document.processing_status
+          && item.error === document.processing_error)) return item;
+        changed = true;
+        return {
+          ...item,
+          status: document.processing_status,
+          error: document.processing_error,
+        };
+      });
+      return changed ? updated : current;
+    });
+  }, [documents]);
+
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -253,27 +286,120 @@ function App() {
     }
   }
 
-  async function uploadDocument(file: File) {
-    if (!project) return;
-    if (file.size === 0) {
-      setError("Choose a non-empty PDF, DOCX, TXT, or Markdown file.");
+  async function uploadDocuments(files: File[]) {
+    if (!project || !files.length || uploadingFiles) return;
+    if (files.length > MAX_BULK_UPLOAD_COUNT) {
+      setError(`Choose no more than ${MAX_BULK_UPLOAD_COUNT} files at once.`);
       return;
     }
-    setBusy(true);
+    const queued = files.map((file) => ({
+      key: crypto.randomUUID(),
+      projectId: project.project_id,
+      file,
+      filename: file.name,
+      status: "uploading",
+      documentId: null,
+      error: null,
+    }));
+    setBulkUploads((current) => [...current, ...queued].slice(-40));
+    setUploadingFiles(true);
     setError("");
     try {
       const form = new FormData();
-      form.append("file", file);
-      await request<DocumentRecord>(`/api/projects/${project.project_id}/documents`, {
-        method: "POST",
-        body: form,
+      files.forEach((file) => form.append("files", file));
+      const response = await request<BulkDocumentUploadResponse>(
+        `/api/projects/${project.project_id}/documents/bulk`,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
+      const results = queued.map((item, index) => {
+        const result = response.results[index];
+        return {
+          ...item,
+          status: result?.document?.processing_status ?? "failed",
+          documentId: result?.document?.document_id ?? null,
+          error: result?.error ?? result?.document?.processing_error
+            ?? (result ? null : "The server did not return an upload result."),
+        };
       });
-      await loadProjectData(project);
-      setNotice("Upload received. Text extraction is running.");
+      setBulkUploads((current) => current.map((item) =>
+        results.find((result) => result.key === item.key) ?? item));
+      const accepted = response.results.filter((result) => result.document).length;
+      setNotice(
+        `${accepted} of ${files.length} file${files.length === 1 ? "" : "s"} accepted. `
+        + "Processing continues on the server after the upload finishes.",
+      );
+      try {
+        await loadProjectData(project);
+      } catch (cause) {
+        setError(cause instanceof Error
+          ? `Files were accepted, but their status could not be refreshed: ${cause.message}`
+          : "Files were accepted, but their status could not be refreshed.");
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Upload failed.");
+      const message = cause instanceof Error ? cause.message : "Upload failed.";
+      setBulkUploads((current) => current.map((item) =>
+        queued.some((queuedItem) => queuedItem.key === item.key)
+          ? { ...item, status: "failed", error: message }
+          : item));
     } finally {
-      setBusy(false);
+      setUploadingFiles(false);
+    }
+  }
+
+  async function retryBulkUpload(item: UploadQueueItem) {
+    if (!project || item.projectId !== project.project_id || uploadingFiles) return;
+    setUploadingFiles(true);
+    setBulkUploads((current) => current.map((queued) =>
+      queued.key === item.key ? { ...queued, status: "uploading", error: null } : queued));
+    try {
+      let document: DocumentRecord | null = null;
+      let uploadError: string | null = null;
+      if (item.documentId) {
+        document = await request<DocumentRecord>(
+          `/api/documents/${item.documentId}/reprocess`,
+          { method: "POST" },
+        );
+      } else {
+        const form = new FormData();
+        form.append("files", item.file);
+        const response = await request<BulkDocumentUploadResponse>(
+          `/api/projects/${project.project_id}/documents/bulk`,
+          { method: "POST", body: form },
+        );
+        document = response.results[0]?.document ?? null;
+        uploadError = response.results[0]?.error ?? null;
+      }
+      if (!document) throw new Error(uploadError ?? "The server did not accept this file.");
+      setBulkUploads((current) => current.map((queued) =>
+        queued.key === item.key
+          ? {
+            ...queued,
+            status: document?.processing_status ?? "processing",
+            documentId: document?.document_id ?? null,
+            error: document?.processing_error ?? null,
+          }
+          : queued));
+      try {
+        await loadProjectData(project);
+      } catch (cause) {
+        setError(cause instanceof Error
+          ? `Retry was accepted, but status could not be refreshed: ${cause.message}`
+          : "Retry was accepted, but status could not be refreshed.");
+      }
+    } catch (cause) {
+      setBulkUploads((current) => current.map((queued) =>
+        queued.key === item.key
+          ? {
+            ...queued,
+            status: "failed",
+            error: cause instanceof Error ? cause.message : "Retry failed.",
+          }
+          : queued));
+    } finally {
+      setUploadingFiles(false);
     }
   }
 
@@ -753,18 +879,44 @@ function App() {
                   ) : (
                     <>
                       <div className="section-heading">
-                        <div><h2>Research documents</h2><p>Upload source material to make it searchable in your assistant.</p></div>
+                        <div><h2>Research documents</h2><p>Upload up to 20 files at once. Keep this window open until they are accepted; processing can then continue after you close it.</p></div>
                         <div className="upload-control">
                           <label className="button primary upload-button">
-                            <Upload size={16} /> Add document
-                            <input name="file" type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => {
-                              const file = event.currentTarget.files?.[0];
-                              if (file) void uploadDocument(file);
+                            <Upload size={16} /> {uploadingFiles ? "Uploading…" : "Add documents"}
+                            <input name="files" type="file" accept=".pdf,.docx,.txt,.md" multiple disabled={uploadingFiles} onChange={(event) => {
+                              const files = Array.from(event.currentTarget.files ?? []);
+                              if (files.length) void uploadDocuments(files);
                               event.currentTarget.value = "";
                             }} />
                           </label>
                         </div>
                       </div>
+                      {bulkUploads.some((item) => item.projectId === project.project_id) && (
+                        <section className="bulk-upload-status" aria-live="polite">
+                          <div className="bulk-upload-heading">
+                            <strong>Recent uploads</strong>
+                            <span>Processing runs on the server after each file is accepted.</span>
+                          </div>
+                          {bulkUploads.filter((item) => item.projectId === project.project_id).map((item) => (
+                            <div className="bulk-upload-item" key={item.key}>
+                              <div className="bulk-upload-file">
+                                <strong>{item.filename}</strong>
+                                {item.error && <small>{item.error}</small>}
+                              </div>
+                              <StatusPill status={item.status} />
+                              {item.status === "failed" && (
+                                <button
+                                  className="button secondary small-button"
+                                  disabled={uploadingFiles}
+                                  onClick={() => void retryBulkUpload(item)}
+                                >
+                                  Retry
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </section>
+                      )}
                       {!!documents.length && (
                         <form className="document-search" onSubmit={(event) => void searchDocuments(event)}>
                           <Search size={16} />
@@ -812,7 +964,9 @@ function App() {
                                 <Download size={16} />
                               </button>
                               {document.processing_status !== "processing" && document.processing_status !== "ready" && (
-                                <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>Reprocess</button>
+                                <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>
+                                  {document.processing_status === "failed" ? "Retry" : "Reprocess"}
+                                </button>
                               )}
                               <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
                                 <Trash2 size={16} />
@@ -1191,12 +1345,13 @@ function EmptyState({ icon, title, text }: { icon: ReactNode; title: string; tex
 
 function StatusPill({ status }: { status: string }) {
   const labels: Record<string, string> = {
+    uploading: "Uploading",
     processing: "Processing",
     ready: "Ready",
     needs_api_key: "Needs API key",
     failed: "Failed",
   };
-  return <span className={`status-pill status-${status}`}>{status === "processing" && <LoaderCircle size={12} className="spin" />}{labels[status] ?? status}</span>;
+  return <span className={`status-pill status-${status}`}>{["uploading", "processing"].includes(status) && <LoaderCircle size={12} className="spin" />}{labels[status] ?? status}</span>;
 }
 
 function PaperCard({

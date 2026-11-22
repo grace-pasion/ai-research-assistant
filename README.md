@@ -13,6 +13,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - Research project create/list/update/delete, private document storage, and project-level document text search.
 - A persistent per-project LaTeX workspace with `main.tex` and `references.bib`, a source/preview/split view, automatic saving, and editable imports from saved-paper citations/abstracts and extracted document text.
 - PDF, DOCX, TXT, and Markdown upload and extraction. Scanned PDF pages are processed with Tesseract OCR. Files are limited to 25 MB by default and PDFs to 100 pages.
+- Bulk document upload accepts up to 20 files per request, shows each file's upload/processing status, and allows failed items to be retried. Once files have been accepted and saved by the API, extraction continues in the background if the browser window closes; status and retry controls remain available in the project document list.
 - Open an uploaded document to read its extracted text and view its highlights and notes in the document reader. On saved papers, annotate the available abstract; notes persist across sessions.
 - Document chunking and OpenAI embeddings, stored in pgvector.
 - Page-level citations for PDF evidence: assistant citations identify the source document, PDF page, and supporting passage; opening a citation displays the original PDF at that page. Reprocess PDFs that were already processed before this feature to add page locators to their existing chunks.
