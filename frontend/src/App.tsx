@@ -32,6 +32,7 @@ import type {
   DocumentRecord,
   DocumentSearchResult,
   Draft,
+  Message,
   PaperImportResponse,
   Paper,
   Project,
@@ -82,6 +83,7 @@ function App() {
   const [searchText, setSearchText] = useState("");
   const [provider, setProvider] = useState("openalex");
   const [referenceBusy, setReferenceBusy] = useState(false);
+  const [briefExportingMessageId, setBriefExportingMessageId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
 
@@ -513,6 +515,24 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Could not export references.");
     } finally {
       setReferenceBusy(false);
+    }
+  }
+
+  async function exportResearchBrief(message: Message) {
+    if (!project || !conversation || briefExportingMessageId) return;
+    setBriefExportingMessageId(message.message_id);
+    setError("");
+    setNotice("");
+    try {
+      await downloadFile(
+        `/api/projects/${project.project_id}/assistant/conversations/${conversation.conversation_id}/brief?message_id=${encodeURIComponent(message.message_id)}`,
+        "research-brief.docx",
+      );
+      setNotice("Cited research brief downloaded as a Word document.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not export the research brief.");
+    } finally {
+      setBriefExportingMessageId(null);
     }
   }
 
@@ -1189,7 +1209,21 @@ function App() {
                                   ))}
                                 </div>
                               )}
-                              <span className="approved-label"><ShieldCheck size={13} /> Human-reviewed</span>
+                              <div className="message-footer">
+                                <span className="approved-label"><ShieldCheck size={13} /> Human-reviewed</span>
+                                {message.sources.length > 0 && isEvidenceComparison(message.content) && (
+                                  <button
+                                    className="brief-export-button"
+                                    disabled={briefExportingMessageId !== null}
+                                    onClick={() => void exportResearchBrief(message)}
+                                  >
+                                    {briefExportingMessageId === message.message_id
+                                      ? <LoaderCircle className="spin" size={13} />
+                                      : <Download size={13} />}
+                                    Export cited brief
+                                  </button>
+                                )}
+                              </div>
                             </>
                           )}
                         </div>
@@ -1275,6 +1309,10 @@ function App() {
       </main>
     </div>
   );
+}
+
+function isEvidenceComparison(content: string): boolean {
+  return /^\|\s*Source\s*\|\s*Research question\s*\|\s*Methods\s*\|\s*Sampling\s*\|\s*Findings\s*\|\s*Limitations\s*\|\s*Citations\s*\|$/m.test(content);
 }
 
 function AnswerContent({

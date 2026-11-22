@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, LaTeX editor, source annotations, and assistant review UI. |
+| Web client | React 18, TypeScript, Vite | Login and registration, project workspace, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -123,6 +123,12 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 
 The verifier is another model call and can still make mistakes; evidence checking reduces, but cannot eliminate, hallucinations. Human review remains necessary. The 20-request limit covers assistant drafts only. It does **not** limit embedding calls caused by upload or reprocessing, and it is not an OpenAI account-wide spending cap. People sharing one public IP share its quota; changing IP addresses can change the IP-based quota.
 
+### Export a cited research brief
+
+1. From an approved **Compare sources** response, the user selects **Export cited brief**. The API checks project ownership, the approved response and its source records; other answer types are not eligible because they do not contain the structured evidence matrix.
+2. The API creates an editable Word DOCX without another AI request. Its synthesis restates verified findings source-by-source without implying consensus, followed by the complete research-question/methods/sampling/findings/limitations matrix and a bibliography.
+3. Matrix citation markers such as `[S1]` are retained and map to bibliography entries for papers or project documents, including DOI/URL metadata or PDF page numbers when available. Missing-evidence fields remain explicit, with a note that an excerpt gap does not prove the full source lacks the information.
+
 ## User feature inventory
 
 ### Accounts and workspace access
@@ -164,6 +170,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 
 - Ask research questions, compare saved sources, explore possible research directions, or ask chat to find/pull up a relevant paper.
 - Compare sources in a structured matrix of each study's research question, methods, sampling, findings, limitations, and linked citations. Matrix cells with no verified support are flagged as missing evidence.
+- Export an approved comparison as an editable cited DOCX research brief with a source-attributed findings synthesis, evidence matrix, and bibliography.
 - Receive drafts with source citations/excerpts from the project's ready documents, saved papers, and any papers retrieved by an explicit chat search. Retrieved-paper citations link to the paper but do not save it to the project.
 - Click an answer's `[S#]` citation to open its matching source. PDF source cards display the supporting passage and page number and open the original PDF at that page; non-PDF document cards show the passage and open the document reader, while paper citations link to the paper.
 - Query extracted full text from uploaded documents and imported open-access papers through document-chunk retrieval.
@@ -217,6 +224,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `PATCH`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/annotations/{annotation_id}` | Edit or delete a saved-paper annotation. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations` | List approved conversations for a project. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read an approved conversation and its sources. |
+| `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}/brief?message_id=...` | Download an approved comparison response as an editable cited DOCX research brief. |
 | `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; explicit literature-finding prompts also retrieve papers from OpenAlex. |
 | `POST` | `/api/projects/{project_id}/assistant/approve` | Validate a review token and save the approved conversation. |
 

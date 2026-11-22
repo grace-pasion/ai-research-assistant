@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,10 +14,12 @@ from app.models import (
     Conversation,
     Document,
     DocumentChunk,
+    Author,
     Message,
     MessageChunkSource,
     MessagePaperSource,
     Paper,
+    PaperAuthor,
     User,
 )
 from app.schemas import (
@@ -32,6 +35,12 @@ from app.security import get_current_user, require_project_owner
 from app.services.assistant import draft_answer
 from app.services.audit import record_activity
 from app.services.rate_limit import consume_daily_prompt
+from app.services.research_brief import (
+    BriefSource,
+    citation_indices,
+    create_research_brief,
+    parse_evidence_matrix,
+)
 
 router = APIRouter(prefix="/api/projects/{project_id}/assistant", tags=["research assistant"])
 APPROVAL_SALT = "approved-research-answer-v1"
@@ -184,6 +193,116 @@ def get_conversation(
         .order_by(Message.created_at.asc())
     ).all()
     return _conversation_detail(db, literature_db, conversation, messages)
+
+
+@router.get("/conversations/{conversation_id}/brief")
+def export_research_brief(
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    conversation = _conversation_for_user(db, conversation_id, user.user_id, project_id)
+    message = db.scalar(
+        select(Message).where(
+            Message.message_id == message_id,
+            Message.conversation_id == conversation_id,
+            Message.role == "assistant",
+            Message.reviewed.is_(True),
+        )
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="Approved assistant response not found.")
+    question = db.scalar(
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.role == "user",
+            Message.created_at < message.created_at,
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    if question is None:
+        raise HTTPException(status_code=409, detail="The research question for this response is unavailable.")
+    try:
+        matrix_rows = parse_evidence_matrix(message.content)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Brief export is available for approved Compare sources responses.",
+        ) from exc
+
+    message_details = _conversation_detail(db, literature_db, conversation, [message]).messages[0]
+    sources = message_details.sources
+    if len(matrix_rows) != len(sources) or not sources:
+        raise HTTPException(
+            status_code=409,
+            detail="A cited source is no longer available; generate a new comparison before exporting.",
+        )
+    for row in matrix_rows:
+        citations = citation_indices(*row.cells())
+        if (
+            not citation_indices(row.citations)
+            or not citations
+            or any(source_index < 1 or source_index > len(sources) for source_index in citations)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="A cited source is no longer available; generate a new comparison before exporting.",
+            )
+
+    brief_sources = []
+    for source_index, source in enumerate(sources, start=1):
+        if source.kind == "paper":
+            paper = literature_db.get(Paper, source.paper_id)
+            if paper is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A cited source is no longer available; generate a new comparison before exporting.",
+                )
+            authors = literature_db.scalars(
+                select(Author.author_name)
+                .join(PaperAuthor, PaperAuthor.author_id == Author.author_id)
+                .where(PaperAuthor.paper_id == paper.paper_id)
+                .order_by(PaperAuthor.author_order)
+            ).all()
+            brief_sources.append(
+                BriefSource(
+                    index=source_index,
+                    kind="paper",
+                    title=paper.title,
+                    authors=tuple(authors),
+                    year=paper.publication_year,
+                    venue=paper.venue,
+                    doi=paper.doi,
+                    url=paper.paper_url,
+                )
+            )
+        else:
+            brief_sources.append(
+                BriefSource(
+                    index=source_index,
+                    kind="document",
+                    title=source.title,
+                    page_number=source.page_number,
+                )
+            )
+
+    content = create_research_brief(
+        conversation.title,
+        question.content,
+        matrix_rows,
+        brief_sources,
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="research-brief.docx"'},
+    )
 
 
 @router.post("/draft", response_model=AssistantDraftResponse)
