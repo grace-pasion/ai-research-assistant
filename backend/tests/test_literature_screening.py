@@ -18,8 +18,10 @@ from app.models import (
     User,
     UserActivity,
 )
-from app.routers.papers import list_saved_papers, update_paper_screening
+from app.routers import papers as papers_router
+from app.routers.papers import list_saved_papers, save_paper, update_paper_screening
 from app.schemas import PaperScreeningUpdate
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.fixture
@@ -93,6 +95,26 @@ def test_screening_defaults_to_unread_and_note_can_be_cleared(screening_database
 
     assert updated.screening_status == "unread"
     assert updated.screening_note == ""
+
+
+def test_concurrent_save_of_same_paper_is_idempotent(screening_databases, monkeypatch):
+    db, _literature_db, user, project, paper = screening_databases
+    relation = db.get(ProjectPaper, (project.project_id, paper.paper_id))
+    db.delete(relation)
+    db.commit()
+
+    def competing_commit():
+        db.rollback()
+        with Session(db.get_bind()) as competing_db:
+            competing_db.add(ProjectPaper(project_id=project.project_id, paper_id=paper.paper_id))
+            competing_db.commit()
+        raise IntegrityError("insert", {}, Exception("duplicate project paper"))
+
+    monkeypatch.setattr(db, "commit", competing_commit)
+
+    save_paper(project.project_id, paper.paper_id, db, _literature_db, user)
+
+    assert db.get(ProjectPaper, (project.project_id, paper.paper_id)) is not None
 
 
 def test_undecided_is_a_valid_persisted_screening_status(screening_databases):

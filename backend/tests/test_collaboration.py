@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import ensure_user_profile_picture_column, ensure_user_username_column, get_db
 from app.models import (
     DirectMessage,
+    Document,
     LatexWorkspace,
     Notification,
     ProjectInvitation,
@@ -30,7 +31,7 @@ from app.routers.collaboration import (
     get_message_thread,
     unread_count,
 )
-from app.routers import collaboration, latex, projects
+from app.routers import collaboration, documents, latex, projects
 from app.routers.projects import list_projects
 from app.schemas import DirectMessageCreate, InvitationResponseRequest, ProjectInvitationCreate
 from app.security import bearer_scheme, get_current_user, require_project_access
@@ -45,6 +46,7 @@ def collaboration_db(tmp_path):
         TeamWorkspaceMembership,
         ResearchProject,
         ProjectInvitation,
+        Document,
         DirectMessage,
         LatexWorkspace,
         Notification,
@@ -189,6 +191,43 @@ def test_only_owner_can_manage_access_and_revoking_removes_access(collaboration_
     with pytest.raises(HTTPException) as revoked:
         require_project_access(db, project.project_id, invitee.user_id)
     assert revoked.value.status_code == 404
+
+
+def test_project_collaborators_can_reprocess_and_delete_shared_documents(collaboration_db, monkeypatch):
+    db, owner, invitee, outsider, project = collaboration_db
+    invitation = invite_to_project(
+        project.project_id,
+        ProjectInvitationCreate(identifier=invitee.username),
+        db,
+        owner,
+    )
+    respond_to_invitation(
+        invitation["invitation_id"],
+        InvitationResponseRequest(response="accepted"),
+        db,
+        invitee,
+    )
+    document = Document(
+        project_id=project.project_id,
+        filename="shared-notes.txt",
+        file_type="txt",
+        storage_path="local:test-document",
+        file_size=12,
+        processing_status="ready",
+    )
+    db.add(document)
+    db.commit()
+    document_id = document.document_id
+
+    with pytest.raises(HTTPException) as unauthorized:
+        documents.reprocess(document_id, BackgroundTasks(), db, outsider)
+    assert unauthorized.value.status_code == 404
+
+    reprocessed = documents.reprocess(document_id, BackgroundTasks(), db, invitee)
+    assert reprocessed.processing_status == "processing"
+    monkeypatch.setattr(documents, "delete_stored_document", lambda _path: None)
+    documents.delete_document(document_id, db, invitee)
+    assert db.get(Document, document_id) is None
 
 
 def test_direct_messages_are_private_and_read_state_updates(collaboration_db):

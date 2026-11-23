@@ -54,6 +54,7 @@ Document processing uses FastAPI in-process background tasks, not a durable exte
 | Render | Docker Web Service | Hosts the API. Render is not the durable document store or database. |
 
 Fieldnotes searches OpenAlex and Crossref; it does not scrape Google Scholar or call Semantic Scholar. Paper search is performed by the backend, not directly by the browser.
+OpenAI request failures are returned as HTTP 502 responses, while a missing API key is reported as HTTP 503; neither is presented as a successful assistant response.
 
 ## Data model and persistence
 

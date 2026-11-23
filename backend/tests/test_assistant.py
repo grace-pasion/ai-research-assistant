@@ -2,13 +2,113 @@ import json
 import uuid
 from types import SimpleNamespace
 
+import httpx
+import pytest
+from fastapi import HTTPException
+from openai import APIConnectionError
+from sqlalchemy.exc import IntegrityError
+
 import app.services.assistant as assistant
+from app.routers import assistant as assistant_router
 from app.services.assistant import (
     _discover_external_papers,
     _paper_relevance,
     _paper_search_query,
     _requests_external_papers,
 )
+
+
+def test_openai_embedding_failure_is_reported_as_upstream_error(monkeypatch):
+    def fail(**_kwargs):
+        raise APIConnectionError(
+            message="provider unavailable",
+            request=httpx.Request("POST", "https://api.openai.com/v1/embeddings"),
+        )
+
+    monkeypatch.setattr(
+        assistant,
+        "_openai_client",
+        lambda: SimpleNamespace(embeddings=SimpleNamespace(create=fail)),
+    )
+    monkeypatch.setattr(
+        assistant,
+        "get_settings",
+        lambda: SimpleNamespace(openai_embedding_model="test-model"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        assistant._retrieve_chunks(SimpleNamespace(scalar=lambda _query: uuid.uuid4()), uuid.uuid4(), "question")
+
+    assert error.value.status_code == 502
+
+
+def test_openai_answer_and_verifier_failures_are_reported_as_upstream_errors(monkeypatch):
+    chunk = SimpleNamespace(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_text="The study reports evidence.",
+        page_number=None,
+    )
+    document = SimpleNamespace(document_id=chunk.document_id, filename="study.pdf")
+
+    def fail(**_kwargs):
+        raise APIConnectionError(
+            message="provider unavailable",
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))
+    )
+    monkeypatch.setattr(assistant, "_openai_client", lambda: client)
+    monkeypatch.setattr(assistant, "_retrieve_chunks", lambda *_args: [(chunk, document)])
+    monkeypatch.setattr(assistant, "_retrieve_papers", lambda *_args: [])
+    monkeypatch.setattr(assistant, "_discover_external_papers", lambda *_args: [])
+    monkeypatch.setattr(
+        assistant,
+        "get_settings",
+        lambda: SimpleNamespace(openai_model="test-model"),
+    )
+
+    with pytest.raises(HTTPException) as answer_error:
+        assistant.draft_answer(
+            SimpleNamespace(),
+            SimpleNamespace(),
+            uuid.uuid4(),
+            "What does the study report?",
+            "question",
+        )
+    assert answer_error.value.status_code == 502
+
+    with pytest.raises(HTTPException) as verifier_error:
+        assistant._verify_evidence_claims(
+            client,
+            "test-model",
+            "What does the study report?",
+            [{"text": "The study reports evidence.", "evidence": [{"source_index": 1, "quote": "The study reports evidence."}]}],
+            [{"title": "study.pdf", "page_number": None}],
+        )
+    assert verifier_error.value.status_code == 502
+
+
+def test_concurrent_approval_conflict_returns_the_existing_approval(monkeypatch):
+    expected = object()
+    rollbacks = []
+
+    def fail_commit():
+        raise IntegrityError("insert", {}, Exception("duplicate approval"))
+
+    monkeypatch.setattr(assistant_router, "_approved_response", lambda *_args: expected)
+    result = assistant_router._commit_approval(
+        SimpleNamespace(commit=fail_commit, rollback=lambda: rollbacks.append(True)),
+        SimpleNamespace(),
+        "approval-id",
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+
+    assert result is expected
+    assert rollbacks == [True]
 
 
 def test_paper_relevance_prefers_title_matches_and_ignores_unrelated_papers():

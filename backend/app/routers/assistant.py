@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -153,6 +154,47 @@ def _conversation_detail(
         updated_at=conversation.updated_at,
         messages=details,
     )
+
+
+def _approved_response(
+    db: Session,
+    literature_db: Session,
+    approval_id: str,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> ConversationDetailResponse | None:
+    existing_message = db.scalar(select(Message).where(Message.approval_id == approval_id))
+    if existing_message is None:
+        return None
+    conversation = _conversation_for_user(
+        db, existing_message.conversation_id, user_id, project_id
+    )
+    messages = db.scalars(
+        select(Message)
+        .where(Message.conversation_id == conversation.conversation_id)
+        .order_by(Message.created_at.asc())
+    ).all()
+    return _conversation_detail(db, literature_db, conversation, messages)
+
+
+def _commit_approval(
+    db: Session,
+    literature_db: Session,
+    approval_id: str,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> ConversationDetailResponse | None:
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing_response = _approved_response(
+            db, literature_db, approval_id, user_id, project_id
+        )
+        if existing_response is None:
+            raise
+        return existing_response
+    return None
 
 
 @router.get("/conversations", response_model=list[ConversationSummaryResponse])
@@ -371,17 +413,11 @@ def approve_draft(
     require_project_access(db, project_id, user.user_id)
     approval_id = hashlib.sha256(payload.approval_token.encode("utf-8")).hexdigest()
 
-    existing_message = db.scalar(select(Message).where(Message.approval_id == approval_id))
-    if existing_message is not None:
-        conversation = _conversation_for_user(
-            db, existing_message.conversation_id, user.user_id, project_id
-        )
-        messages = db.scalars(
-            select(Message)
-            .where(Message.conversation_id == conversation.conversation_id)
-            .order_by(Message.created_at.asc())
-        ).all()
-        return _conversation_detail(db, literature_db, conversation, messages)
+    existing_response = _approved_response(
+        db, literature_db, approval_id, user.user_id, project_id
+    )
+    if existing_response is not None:
+        return existing_response
 
     conversation_id = (
         uuid.UUID(draft["conversation_id"]) if draft.get("conversation_id") else uuid.uuid4()
@@ -466,7 +502,11 @@ def approve_draft(
         {"mode": draft["mode"], "source_count": len(source_pairs)},
     )
     conversation.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    existing_response = _commit_approval(
+        db, literature_db, approval_id, user.user_id, project_id
+    )
+    if existing_response is not None:
+        return existing_response
     db.refresh(conversation)
     messages = db.scalars(
         select(Message)

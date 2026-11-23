@@ -28,7 +28,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import {
   InboxDialog,
@@ -37,6 +37,7 @@ import {
   TeamWorkspaceDialog,
 } from "./Collaboration";
 import { LatexWorkspace } from "./LatexWorkspace";
+import { fetchProjectData } from "./projectData";
 import type {
   AIUsageResponse,
   Annotation,
@@ -133,6 +134,7 @@ function App() {
   const [briefExportingMessageId, setBriefExportingMessageId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
+  const selectedProjectIdRef = useRef<string | null>(null);
 
   const request = useCallback(
     async <T,>(path: string, options?: RequestInit) => api<T>(path, options, token),
@@ -181,15 +183,17 @@ function App() {
   const loadProjectData = useCallback(
     async (selected: Project) => {
       const id = selected.project_id;
-      const [docs, savedPapers, chats] = await Promise.all([
-        request<DocumentRecord[]>(`/api/projects/${id}/documents`),
-        request<Paper[]>(`/api/projects/${id}/papers`),
-        request<Conversation[]>(`/api/projects/${id}/assistant/conversations`),
-      ]);
-      setDocuments(docs);
-      setPapers(savedPapers);
-      setConversations(chats);
-      void refreshUsage();
+      await fetchProjectData(
+        id,
+        request,
+        () => selectedProjectIdRef.current === id,
+        ({ documents: docs, papers: savedPapers, conversations: chats }) => {
+          setDocuments(docs);
+          setPapers(savedPapers);
+          setConversations(chats);
+          void refreshUsage();
+        },
+      );
     },
     [refreshUsage, request],
   );
@@ -225,6 +229,14 @@ function App() {
     };
   }, [request, token]);
 
+  useLayoutEffect(() => {
+    selectedProjectIdRef.current = project?.project_id ?? null;
+    setDocuments([]);
+    setPapers([]);
+    setConversations([]);
+    setAiUsage(null);
+  }, [project?.project_id, token]);
+
   useEffect(() => {
     if (!project || !token) {
       setDocuments([]);
@@ -233,9 +245,14 @@ function App() {
       setAiUsage(null);
       return;
     }
+    let active = true;
     loadProjectData(project).catch((cause: unknown) => {
+      if (!active || selectedProjectIdRef.current !== project.project_id) return;
       setError(cause instanceof Error ? cause.message : "Could not load the project.");
     });
+    return () => {
+      active = false;
+    };
   }, [loadProjectData, project, token]);
 
   const processing = useMemo(
@@ -283,6 +300,7 @@ function App() {
     const timer = window.setInterval(() => {
       request<DocumentRecord[]>(`/api/projects/${project.project_id}/documents`)
         .then((loaded) => {
+          if (selectedProjectIdRef.current !== project.project_id) return;
           setDocuments(loaded);
           void refreshUsage();
         })
@@ -319,7 +337,7 @@ function App() {
           request<Paper[]>(`/api/projects/${project.project_id}/papers`),
           request<Conversation[]>(`/api/projects/${project.project_id}/assistant/conversations`),
         ]);
-        if (!active) return;
+        if (!active || selectedProjectIdRef.current !== project.project_id) return;
         setProjects(loadedProjects);
         setProject((selected) => retainProjectSelection(selected, loadedProjects));
         setDocuments(docs);

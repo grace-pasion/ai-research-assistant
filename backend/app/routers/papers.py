@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -269,7 +270,12 @@ def save_paper(
             )
         )
         record_activity(db, user.user_id, "paper.saved")
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if db.get(ProjectPaper, (project_id, paper_id)) is None:
+                raise
 
 
 @router.delete("/{paper_id}/save", status_code=status.HTTP_204_NO_CONTENT)

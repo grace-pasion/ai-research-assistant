@@ -216,6 +216,39 @@ def test_reprocess_does_not_queue_a_second_job_for_a_processing_document():
     engine.dispose()
 
 
+def test_reprocess_only_queues_a_job_if_atomic_claim_succeeds(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'processing-claim.sqlite'}")
+    for model in (User, TeamWorkspace, ResearchProject, Document, UserActivity):
+        model.__table__.create(engine)
+    with Session(engine, expire_on_commit=False) as first_db:
+        project = create_processing_project(first_db)
+        document = Document(
+            project_id=project.project_id,
+            filename="study.txt",
+            file_type="txt",
+            storage_path="test://study.txt",
+            file_size=10,
+            processing_status="needs_api_key",
+        )
+        first_db.add(document)
+        first_db.commit()
+        document_id = document.document_id
+        user = first_db.get(User, project.user_id)
+        first_db.commit()
+
+        with Session(engine) as competing_db:
+            competing_document = competing_db.get(Document, document_id)
+            competing_document.processing_status = "processing"
+            competing_db.commit()
+
+        tasks = BackgroundTasks()
+        result = documents_router.reprocess(document_id, tasks, first_db, user)
+
+        assert result.processing_status == "processing"
+        assert tasks.tasks == []
+    engine.dispose()
+
+
 def test_processing_ignores_a_document_deleted_during_extraction(tmp_path: Path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'processing.sqlite'}")
     create_processing_tables(engine)

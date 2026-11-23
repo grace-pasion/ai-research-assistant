@@ -6,7 +6,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -306,14 +306,26 @@ def reprocess(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     project = db.get(ResearchProject, document.project_id)
-    if project is None or project.user_id != user.user_id:
+    if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    if document.processing_status == "processing":
-        return document
-    document.processing_status = "processing"
-    document.processing_error = None
+    require_project_access(db, project.project_id, user.user_id)
+    claimed = db.execute(
+        update(Document)
+        .where(
+            Document.document_id == document_id,
+            Document.processing_status != "processing",
+        )
+        .values(processing_status="processing", processing_error=None)
+    )
+    if not claimed.rowcount:
+        db.rollback()
+        current = db.get(Document, document_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        return current
     record_activity(db, user.user_id, "document.reprocessed", {"file_type": document.file_type})
     db.commit()
+    db.refresh(document)
     background_tasks.add_task(process_saved_document, document_id)
     return document
 
@@ -328,8 +340,9 @@ def delete_document(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     project = db.get(ResearchProject, document.project_id)
-    if project is None or project.user_id != user.user_id:
+    if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
+    require_project_access(db, project.project_id, user.user_id)
     record_activity(db, user.user_id, "document.deleted", {"file_type": document.file_type})
     db.delete(document)
     db.commit()
