@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Bell,
+  Bot,
   Check,
   ChevronDown,
   Download,
@@ -66,6 +67,7 @@ import type {
   SavedPaperSearchRun,
   SearchResult,
   Source,
+  SourceSummaryResponse,
   SystematicReview,
   TeamWorkspace,
   User,
@@ -178,6 +180,14 @@ function App() {
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
   const selectedProjectIdRef = useRef<string | null>(null);
+  const sourceSummaryRequestIdRef = useRef(0);
+  const [sourceSummary, setSourceSummary] = useState<{
+    title: string;
+    summary: string | null;
+    cached: boolean;
+    loading: boolean;
+    error: string;
+  } | null>(null);
   const canEditProject = project?.access_role === "owner" || project?.access_role === "edit";
   const canCommentOnProject = canEditProject || project?.access_role === "comment";
 
@@ -281,6 +291,8 @@ function App() {
 
   useLayoutEffect(() => {
     selectedProjectIdRef.current = project?.project_id ?? null;
+    sourceSummaryRequestIdRef.current += 1;
+    setSourceSummary(null);
     setDocuments([]);
     setPapers([]);
     setSystematicReview(null);
@@ -656,6 +668,50 @@ function App() {
       setProjectExportError(cause instanceof Error ? cause.message : "Could not export this project.");
     } finally {
       if (selectedProjectIdRef.current === projectId) setProjectExportBusy(false);
+    }
+  }
+
+  function closeSourceSummary() {
+    sourceSummaryRequestIdRef.current += 1;
+    setSourceSummary(null);
+  }
+
+  async function summarizeProjectSource(
+    sourceType: "document" | "paper",
+    sourceId: string,
+    title: string,
+  ) {
+    if (!project) return;
+    const projectId = project.project_id;
+    const requestId = ++sourceSummaryRequestIdRef.current;
+    setSourceSummary({ title, summary: null, cached: false, loading: true, error: "" });
+    try {
+      const result = await request<SourceSummaryResponse>(
+        `/api/projects/${projectId}/source-summaries`,
+        {
+          method: "POST",
+          body: jsonBody({ source_type: sourceType, source_id: sourceId }),
+        },
+      );
+      if (sourceSummaryRequestIdRef.current !== requestId
+        || selectedProjectIdRef.current !== projectId) return;
+      setSourceSummary({
+        title: result.title,
+        summary: result.summary,
+        cached: result.cached,
+        loading: false,
+        error: "",
+      });
+    } catch (cause) {
+      if (sourceSummaryRequestIdRef.current !== requestId
+        || selectedProjectIdRef.current !== projectId) return;
+      setSourceSummary({
+        title,
+        summary: null,
+        cached: false,
+        loading: false,
+        error: cause instanceof Error ? cause.message : "Could not summarize this source.",
+      });
     }
   }
 
@@ -1699,6 +1755,50 @@ function App() {
               </section>
             </div>
           )}
+          {sourceSummary && (
+            <div className="modal-backdrop" onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeSourceSummary();
+            }}>
+              <section
+                className="modal-card source-summary-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="source-summary-title"
+                aria-busy={sourceSummary.loading}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">AI SOURCE SUMMARY</p>
+                    <h2 id="source-summary-title">{sourceSummary.title}</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={closeSourceSummary}
+                    aria-label="Close summary"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                {sourceSummary.loading ? (
+                  <p className="source-summary-loading" role="status">
+                    <LoaderCircle size={16} className="spin" /> Summarizing source…
+                  </p>
+                ) : sourceSummary.error ? (
+                  <p className="source-summary-error" role="alert">{sourceSummary.error}</p>
+                ) : (
+                  <>
+                    <div className="source-summary-text">{sourceSummary.summary}</div>
+                    <p className="source-summary-saved">
+                      {sourceSummary.cached
+                        ? "Saved summary reused."
+                        : "Summary saved for this source and reused next time."}
+                    </p>
+                  </>
+                )}
+              </section>
+            </div>
+          )}
           {showInbox && (
             <InboxDialog
               request={request}
@@ -2029,6 +2129,25 @@ function App() {
                               <span>{annotation.source_type === "document" ? "DOCUMENT" : "PAPER"}</span>
                               <button type="button" onClick={() => openProjectAnnotation(annotation)}>
                                 {annotation.source_title}
+                              </button>
+                              <button
+                                type="button"
+                                className="button secondary small-button"
+                                onClick={() => {
+                                  const sourceId = annotation.source_type === "document"
+                                    ? annotation.document_id
+                                    : annotation.paper_id;
+                                  if (sourceId) {
+                                    void summarizeProjectSource(
+                                      annotation.source_type,
+                                      sourceId,
+                                      annotation.source_title,
+                                    );
+                                  }
+                                }}
+                                aria-label={`Summarize ${annotation.source_title} with AI`}
+                              >
+                                <Bot size={13} /> Summarize
                               </button>
                             </div>
                             {annotation.quote && <blockquote>{annotation.quote}</blockquote>}
@@ -2384,6 +2503,7 @@ function App() {
                             : undefined}
                           onRemove={canEditProject ? () => void unsavePaper(paper) : undefined}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
+                          onSummarize={() => void summarizeProjectSource("paper", paper.paper_id, paper.title)}
                           onImportFullText={canEditProject ? () => void importPaperFullText(paper) : undefined}
                           importingFullText={busy}
                         />
@@ -3112,6 +3232,7 @@ function PaperCard({
   onSave,
   onRemove,
   onAnnotate,
+  onSummarize,
   onScreeningChange,
   selected = false,
   onSelectionChange,
@@ -3125,6 +3246,7 @@ function PaperCard({
   onSave?: () => void;
   onRemove?: () => void;
   onAnnotate?: () => void;
+  onSummarize?: () => void;
   onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
   selected?: boolean;
   onSelectionChange?: (selected: boolean) => void;
@@ -3203,6 +3325,15 @@ function PaperCard({
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
         {saved ? (
           <>
+            {onSummarize && (
+              <button
+                className="button secondary small-button"
+                onClick={onSummarize}
+                aria-label={`Summarize ${paper.title} with AI`}
+              >
+                <Bot size={13} /> Summarize
+              </button>
+            )}
             <button className="button secondary small-button" onClick={onAnnotate} disabled={!canCommentOnProject}><Pencil size={13} /> Comment</button>
             <button className="button secondary small-button" onClick={onImportFullText} disabled={!canEditProject || importingFullText}>
               {importingFullText ? <LoaderCircle size={13} className="spin" /> : <FileText size={13} />}

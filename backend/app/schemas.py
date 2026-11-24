@@ -561,6 +561,20 @@ class SystematicReviewResponse(BaseModel):
     screening_counts: PaperScreeningCounts
 
 
+class ProjectSourceSummaryRequest(BaseModel):
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+
+
+class ProjectSourceSummaryResponse(BaseModel):
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+    title: str
+    summary: str
+    updated_at: datetime
+    cached: bool
+
+
 class PaperSearchResponse(BaseModel):
     query_id: uuid.UUID
     provider: str

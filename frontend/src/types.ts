@@ -156,6 +156,15 @@ export type SystematicReview = {
   };
 };
 
+export type SourceSummaryResponse = {
+  source_type: "document" | "paper";
+  source_id: string;
+  title: string;
+  summary: string;
+  updated_at: string;
+  cached: boolean;
+};
+
 export type PaperImportResponse = {
   added_count: number;
   duplicate_count: number;

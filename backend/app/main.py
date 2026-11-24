@@ -29,6 +29,7 @@ from app.routers import (
     papers,
     project_exports,
     projects,
+    source_summaries,
     team_workspaces,
     usage,
 )
@@ -87,6 +88,7 @@ app.include_router(documents.router)
 app.include_router(papers.router)
 app.include_router(annotations.router)
 app.include_router(project_exports.router)
+app.include_router(source_summaries.router)
 app.include_router(assistant.router)
 app.include_router(usage.router)
 

@@ -472,6 +472,24 @@ class SystematicReviewWorkspace(ResearchBase):
     )
 
 
+class ProjectSourceSummary(ResearchBase):
+    __tablename__ = "project_source_summaries"
+    __table_args__ = (UniqueConstraint("project_id", "source_type", "source_id"),)
+
+    summary_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DocumentPaper(ResearchBase):
     __tablename__ = "document_papers"
 
