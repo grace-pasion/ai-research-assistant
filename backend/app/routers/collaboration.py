@@ -23,6 +23,7 @@ from app.schemas import (
     NotificationResponse,
     ProjectInvitationCreate,
     ProjectInvitationResponse,
+    ProjectInvitationRoleUpdate,
 )
 from app.security import get_current_user, require_project_owner
 from app.services.audit import record_activity
@@ -37,6 +38,7 @@ def _invitation_response(invitation: ProjectInvitation, invitee: User) -> dict:
         "inviter_id": invitation.inviter_id,
         "invitee_id": invitation.invitee_id,
         "status": invitation.status,
+        "role": invitation.role,
         "created_at": invitation.created_at,
         "updated_at": invitation.updated_at,
         "invitee_name": invitee.name,
@@ -94,12 +96,14 @@ def invite_to_project(
             inviter_id=user.user_id,
             invitee_id=invitee.user_id,
             status="pending",
+            role=payload.role,
         )
         db.add(invitation)
         db.flush()
     else:
         invitation.inviter_id = user.user_id
         invitation.status = "pending"
+        invitation.role = payload.role
         invitation.created_at = now
         invitation.updated_at = now
         db.execute(
@@ -174,6 +178,36 @@ def revoke_project_invitation(
         raise HTTPException(status_code=404, detail="Project invitation not found.")
     db.delete(invitation)
     db.commit()
+
+
+@router.patch(
+    "/api/projects/{project_id}/invitations/{invitation_id}",
+    response_model=ProjectInvitationResponse,
+)
+def update_project_invitation_role(
+    project_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    payload: ProjectInvitationRoleUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_owner(db, project_id, user.user_id)
+    invitation = db.scalar(
+        select(ProjectInvitation).where(
+            ProjectInvitation.project_id == project_id,
+            ProjectInvitation.invitation_id == invitation_id,
+        )
+    )
+    if invitation is None:
+        raise HTTPException(status_code=404, detail="Project invitation not found.")
+    invitation.role = payload.role
+    invitation.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(invitation)
+    invitee = db.get(User, invitation.invitee_id)
+    if invitee is None:
+        raise HTTPException(status_code=404, detail="Project collaborator not found.")
+    return _invitation_response(invitation, invitee)
 
 
 @router.get("/api/invitations", response_model=list[ProjectInvitationResponse])
@@ -265,6 +299,7 @@ def list_notifications(
             User.email,
             ResearchProject.project_name,
             ProjectInvitation.status,
+            ProjectInvitation.role,
         )
         .join(User, User.user_id == Notification.actor_id)
         .outerjoin(ResearchProject, ResearchProject.project_id == Notification.project_id)
@@ -288,12 +323,21 @@ def list_notifications(
             "project_name": project_name,
             "invitation_id": notification.invitation_id,
             "invitation_status": invitation_status,
+            "invitation_role": invitation_role,
             "message_id": notification.message_id,
             "details": notification.details,
             "created_at": notification.created_at,
             "read_at": notification.read_at,
         }
-        for notification, actor_name, actor_username, actor_email, project_name, invitation_status in rows
+        for (
+            notification,
+            actor_name,
+            actor_username,
+            actor_email,
+            project_name,
+            invitation_status,
+            invitation_role,
+        ) in rows
     ]
 
 

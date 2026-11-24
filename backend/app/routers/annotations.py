@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db, get_literature_db
-from app.models import Annotation, Document, Paper, ProjectPaper, User
+from app.models import Annotation, Document, Paper, ProjectPaper, ResearchProject, User
 from app.schemas import (
     AnnotationCreate,
     AnnotationResponse,
@@ -89,6 +89,18 @@ def _get_annotation(
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found.")
     return annotation
+
+
+def _require_annotation_author(
+    db: Session,
+    annotation: Annotation,
+    user: User,
+) -> None:
+    if annotation.created_by == user.user_id:
+        return
+    project = db.get(ResearchProject, annotation.project_id)
+    if project is None or project.user_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Only the comment author or project owner can edit it.")
 
 
 @router.get(
@@ -188,12 +200,13 @@ def create_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     document = _require_document(db, project_id, document_id)
     _validate_offsets(payload, document.extracted_text or "")
     annotation = Annotation(
         project_id=project_id,
         document_id=document_id,
+        created_by=user.user_id,
         quote=payload.quote,
         note=payload.note,
         start_offset=payload.start_offset,
@@ -234,12 +247,13 @@ def create_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     paper = _require_saved_paper(db, literature_db, project_id, paper_id)
     _validate_offsets(payload, _plain_abstract(paper.abstract))
     annotation = Annotation(
         project_id=project_id,
         paper_id=paper_id,
+        created_by=user.user_id,
         quote=payload.quote,
         note=payload.note,
         start_offset=payload.start_offset,
@@ -263,9 +277,10 @@ def update_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
+    _require_annotation_author(db, annotation, user)
     if not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
     annotation.note = payload.note
@@ -287,9 +302,10 @@ def update_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
+    _require_annotation_author(db, annotation, user)
     if not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
     annotation.note = payload.note
@@ -309,9 +325,10 @@ def delete_document_annotation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
+    _require_annotation_author(db, annotation, user)
     db.delete(annotation)
     db.commit()
 
@@ -328,8 +345,9 @@ def delete_paper_annotation(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "comment")
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
+    _require_annotation_author(db, annotation, user)
     db.delete(annotation)
     db.commit()

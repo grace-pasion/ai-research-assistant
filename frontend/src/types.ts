@@ -14,6 +14,7 @@ export type Project = {
   description: string;
   created_at: string;
   updated_at: string;
+  access_role: "owner" | "read" | "comment" | "edit";
 };
 
 export type TeamWorkspace = {
@@ -111,6 +112,8 @@ export type Annotation = {
   paper_id: string | null;
   quote: string | null;
   note: string;
+  author_id: string | null;
+  author_name: string | null;
   start_offset: number | null;
   end_offset: number | null;
   created_at: string;
@@ -222,6 +225,7 @@ export type ProjectInvitation = {
   inviter_id: string;
   invitee_id: string;
   status: "pending" | "accepted" | "declined";
+  role: "read" | "comment" | "edit";
   created_at: string;
   updated_at: string;
   invitee_name: string;
@@ -257,6 +261,7 @@ export type Notification = {
   project_name: string | null;
   invitation_id: string | null;
   invitation_status: "pending" | "accepted" | "declined" | null;
+  invitation_role: "read" | "comment" | "edit" | null;
   message_id: string | null;
   created_at: string;
   read_at: string | null;

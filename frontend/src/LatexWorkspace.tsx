@@ -5,6 +5,7 @@ import {
   Download,
   Eye,
   FileCode2,
+  FileOutput,
   FileText,
   Library,
   LoaderCircle,
@@ -14,6 +15,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DocumentRecord, Paper, Project } from "./types";
 import { parseLatexPreview } from "./latexPreview";
+import {
+  checkLatexCitationKeys,
+  findLatexBibliographyStyle,
+  stripLatexComments,
+} from "./latexCitations";
+import { fetchPdfObjectUrl } from "./api";
 
 type WorkspaceFiles = {
   main_tex: string;
@@ -31,7 +38,15 @@ type Props = {
 };
 
 type EditorFile = "main.tex" | "references.bib";
-type PaneMode = "split" | "source" | "preview";
+type PaneMode = "split" | "source" | "preview" | "pdf";
+type CitationStyle = "plainnat" | "abbrvnat" | "unsrtnat" | "apalike";
+
+const CITATION_STYLES: { value: CitationStyle; label: string }[] = [
+  { value: "plainnat", label: "Natbib (author-year or numeric)" },
+  { value: "abbrvnat", label: "Abbreviated author-year" },
+  { value: "unsrtnat", label: "Numeric, citation order" },
+  { value: "apalike", label: "APA-like author-date" },
+];
 
 const EMPTY_WORKSPACE: WorkspaceFiles = { main_tex: "", references_bib: "", updated_at: null };
 
@@ -102,6 +117,9 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [saveStatus, setSaveStatus] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
   const [workspaceError, setWorkspaceError] = useState("");
   const [sourceError, setSourceError] = useState("");
+  const [compileError, setCompileError] = useState("");
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [compiling, setCompiling] = useState(false);
   const [excerpts, setExcerpts] = useState<Record<string, string>>({});
   const [loadingExcerpt, setLoadingExcerpt] = useState<string | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -110,11 +128,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const savedContentRef = useRef("");
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const mountedRef = useRef(true);
+  const pdfUrlRef = useRef<string | null>(null);
+  const canEdit = project.access_role === "owner" || project.access_role === "edit";
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
     };
   }, []);
 
@@ -149,30 +170,35 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       try {
         const saved = await request<WorkspaceFiles>(`/api/projects/${project.project_id}/latex`, {
           method: "PUT",
-          body: JSON.stringify({ ...snapshot, expected_updated_at: snapshot.updated_at }),
+          body: JSON.stringify({
+            ...snapshot,
+            expected_updated_at: workspaceRef.current.updated_at ?? snapshot.updated_at,
+          }),
         });
-        if (!mountedRef.current) return;
+        if (!mountedRef.current) return null;
         savedContentRef.current = JSON.stringify(saved);
-          const current = { ...workspaceRef.current, updated_at: saved.updated_at };
-          workspaceRef.current = current;
-          setWorkspace(current);
-          setSaveStatus(JSON.stringify(current) === savedContentRef.current ? "saved" : "unsaved");
+        const current = { ...workspaceRef.current, updated_at: saved.updated_at };
+        workspaceRef.current = current;
+        setWorkspace(current);
+        setSaveStatus(JSON.stringify(current) === savedContentRef.current ? "saved" : "unsaved");
         setWorkspaceError("");
+        return saved;
       } catch (cause) {
         if (!mountedRef.current) return;
         setSaveStatus("error");
         setWorkspaceError(cause instanceof Error ? cause.message : "Could not save the LaTeX workspace.");
+        return null;
       }
     });
-    saveQueueRef.current = operation;
+    saveQueueRef.current = operation.then(() => undefined);
     return operation;
   }, [project.project_id, request]);
 
   useEffect(() => {
-    if (!loaded || saveStatus !== "unsaved") return;
+    if (!loaded || !canEdit || saveStatus !== "unsaved") return;
     const timer = window.setTimeout(() => void persist(workspace), 700);
     return () => window.clearTimeout(timer);
-  }, [loaded, persist, saveStatus, workspace]);
+  }, [canEdit, loaded, persist, saveStatus, workspace]);
 
   useEffect(() => {
     if (!loaded || saveStatus !== "saved") return;
@@ -215,9 +241,17 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   const preview = useMemo(() => parseLatexPreview(workspace.main_tex), [workspace.main_tex]);
+  const citationIssues = useMemo(
+    () => checkLatexCitationKeys(workspace.main_tex, workspace.references_bib),
+    [workspace.main_tex, workspace.references_bib],
+  );
+  const activeCitationStyle = findLatexBibliographyStyle(workspace.main_tex);
+  const citationStyle = CITATION_STYLES.find((style) => style.value === activeCitationStyle)?.value
+    ?? "plainnat";
   const currentValue = activeFile === "main.tex" ? workspace.main_tex : workspace.references_bib;
 
   function updateFile(value: string) {
+    if (!canEdit) return;
     const updated = {
       ...workspaceRef.current,
       [activeFile === "main.tex" ? "main_tex" : "references_bib"]: value,
@@ -228,6 +262,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function insertIntoMain(insertion: string) {
+    if (!canEdit) return;
     const textarea = editorRef.current;
     const source = workspaceRef.current.main_tex;
     const position = activeFile === "main.tex" && textarea && cursorPositionRef.current !== null
@@ -246,6 +281,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function citePaper(paper: Paper, includeAbstract = false) {
+    if (!canEdit) return;
     const key = citationKey(paper);
     const existing = workspaceRef.current.references_bib;
     const entry = bibtexEntry(paper);
@@ -280,11 +316,65 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function insertDocumentExcerpt(document: DocumentRecord) {
+    if (!canEdit) return;
     const excerpt = excerpts[document.document_id]?.trim();
     if (!excerpt) return;
     insertIntoMain(
       `\\begin{quote}\n${encodeLatex(excerpt)}\n\\end{quote}\n\\noindent\\textit{Source: ${encodeLatex(document.filename)}}`,
     );
+  }
+
+  function changeCitationStyle(style: CitationStyle) {
+    if (!canEdit) return;
+    const source = workspaceRef.current.main_tex;
+    const command = `\\bibliographystyle{${style}}`;
+    let updatedSource: string;
+    const activeStyle = stripLatexComments(source).match(/\\bibliographystyle\s*\{[^}]*\}/);
+    if (activeStyle?.index !== undefined) {
+      updatedSource = source.slice(0, activeStyle.index)
+        + command
+        + source.slice(activeStyle.index + activeStyle[0].length);
+    } else {
+      const uncommentedSource = stripLatexComments(source);
+      const bibliographyAt = uncommentedSource.lastIndexOf("\\bibliography");
+      const documentEndAt = uncommentedSource.lastIndexOf("\\end{document}");
+      const insertionAt = bibliographyAt >= 0
+        ? bibliographyAt
+        : documentEndAt >= 0 ? documentEndAt : source.length;
+      updatedSource = insertAtCursor(source, command, insertionAt);
+    }
+    const updated = { ...workspaceRef.current, main_tex: updatedSource };
+    workspaceRef.current = updated;
+    setWorkspace(updated);
+    setSaveStatus(JSON.stringify(updated) === savedContentRef.current ? "saved" : "unsaved");
+  }
+
+  async function compilePdf() {
+    setCompiling(true);
+    setCompileError("");
+    try {
+      const saved = await persist(workspaceRef.current);
+      if (!saved) {
+        setCompileError("Save the latest changes before compiling.");
+        return;
+      }
+      const nextUrl = await fetchPdfObjectUrl(
+        `/api/projects/${project.project_id}/latex/compile`,
+        { method: "POST" },
+      );
+      if (!mountedRef.current) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      pdfUrlRef.current = nextUrl;
+      setPdfUrl(nextUrl);
+      setPaneMode("pdf");
+    } catch (cause) {
+      setCompileError(cause instanceof Error ? cause.message : "Could not compile this document.");
+    } finally {
+      setCompiling(false);
+    }
   }
 
   return (
@@ -296,6 +386,9 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <p>Write in LaTeX and bring saved papers and document excerpts into your draft.</p>
         </div>
         <div className="latex-header-actions">
+          <span className="latex-access-role">
+            {{ owner: "Owner", read: "Reader", comment: "Commenter", edit: "Editor" }[project.access_role]} access
+          </span>
           <span className={`latex-save-status ${saveStatus}`} role="status">
             {saveStatus === "saving" ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}
             {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved changes" : saveStatus === "error" ? "Save failed" : "Saved"}
@@ -311,14 +404,27 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <button
             type="button"
             className="button primary small-button"
+            onClick={() => void compilePdf()}
+            disabled={loading || !loaded || compiling || saveStatus === "saving"}
+          >
+            {compiling ? <LoaderCircle size={14} className="spin" /> : <FileOutput size={14} />}
+            {compiling ? "Compiling…" : "Compile PDF"}
+          </button>
+          {canEdit && (
+          <button
+            type="button"
+            className="button primary small-button"
             onClick={() => void persist(workspace)}
             disabled={loading || !loaded || saveStatus === "saving" || saveStatus === "saved"}
           >
             <Save size={14} /> Save now
           </button>
+          )}
         </div>
       </header>
       {workspaceError && <p className="inline-error latex-error" role="alert">{workspaceError}</p>}
+      {compileError && <p className="inline-error latex-error" role="alert">{compileError}</p>}
+      {!canEdit && <p className="latex-preview-note">You can read and compile this draft but cannot change shared project content.</p>}
       {workspaceError.includes("changed in another session") && (
         <button type="button" className="button secondary small-button latex-reload" onClick={() => void reloadWorkspace()}>
           Reload latest version
@@ -345,11 +451,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   <strong>{paper.title}</strong>
                   <span>{paper.authors[0]?.author_name ?? "Unknown author"} · {paper.publication_year ?? "n.d."}</span>
                   <div className="latex-source-actions">
-                    <button type="button" onClick={() => citePaper(paper)} title={`Add ${citationKey(paper)} to references.bib and cite it`}>
+                    <button type="button" onClick={() => citePaper(paper)} title={`Add ${citationKey(paper)} to references.bib and cite it`} disabled={!canEdit}>
                       <Code2 size={12} /> Cite
                     </button>
                     {paper.abstract && (
-                      <button type="button" onClick={() => citePaper(paper, true)} title="Insert the abstract with its citation">
+                      <button type="button" onClick={() => citePaper(paper, true)} title="Insert the abstract with its citation" disabled={!canEdit}>
                         <Upload size={12} /> Abstract
                       </button>
                     )}
@@ -371,7 +477,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                         onClick={() => void loadDocumentExcerpt(document)}
                       >
                         {loadingExcerpt === document.document_id ? <LoaderCircle size={12} className="spin" /> : <Upload size={12} />}
-                        Load editable excerpt
+                        {canEdit ? "Load editable excerpt" : "Load excerpt"}
                       </button>
                     ) : (
                       <>
@@ -380,12 +486,13 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                           value={excerpts[document.document_id]}
                           maxLength={4000}
                           rows={5}
+                          readOnly={!canEdit}
                           onChange={(event) => setExcerpts((current) => ({
                             ...current,
                             [document.document_id]: event.target.value,
                           }))}
                         />
-                        <button type="button" className="latex-insert-excerpt" onClick={() => insertDocumentExcerpt(document)}>
+                        <button type="button" className="latex-insert-excerpt" onClick={() => insertDocumentExcerpt(document)} disabled={!canEdit}>
                           Insert excerpt
                         </button>
                       </>
@@ -409,10 +516,34 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                 <button type="button" className={paneMode === "preview" ? "active" : ""} onClick={() => setPaneMode("preview")} aria-pressed={paneMode === "preview"} title="Preview only">
                   <Eye size={14} /><span>Preview</span>
                 </button>
+                <button type="button" className={paneMode === "pdf" ? "active" : ""} onClick={() => setPaneMode("pdf")} aria-pressed={paneMode === "pdf"} title="Compiled PDF">
+                  <FileOutput size={14} /><span>PDF</span>
+                </button>
               </div>
             </div>
+            <div className="latex-citation-tools">
+              <label htmlFor="latex-citation-style">Bibliography style</label>
+              <select
+                id="latex-citation-style"
+                disabled={!canEdit}
+                onChange={(event) => changeCitationStyle(event.target.value as CitationStyle)}
+                value={CITATION_STYLES.some((style) => style.value === citationStyle) ? citationStyle : "plainnat"}
+              >
+                {CITATION_STYLES.map((style) => <option value={style.value} key={style.value}>{style.label}</option>)}
+              </select>
+              {!!citationIssues.missingKeys.length && (
+                <span className="latex-citation-warning" role="status">
+                  Missing BibTeX entries: {citationIssues.missingKeys.join(", ")}
+                </span>
+              )}
+              {!!citationIssues.duplicateKeys.length && (
+                <span className="latex-citation-warning" role="status">
+                  Duplicate BibTeX keys: {citationIssues.duplicateKeys.join(", ")}
+                </span>
+              )}
+            </div>
             <div className={`latex-panes mode-${paneMode}`}>
-              {paneMode !== "preview" && (
+              {paneMode !== "preview" && paneMode !== "pdf" && (
                 <div className="latex-source-pane">
                   <div className="latex-editor-caption"><Code2 size={13} /> LaTeX source</div>
                   <textarea
@@ -422,6 +553,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                     autoComplete="off"
                     autoCorrect="off"
                     spellCheck={false}
+                    readOnly={!canEdit}
                     value={currentValue}
                     onChange={(event) => {
                       cursorPositionRef.current = event.currentTarget.selectionStart;
@@ -436,9 +568,9 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   />
                 </div>
               )}
-              {paneMode !== "source" && (
+              {paneMode !== "source" && paneMode !== "pdf" && (
                 <div className="latex-preview-pane">
-                  <div className="latex-editor-caption"><Eye size={13} /> {activeFile === "main.tex" ? "Live article preview" : "Bibliography source"}</div>
+                  <div className="latex-editor-caption"><Eye size={13} /> {activeFile === "main.tex" ? "Quick article preview" : "Bibliography source"}</div>
                   {activeFile === "main.tex" ? (
                     <article className="latex-paper-preview">
                       {preview.title && <h1>{preview.title}</h1>}
@@ -453,7 +585,15 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   ) : (
                     <pre className="latex-bib-preview">{workspace.references_bib || "% Add citations from saved literature to build this bibliography."}</pre>
                   )}
-                  <p className="latex-preview-note">Live preview for common article structure; this is not a full TeX compiler.</p>
+                  <p className="latex-preview-note">Quick structural preview only. Use Compile PDF for full TeX output.</p>
+                </div>
+              )}
+              {paneMode === "pdf" && (
+                <div className="latex-preview-pane latex-pdf-pane">
+                  <div className="latex-editor-caption"><FileOutput size={13} /> Compiled PDF</div>
+                  {pdfUrl
+                    ? <iframe className="latex-pdf-frame" src={pdfUrl} title="Compiled research draft PDF" />
+                    : <p className="latex-empty">Compile the saved draft to view its PDF here.</p>}
                 </div>
               )}
             </div>

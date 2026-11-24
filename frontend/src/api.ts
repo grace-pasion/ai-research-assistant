@@ -71,11 +71,17 @@ export async function downloadFile(path: string, filename: string): Promise<void
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function fetchPdfObjectUrl(path: string): Promise<string> {
-  const headers = new Headers();
-  const token = getToken();
+export async function fetchPdfObjectUrl(
+  path: string,
+  options: RequestInit = {},
+  token = getToken(),
+): Promise<string> {
+  const headers = new Headers(options.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     let message = `Could not load PDF (${response.status})`;
     try {

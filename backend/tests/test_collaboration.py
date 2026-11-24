@@ -7,7 +7,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.database import ensure_user_profile_picture_column, ensure_user_username_column, get_db
+from app.database import (
+    ensure_project_collaboration_columns,
+    ensure_user_profile_picture_column,
+    ensure_user_username_column,
+    get_db,
+)
 from app.models import (
     DirectMessage,
     Document,
@@ -30,10 +35,16 @@ from app.routers.collaboration import (
     send_direct_message,
     get_message_thread,
     unread_count,
+    update_project_invitation_role,
 )
 from app.routers import collaboration, documents, latex, projects
 from app.routers.projects import list_projects
-from app.schemas import DirectMessageCreate, InvitationResponseRequest, ProjectInvitationCreate
+from app.schemas import (
+    DirectMessageCreate,
+    InvitationResponseRequest,
+    ProjectInvitationCreate,
+    ProjectInvitationRoleUpdate,
+)
 from app.security import bearer_scheme, get_current_user, require_project_access
 
 
@@ -126,6 +137,52 @@ def test_project_invitation_grants_access_only_after_acceptance(collaboration_db
             invitee,
         )
     assert answered.value.status_code == 409
+
+
+def test_project_roles_control_shared_edits_and_can_be_changed_by_owner(collaboration_db):
+    db, owner, invitee, _, project = collaboration_db
+    invitation = invite_to_project(
+        project.project_id,
+        ProjectInvitationCreate(identifier=invitee.username, role="read"),
+        db,
+        owner,
+    )
+    assert list_notifications(db, invitee)[0]["invitation_role"] == "read"
+    respond_to_invitation(
+        invitation["invitation_id"],
+        InvitationResponseRequest(response="accepted"),
+        db,
+        invitee,
+    )
+
+    assert invitation["role"] == "read"
+    assert list_projects(db, invitee)[0].access_role == "read"
+    assert latex.get_latex_workspace(project.project_id, db, invitee).main_tex
+    with pytest.raises(HTTPException) as read_only:
+        latex.save_latex_workspace(
+            project.project_id,
+            latex.LatexWorkspaceUpdate(main_tex="not allowed", references_bib=""),
+            db,
+            invitee,
+        )
+    assert read_only.value.status_code == 403
+
+    changed = update_project_invitation_role(
+        project.project_id,
+        invitation["invitation_id"],
+        ProjectInvitationRoleUpdate(role="edit"),
+        db,
+        owner,
+    )
+    assert changed["role"] == "edit"
+    assert list_projects(db, invitee)[0].access_role == "edit"
+    saved = latex.save_latex_workspace(
+        project.project_id,
+        latex.LatexWorkspaceUpdate(main_tex="editor draft", references_bib=""),
+        db,
+        invitee,
+    )
+    assert saved.main_tex == "editor draft"
 
 
 def test_invitation_lookup_accepts_email_and_rejects_unknown_users(collaboration_db):
@@ -282,6 +339,46 @@ def test_username_migration_backfills_existing_accounts(tmp_path):
     assert username.startswith("researcher_")
     assert len(username) == len("researcher_") + 12
     assert profile_picture is None
+    engine.dispose()
+
+
+def test_project_role_and_comment_author_migrations_preserve_existing_rows(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old-collaboration.sqlite'}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE users (user_id CHAR(32) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE project_invitations (invitation_id CHAR(32) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE annotations (annotation_id CHAR(32) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text("INSERT INTO project_invitations (invitation_id) VALUES ('old-invite')")
+        )
+        connection.execute(
+            text("INSERT INTO annotations (annotation_id) VALUES ('old-comment')")
+        )
+
+    ensure_project_collaboration_columns(engine)
+    ensure_project_collaboration_columns(engine)
+
+    with engine.connect() as connection:
+        role = connection.scalar(
+            text("SELECT role FROM project_invitations WHERE invitation_id = 'old-invite'")
+        )
+        author = connection.scalar(
+            text("SELECT created_by FROM annotations WHERE annotation_id = 'old-comment'")
+        )
+    assert role == "edit"
+    assert author is None
     engine.dispose()
 
 

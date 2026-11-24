@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import (
     ensure_document_chunk_page_column,
     ensure_notification_details_column,
+    ensure_project_collaboration_columns,
     ensure_project_paper_screening_columns,
     ensure_project_team_workspace_column,
     ensure_user_profile_picture_column,
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
     ensure_notification_details_column(research_engine)
     ensure_document_chunk_page_column(research_engine)
     ensure_project_team_workspace_column(research_engine)
+    ensure_project_collaboration_columns(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield
     research_engine.dispose()

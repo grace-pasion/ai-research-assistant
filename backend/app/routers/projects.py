@@ -19,12 +19,35 @@ from app.services.audit import record_activity
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
+def _project_response(db: Session, project: ResearchProject, user: User) -> ProjectResponse:
+    if project.user_id == user.user_id:
+        access_role = "owner"
+    elif project.team_workspace_id is not None and db.scalar(
+        select(TeamWorkspaceMembership.membership_id).where(
+            TeamWorkspaceMembership.team_workspace_id == project.team_workspace_id,
+            TeamWorkspaceMembership.user_id == user.user_id,
+        )
+    ):
+        access_role = "edit"
+    else:
+        access_role = db.scalar(
+            select(ProjectInvitation.role).where(
+                ProjectInvitation.project_id == project.project_id,
+                ProjectInvitation.invitee_id == user.user_id,
+                ProjectInvitation.status == "accepted",
+            )
+        ) or "read"
+    return ProjectResponse.model_validate(project).model_copy(
+        update={"access_role": access_role}
+    )
+
+
 @router.get("", response_model=list[ProjectResponse])
 def list_projects(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return list(
+    projects = list(
         db.scalars(
             select(ResearchProject)
             .where(
@@ -46,6 +69,7 @@ def list_projects(
             .order_by(ResearchProject.updated_at.desc())
         ).all()
     )
+    return [_project_response(db, project, user) for project in projects]
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)

@@ -13,6 +13,8 @@ function annotation(
     paper_id: `paper-${id}`,
     quote: null,
     note: `Note ${id}`,
+    author_id: null,
+    author_name: null,
     start_offset: null,
     end_offset: null,
     created_at: `2025-01-0${id}:00:00Z`,

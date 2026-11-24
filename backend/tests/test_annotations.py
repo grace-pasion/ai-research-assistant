@@ -204,6 +204,88 @@ def test_project_annotations_require_project_access(annotation_databases):
     assert error.value.status_code == 404
 
 
+def test_comment_access_is_role_limited_and_authors_can_only_edit_their_own(annotation_databases):
+    db, _, owner, project, document, _ = annotation_databases
+    commenter = User(
+        email="commenter@example.com",
+        name="Commenter",
+        password_hash="hashed",
+    )
+    reader = User(
+        email="view-only@example.com",
+        name="Reader",
+        password_hash="hashed",
+    )
+    db.add_all((commenter, reader))
+    db.flush()
+    db.add_all(
+        (
+            ProjectInvitation(
+                project_id=project.project_id,
+                inviter_id=owner.user_id,
+                invitee_id=commenter.user_id,
+                status="accepted",
+                role="comment",
+            ),
+            ProjectInvitation(
+                project_id=project.project_id,
+                inviter_id=owner.user_id,
+                invitee_id=reader.user_id,
+                status="accepted",
+                role="read",
+            ),
+        )
+    )
+    db.commit()
+    owner_note = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="Owner's source note"),
+        db,
+        owner,
+    )
+
+    with pytest.raises(HTTPException) as reader_cannot_comment:
+        annotations.create_document_annotation(
+            project.project_id,
+            document.document_id,
+            AnnotationCreate(note="Not allowed"),
+            db,
+            reader,
+        )
+    assert reader_cannot_comment.value.status_code == 403
+
+    with pytest.raises(HTTPException) as cannot_edit_another_author:
+        annotations.update_document_annotation(
+            project.project_id,
+            document.document_id,
+            owner_note.annotation_id,
+            AnnotationUpdate(note="Changed someone else's note"),
+            db,
+            commenter,
+        )
+    assert cannot_edit_another_author.value.status_code == 403
+
+    own_note = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="My comment"),
+        db,
+        commenter,
+    )
+    assert own_note.created_by == commenter.user_id
+    assert own_note.author_name == "Commenter"
+    updated = annotations.update_document_annotation(
+        project.project_id,
+        document.document_id,
+        own_note.annotation_id,
+        AnnotationUpdate(note="Edited my comment"),
+        db,
+        commenter,
+    )
+    assert updated.note == "Edited my comment"
+
+
 def test_document_reader_returns_extracted_text_only_to_the_owner(annotation_databases):
     db, _, user, _, document, _ = annotation_databases
     result = documents.read_document_text(document.document_id, db, user)

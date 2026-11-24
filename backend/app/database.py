@@ -109,3 +109,34 @@ def ensure_project_team_workspace_column(engine) -> None:
                     "ON research_projects (team_workspace_id)"
                 )
             )
+
+
+def ensure_project_collaboration_columns(engine) -> None:
+    invitation_columns = {
+        column["name"] for column in inspect(engine).get_columns("project_invitations")
+    }
+    annotation_columns = {
+        column["name"] for column in inspect(engine).get_columns("annotations")
+    }
+    uuid_type = "CHAR(32)" if engine.dialect.name == "sqlite" else "UUID"
+    with engine.begin() as connection:
+        if "role" not in invitation_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE project_invitations ADD COLUMN role "
+                    "VARCHAR(16) NOT NULL DEFAULT 'edit'"
+                )
+            )
+        if "created_by" not in annotation_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE annotations ADD COLUMN created_by "
+                    f"{uuid_type} REFERENCES users(user_id) ON DELETE SET NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_annotations_created_by "
+                    "ON annotations (created_by)"
+                )
+            )

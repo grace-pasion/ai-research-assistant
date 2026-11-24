@@ -1,0 +1,212 @@
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+from collections import Counter
+from pathlib import Path
+
+MAX_PDF_BYTES = 25 * 1024 * 1024
+MAX_COMPILE_FILE_BYTES = 30 * 1024 * 1024
+COMPILE_TIMEOUT_SECONDS = 20
+LATEX_COMMANDS = ("pdflatex", "bibtex")
+CITATION_COMMANDS = {
+    "cite",
+    "citep",
+    "citet",
+    "citealp",
+    "citealt",
+    "citeauthor",
+    "citeyear",
+    "citeyearpar",
+    "nocite",
+}
+
+
+class LatexCompilerUnavailable(RuntimeError):
+    pass
+
+
+class LatexCompilationError(ValueError):
+    pass
+
+
+def _without_comments(source: str) -> str:
+    lines = []
+    for line in source.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        ending = line[len(body):]
+        backslashes = 0
+        for index, character in enumerate(body):
+            if character == "%" and backslashes % 2 == 0:
+                body = body[:index]
+                break
+            backslashes = backslashes + 1 if character == "\\" else 0
+        lines.append(body + ending)
+    return "".join(lines)
+
+
+def citation_key_issues(main_tex: str, references_bib: str) -> dict[str, list[str]]:
+    source = _without_comments(main_tex)
+    citations: set[str] = set()
+    for match in re.finditer(
+        r"\\(" + "|".join(sorted(CITATION_COMMANDS, key=len, reverse=True))
+        + r")\*?(?:\s*\[[^\]]*\]){0,2}\s*\{([^{}]*)\}",
+        source,
+    ):
+        citations.update(
+            key.strip()
+            for key in match.group(2).split(",")
+            if key.strip() and key.strip() != "*"
+        )
+
+    bibliography: list[str] = []
+    for match in re.finditer(
+        r"(?im)^\s*@([a-z]+)\s*\{\s*([^,\s]+)\s*,",
+        _without_comments(references_bib),
+    ):
+        if match.group(1).casefold() not in {"comment", "preamble", "string"}:
+            bibliography.append(match.group(2).strip())
+    key_counts = Counter(bibliography)
+    keys = set(key_counts)
+    return {
+        "missing_keys": sorted(citations - keys),
+        "duplicate_keys": sorted(key for key, count in key_counts.items() if count > 1),
+    }
+
+
+def _command(binary: str, args: list[str]) -> list[str]:
+    runuser = shutil.which("runuser")
+    prlimit = shutil.which("prlimit")
+    if runuser is None or prlimit is None:
+        raise LatexCompilerUnavailable(
+            "The isolated PDF compiler is unavailable on this server. Use the Docker API deployment."
+        )
+    return [
+        prlimit,
+        f"--fsize={MAX_COMPILE_FILE_BYTES}:{MAX_COMPILE_FILE_BYTES}",
+        "--",
+        runuser,
+        "--preserve-environment",
+        "--user",
+        "latex",
+        "--",
+        binary,
+        *args,
+    ]
+
+
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    deadline: float,
+) -> subprocess.CompletedProcess[str]:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LatexCompilationError(
+            "PDF compilation exceeded the 20-second limit. Check for expensive macros or loops."
+        )
+    with tempfile.TemporaryFile() as log:
+        try:
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=remaining,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LatexCompilationError(
+                "PDF compilation exceeded the 20-second limit. Check for expensive macros or loops."
+            ) from exc
+        if result.returncode:
+            log.seek(max(0, log.tell() - 4000))
+            details = log.read().decode("utf-8", errors="replace").strip()
+            details = details or "The TeX compiler did not provide an error message."
+            raise LatexCompilationError(f"PDF compilation failed:\n{details}")
+    return result
+
+
+def compile_latex(main_tex: str, references_bib: str) -> bytes:
+    issues = citation_key_issues(main_tex, references_bib)
+    if issues["missing_keys"]:
+        keys = ", ".join(issues["missing_keys"])
+        raise LatexCompilationError(f"Missing BibTeX entries for citation keys: {keys}")
+    if issues["duplicate_keys"]:
+        keys = ", ".join(issues["duplicate_keys"])
+        raise LatexCompilationError(f"Duplicate BibTeX citation keys: {keys}")
+
+    binaries = {name: shutil.which(name) for name in LATEX_COMMANDS}
+    if binaries["pdflatex"] is None:
+        raise LatexCompilerUnavailable("PDF compilation is unavailable: pdflatex is not installed.")
+    if shutil.which("runuser") is None or shutil.which("prlimit") is None:
+        raise LatexCompilerUnavailable(
+            "The isolated PDF compiler is unavailable on this server. Use the Docker API deployment."
+        )
+    if "\\bibliography" in _without_comments(main_tex) and references_bib.strip():
+        if binaries["bibtex"] is None:
+            raise LatexCompilerUnavailable("PDF compilation is unavailable: bibtex is not installed.")
+    try:
+        import pwd
+    except ImportError as exc:
+        raise LatexCompilerUnavailable(
+            "The isolated PDF compiler is available only in the Docker API deployment."
+        ) from exc
+
+    with tempfile.TemporaryDirectory(prefix="fieldnotes-latex-") as directory:
+        root = Path(directory)
+        source_dir = root / "source"
+        build_dir = root / "build"
+        source_dir.mkdir(mode=0o755)
+        build_dir.mkdir(mode=0o700)
+        source_file = source_dir / "main.tex"
+        source_file.write_text(main_tex, encoding="utf-8")
+        (source_dir / "references.bib").write_text(references_bib, encoding="utf-8")
+        source_file.chmod(0o644)
+        (source_dir / "references.bib").chmod(0o644)
+        root.chmod(0o755)
+
+        latex_user = pwd.getpwnam("latex")
+        os.chown(build_dir, latex_user.pw_uid, latex_user.pw_gid)
+        env = {
+            "PATH": os.pathsep.join(
+                {
+                    str(Path(binary).parent)
+                    for binary in binaries.values()
+                    if binary is not None
+                }
+                | {"/usr/bin", "/bin"}
+            ),
+            "HOME": str(build_dir),
+            "TMPDIR": str(build_dir),
+            "TEXMFVAR": str(build_dir / "texmf-var"),
+            "TEXMFCONFIG": str(build_dir / "texmf-config"),
+            "BIBINPUTS": f"{source_dir}{os.pathsep}",
+        }
+        deadline = time.monotonic() + COMPILE_TIMEOUT_SECONDS
+        latex_args = [
+            "-no-shell-escape",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
+            "-synctex=0",
+            f"-output-directory={build_dir}",
+            str(source_file),
+        ]
+        _run(_command(binaries["pdflatex"], latex_args), cwd=source_dir, env=env, deadline=deadline)
+        if "\\bibliography" in _without_comments(main_tex) and references_bib.strip():
+            _run(_command(binaries["bibtex"], ["main"]), cwd=build_dir, env=env, deadline=deadline)
+            _run(_command(binaries["pdflatex"], latex_args), cwd=source_dir, env=env, deadline=deadline)
+        _run(_command(binaries["pdflatex"], latex_args), cwd=source_dir, env=env, deadline=deadline)
+
+        pdf_path = build_dir / "main.pdf"
+        if not pdf_path.is_file():
+            raise LatexCompilationError("The TeX compiler completed without producing a PDF.")
+        if pdf_path.stat().st_size > MAX_PDF_BYTES:
+            raise LatexCompilationError("The generated PDF exceeds the 25 MB download limit.")
+        return pdf_path.read_bytes()

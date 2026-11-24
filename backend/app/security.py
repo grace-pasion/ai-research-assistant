@@ -90,7 +90,12 @@ def require_project_owner(db: Session, project_id: UUID, user_id: UUID):
     return project
 
 
-def require_project_access(db: Session, project_id: UUID, user_id: UUID):
+def require_project_access(
+    db: Session,
+    project_id: UUID,
+    user_id: UUID,
+    minimum_role: str = "read",
+):
     from app.models import ProjectInvitation, ResearchProject
 
     project = db.get(ResearchProject, project_id)
@@ -107,7 +112,7 @@ def require_project_access(db: Session, project_id: UUID, user_id: UUID):
     if workspace_membership is not None:
         return project
     invitation = db.scalar(
-        select(ProjectInvitation.invitation_id).where(
+        select(ProjectInvitation).where(
             ProjectInvitation.project_id == project_id,
             ProjectInvitation.invitee_id == user_id,
             ProjectInvitation.status == "accepted",
@@ -115,4 +120,12 @@ def require_project_access(db: Session, project_id: UUID, user_id: UUID):
     )
     if invitation is None:
         raise HTTPException(status_code=404, detail="Research project not found")
+    role_order = {"read": 1, "comment": 2, "edit": 3}
+    if minimum_role not in role_order:
+        raise ValueError(f"Unknown project role: {minimum_role}")
+    if role_order.get(invitation.role, 0) < role_order[minimum_role]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"This project requires {minimum_role} access for this action.",
+        )
     return project

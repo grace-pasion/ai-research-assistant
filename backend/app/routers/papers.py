@@ -141,7 +141,7 @@ async def import_reference_file(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     extension = Path((file.filename or "").replace("\\", "/")).suffix.casefold()
     if extension not in {".ris", ".bib", ".bibtex"}:
         raise HTTPException(status_code=415, detail="Choose a RIS or BibTeX (.bib/.bibtex) file.")
@@ -558,7 +558,7 @@ def save_paper(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     if literature_db.get(Paper, paper_id) is None:
         raise HTTPException(status_code=404, detail="Academic paper not found.")
     if db.get(ProjectPaper, (project_id, paper_id)) is None:
@@ -585,7 +585,7 @@ def unsave_paper(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is not None:
         db.delete(relation)
@@ -606,7 +606,7 @@ def import_open_access_full_text(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     if db.get(ProjectPaper, (project_id, paper_id)) is None:
         raise HTTPException(status_code=404, detail="Saved paper not found.")
     paper = literature_db.get(Paper, paper_id)
@@ -726,7 +726,7 @@ def update_paper_screening(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is None:
         raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
@@ -752,7 +752,7 @@ def bulk_update_paper_screening(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     paper_ids = set(payload.paper_ids)
     relations = db.scalars(
         select(ProjectPaper).where(

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -11,6 +12,11 @@ from app.models import LatexWorkspace, User
 from app.schemas import LatexWorkspaceResponse, LatexWorkspaceUpdate
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
+from app.services.latex_compiler import (
+    LatexCompilationError,
+    LatexCompilerUnavailable,
+    compile_latex,
+)
 
 router = APIRouter(prefix="/api/projects/{project_id}/latex", tags=["LaTeX workspace"])
 
@@ -61,6 +67,32 @@ def get_latex_workspace(
     )
 
 
+@router.post("/compile")
+def compile_latex_workspace(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    workspace = _get_workspace(db, project_id)
+    main_tex = workspace.main_tex if workspace else DEFAULT_MAIN_TEX
+    references_bib = workspace.references_bib if workspace else ""
+    try:
+        pdf = compile_latex(main_tex, references_bib)
+    except LatexCompilerUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LatexCompilationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="research-draft.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.put("", response_model=LatexWorkspaceResponse)
 def save_latex_workspace(
     project_id: uuid.UUID,
@@ -68,7 +100,7 @@ def save_latex_workspace(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     workspace = _get_workspace(db, project_id)
     if "expected_updated_at" in payload.model_fields_set:
         expected = payload.expected_updated_at

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { api, fetchPdfObjectUrl } from "./api";
 
 describe("API client", () => {
   afterEach(() => {
@@ -43,5 +43,29 @@ describe("API client", () => {
     await expect(api("/api/projects/missing", {}, "smoke-test-token")).rejects.toThrow(
       "Research project not found",
     );
+  });
+
+  it("supports authenticated PDF compilation requests with a JSON body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("%PDF-test", {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+    const objectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:compiled-pdf");
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchPdfObjectUrl(
+      "/api/projects/project-1/latex/compile",
+      { method: "POST", body: JSON.stringify({}) },
+      "smoke-test-token",
+    )).resolves.toBe("blob:compiled-pdf");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:8000/api/projects/project-1/latex/compile");
+    expect(options.method).toBe("POST");
+    expect(new Headers(options.headers).get("Content-Type")).toBe("application/json");
+    expect(new Headers(options.headers).get("Authorization")).toBe("Bearer smoke-test-token");
+    objectUrl.mockRestore();
   });
 });

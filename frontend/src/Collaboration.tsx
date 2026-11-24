@@ -27,6 +27,7 @@ export function ShareDialog({
 }) {
   const [invitations, setInvitations] = useState<ProjectInvitation[]>([]);
   const [identifier, setIdentifier] = useState("");
+  const [role, setRole] = useState<ProjectInvitation["role"]>("edit");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -49,12 +50,30 @@ export function ShareDialog({
     try {
       await request<ProjectInvitation>(`/api/projects/${project.project_id}/invitations`, {
         method: "POST",
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ identifier, role }),
       });
       setIdentifier("");
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not send the invitation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeRole(invitation: ProjectInvitation, nextRole: ProjectInvitation["role"]) {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await request<ProjectInvitation>(
+        `/api/projects/${project.project_id}/invitations/${invitation.invitation_id}`,
+        { method: "PATCH", body: JSON.stringify({ role: nextRole }) },
+      );
+      setInvitations((current) => current.map((item) =>
+        item.invitation_id === updated.invitation_id ? updated : item,
+      ));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update project access.");
     } finally {
       setBusy(false);
     }
@@ -88,7 +107,10 @@ export function ShareDialog({
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
-        <p className="collaboration-help">Invite a registered colleague by username or email. They can accept or decline in their inbox.</p>
+        <p className="collaboration-help">
+          Readers can view project content. Commenters can also add notes to sources and findings.
+          Editors can change shared project content. Assistant conversations stay private to each author.
+        </p>
         <form className="collaboration-invite-form" onSubmit={(event) => void invite(event)}>
           <input
             aria-label="Username or email address"
@@ -99,6 +121,11 @@ export function ShareDialog({
             required
             value={identifier}
           />
+          <select aria-label="Collaborator role" onChange={(event) => setRole(event.target.value as ProjectInvitation["role"])} value={role}>
+            <option value="read">Reader</option>
+            <option value="comment">Commenter</option>
+            <option value="edit">Editor</option>
+          </select>
           <button className="button primary" disabled={busy || !identifier.trim()}><UserPlus size={15} /> Invite</button>
         </form>
         {error && <p className="inline-error" role="alert">{error}</p>}
@@ -113,6 +140,16 @@ export function ShareDialog({
                 <span>{invitation.invitee_email}</span>
               </span>
               <span className={`collaboration-status status-${invitation.status}`}>{invitation.status}</span>
+              <select
+                aria-label={`Role for ${invitation.invitee_name}`}
+                disabled={busy}
+                onChange={(event) => void changeRole(invitation, event.target.value as ProjectInvitation["role"])}
+                value={invitation.role}
+              >
+                <option value="read">Reader</option>
+                <option value="comment">Commenter</option>
+                <option value="edit">Editor</option>
+              </select>
               <button
                 className="text-button danger-text"
                 disabled={busy}
@@ -311,7 +348,9 @@ export function InboxDialog({
                 <div className="notification-copy">
                   {notification.kind === "project_invitation" ? (
                     <>
-                      <strong>{notification.actor_name}</strong> invited you to collaborate on <strong>{notification.project_name}</strong>.
+                      <strong>{notification.actor_name}</strong> invited you to collaborate on{" "}
+                      <strong>{notification.project_name}</strong> as a{" "}
+                      <strong>{({ read: "Reader", comment: "Commenter", edit: "Editor" })[notification.invitation_role ?? "edit"]}</strong>.
                       <div className="notification-actions">
                         {notification.invitation_status === "pending" ? (
                           <>

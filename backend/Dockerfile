@@ -5,7 +5,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    texlive-bibtex-extra \
+    texlive-latex-base \
+    texlive-latex-recommended \
+    util-linux \
+    && useradd --system --no-create-home --home-dir /nonexistent latex \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 COPY app ./app

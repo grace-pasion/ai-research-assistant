@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 from pydantic import field_validator
 
 BLOCKED_PASSWORDS = {
@@ -194,6 +194,7 @@ class ProjectResponse(APIModel):
     description: str
     created_at: datetime
     updated_at: datetime
+    access_role: Literal["owner", "read", "comment", "edit"] = "owner"
 
 
 class TeamWorkspaceCreate(BaseModel):
@@ -295,6 +296,11 @@ class TeamChannelMessageResponse(BaseModel):
 
 class ProjectInvitationCreate(BaseModel):
     identifier: str = Field(min_length=1, max_length=320)
+    role: Literal["read", "comment", "edit"] = "edit"
+
+
+class ProjectInvitationRoleUpdate(BaseModel):
+    role: Literal["read", "comment", "edit"]
 
 
 class ProjectInvitationResponse(APIModel):
@@ -303,6 +309,7 @@ class ProjectInvitationResponse(APIModel):
     inviter_id: uuid.UUID
     invitee_id: uuid.UUID
     status: Literal["pending", "accepted", "declined"]
+    role: Literal["read", "comment", "edit"]
     created_at: datetime
     updated_at: datetime
     invitee_name: str
@@ -360,6 +367,7 @@ class NotificationResponse(BaseModel):
     project_name: str | None
     invitation_id: uuid.UUID | None
     invitation_status: Literal["pending", "accepted", "declined"] | None
+    invitation_role: Literal["read", "comment", "edit"] | None
     message_id: uuid.UUID | None
     details: dict[str, str | int] = Field(default_factory=dict)
     created_at: datetime
@@ -459,6 +467,10 @@ class AnnotationResponse(APIModel):
     paper_id: uuid.UUID | None
     quote: str | None
     note: str
+    author_id: uuid.UUID | None = Field(
+        validation_alias=AliasChoices("author_id", "created_by")
+    )
+    author_name: str | None
     start_offset: int | None
     end_offset: int | None
     created_at: datetime

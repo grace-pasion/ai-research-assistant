@@ -153,7 +153,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     document = await _prepare_document_upload(project_id, file, db, user)
     storage_path = document.storage_path
     try:
@@ -243,7 +243,7 @@ async def upload_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id)
+    require_project_access(db, project_id, user.user_id, "edit")
     if not files:
         raise HTTPException(status_code=422, detail="Choose at least one document to upload.")
     if len(files) > MAX_BULK_UPLOAD_COUNT:
@@ -308,7 +308,7 @@ def reprocess(
     project = db.get(ResearchProject, document.project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    require_project_access(db, project.project_id, user.user_id)
+    require_project_access(db, project.project_id, user.user_id, "edit")
     claimed = db.execute(
         update(Document)
         .where(
@@ -342,7 +342,7 @@ def delete_document(
     project = db.get(ResearchProject, document.project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    require_project_access(db, project.project_id, user.user_id)
+    require_project_access(db, project.project_id, user.user_id, "edit")
     record_activity(db, user.user_id, "document.deleted", {"file_type": document.file_type})
     db.delete(document)
     db.commit()

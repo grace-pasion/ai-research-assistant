@@ -18,7 +18,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class ResearchBase(DeclarativeBase):
@@ -200,6 +200,7 @@ class ProjectInvitation(ResearchBase):
         ForeignKey("users.user_id", ondelete="CASCADE"), index=True
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="edit")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -298,6 +299,9 @@ class Annotation(ResearchBase):
         ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=True, index=True
     )
     paper_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True
+    )
     quote: Mapped[str | None] = mapped_column(Text)
     note: Mapped[str] = mapped_column(Text, default="")
     start_offset: Mapped[int | None] = mapped_column(Integer)
@@ -306,6 +310,11 @@ class Annotation(ResearchBase):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    author: Mapped[User | None] = relationship(foreign_keys=[created_by])
+
+    @property
+    def author_name(self) -> str | None:
+        return self.author.name if self.author is not None else None
 
 
 class DocumentChunk(ResearchBase):

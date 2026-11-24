@@ -164,6 +164,8 @@ function App() {
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
   const selectedProjectIdRef = useRef<string | null>(null);
+  const canEditProject = project?.access_role === "owner" || project?.access_role === "edit";
+  const canCommentOnProject = canEditProject || project?.access_role === "comment";
 
   useEffect(() => {
     setSelectedPaperIds(new Set());
@@ -1548,6 +1550,9 @@ function App() {
                   <p className="eyebrow">RESEARCH PROJECT</p>
                   <h1>{project.project_name}</h1>
                   <p className="project-description">{project.description || "A focused space for your research."}</p>
+                  <span className="project-access-role">
+                    {{ owner: "Owner", read: "Reader", comment: "Commenter", edit: "Editor" }[project.access_role]} access
+                  </span>
                 </div>
                 <div className="project-stat">
                   <span>{documents.length}</span><small>documents</small>
@@ -1614,13 +1619,16 @@ function App() {
                         annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
                         sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
                         sourceStatus={openedDocument.processing_status}
+                        canComment={project.access_role !== "read"}
+                        currentUserId={user?.user_id ?? null}
+                        isProjectOwner={project.access_role === "owner"}
                       />
                     </div>
                   ) : (
                     <>
                       <div className="section-heading">
                         <div><h2>Research documents</h2><p>Upload up to 20 files at once. Keep this window open until they are accepted; processing can then continue after you close it.</p></div>
-                        <div className="upload-control">
+                        {canEditProject && <div className="upload-control">
                           <label className="button primary upload-button">
                             <Upload size={16} /> {uploadingFiles ? "Uploading…" : "Add documents"}
                             <input name="files" type="file" accept=".pdf,.docx,.txt,.md" multiple disabled={uploadingFiles} onChange={(event) => {
@@ -1629,7 +1637,7 @@ function App() {
                               event.currentTarget.value = "";
                             }} />
                           </label>
-                        </div>
+                        </div>}
                       </div>
                       {bulkUploads.some((item) => item.projectId === project.project_id) && (
                         <section className="bulk-upload-status" aria-live="polite">
@@ -1644,7 +1652,7 @@ function App() {
                                 {item.error && <small>{item.error}</small>}
                               </div>
                               <StatusPill status={item.status} />
-                              {item.status === "failed" && (
+                              {canEditProject && item.status === "failed" && (
                                 <button
                                   className="button secondary small-button"
                                   disabled={uploadingFiles}
@@ -1703,14 +1711,16 @@ function App() {
                               <button className="icon-button" title="Download original" onClick={() => void downloadDocument(document)}>
                                 <Download size={16} />
                               </button>
-                              {document.processing_status !== "processing" && document.processing_status !== "ready" && (
+                              {canEditProject && document.processing_status !== "processing" && document.processing_status !== "ready" && (
                                 <button className="button secondary small-button" onClick={() => void reprocess(document.document_id)}>
                                   {document.processing_status === "failed" ? "Retry" : "Reprocess"}
                                 </button>
                               )}
-                              <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
-                                <Trash2 size={16} />
-                              </button>
+                              {canEditProject && (
+                                <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
                             </article>
                           ))}
                         </div>
@@ -1824,7 +1834,7 @@ function App() {
                       <span>Import RIS or BibTeX; duplicates with matching DOIs are skipped.</span>
                     </div>
                     <div className="reference-actions">
-                      <label className="button secondary small-button reference-import-button">
+                      {canEditProject && <label className="button secondary small-button reference-import-button">
                         {referenceBusy ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
                         Import file
                         <input
@@ -1838,7 +1848,7 @@ function App() {
                             event.currentTarget.value = "";
                           }}
                         />
-                      </label>
+                      </label>}
                       <button
                         className="button secondary small-button"
                         disabled={referenceBusy || !papers.length}
@@ -1928,7 +1938,13 @@ function App() {
                         </button>
                       </div>
                       {searchResults.results.length ? searchResults.results.map((paper) => (
-                        <PaperCard key={paper.paper_id} paper={paper} onSave={() => void savePaper(paper)} />
+                        <PaperCard
+                          key={paper.paper_id}
+                          paper={paper}
+                          canEditProject={canEditProject}
+                          canCommentOnProject={canCommentOnProject}
+                          onSave={() => void savePaper(paper)}
+                        />
                       )) : <EmptyState icon={<Search size={21} />} title="No results found" text="Try a broader query or use the other search provider." />}
                     </div>
                   )}
@@ -1990,7 +2006,7 @@ function App() {
                           <button
                             className="button secondary small-button"
                             onClick={toggleVisiblePaperSelection}
-                            disabled={!visibleScreeningPapers.length}
+                            disabled={!canEditProject || !visibleScreeningPapers.length}
                           >
                             {allVisibleScreeningPapersSelected ? "Deselect visible" : "Select visible"}
                           </button>
@@ -2012,6 +2028,7 @@ function App() {
                                 onChange={(event) =>
                                   setBulkScreeningStatus(event.target.value as Paper["screening_status"])
                                 }
+                                disabled={!canEditProject}
                               >
                                 <option value="unread">Unread</option>
                                 <option value="undecided">Undecided</option>
@@ -2022,7 +2039,7 @@ function App() {
                             <button
                               className="button primary small-button"
                               onClick={() => void bulkUpdatePaperScreening()}
-                              disabled={screeningBusy}
+                              disabled={!canEditProject || screeningBusy}
                             >
                               {screeningBusy ? "Applying…" : "Apply to selected"}
                             </button>
@@ -2042,12 +2059,18 @@ function App() {
                         <PaperCard
                           paper={paper}
                           saved
+                          canEditProject={canEditProject}
+                          canCommentOnProject={canCommentOnProject}
                           selected={selectedPaperIds.has(paper.paper_id)}
-                          onSelectionChange={(selected) => togglePaperSelection(paper.paper_id, selected)}
-                          onScreeningChange={(status, note) => void updatePaperScreening(paper, status, note)}
-                          onRemove={() => void unsavePaper(paper)}
+                          onSelectionChange={canEditProject
+                            ? (selected) => togglePaperSelection(paper.paper_id, selected)
+                            : undefined}
+                          onScreeningChange={canEditProject
+                            ? (status, note) => void updatePaperScreening(paper, status, note)
+                            : undefined}
+                          onRemove={canEditProject ? () => void unsavePaper(paper) : undefined}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
-                          onImportFullText={() => void importPaperFullText(paper)}
+                          onImportFullText={canEditProject ? () => void importPaperFullText(paper) : undefined}
                           importingFullText={busy}
                         />
                         {annotationPaperId === paper.paper_id && (
@@ -2055,6 +2078,9 @@ function App() {
                             key={`annotations-${paper.paper_id}`}
                             annotationsPath={`/api/projects/${project.project_id}/papers/${paper.paper_id}/annotations`}
                             sourceText={paper.abstract?.replace(/<[^>]*>/g, "") ?? ""}
+                            canComment={project.access_role !== "read"}
+                            currentUserId={user?.user_id ?? null}
+                            isProjectOwner={project.access_role === "owner"}
                           />
                         )}
                       </Fragment>
@@ -2767,6 +2793,8 @@ function StatusPill({ status }: { status: string }) {
 function PaperCard({
   paper,
   saved = false,
+  canEditProject,
+  canCommentOnProject,
   onSave,
   onRemove,
   onAnnotate,
@@ -2778,6 +2806,8 @@ function PaperCard({
 }: {
   paper: Paper;
   saved?: boolean;
+  canEditProject: boolean;
+  canCommentOnProject: boolean;
   onSave?: () => void;
   onRemove?: () => void;
   onAnnotate?: () => void;
@@ -2823,6 +2853,7 @@ function PaperCard({
                 value={screeningStatus}
                 onChange={(event) => setScreeningStatus(event.target.value as Paper["screening_status"])}
                 aria-label={`Screening decision for ${paper.title}`}
+                disabled={!canEditProject}
               >
                 <option value="unread">Unread</option>
                 <option value="undecided">Undecided</option>
@@ -2838,12 +2869,13 @@ function PaperCard({
                 maxLength={500}
                 placeholder="Add a short reason (optional)"
                 aria-label={`Screening note for ${paper.title}`}
+                disabled={!canEditProject}
               />
             </label>
             <button
               className="button secondary small-button"
               onClick={() => onScreeningChange?.(screeningStatus, screeningNote)}
-              disabled={
+              disabled={!onScreeningChange ||
                 screeningStatus === paper.screening_status &&
                 screeningNote === paper.screening_note
               }
@@ -2857,15 +2889,15 @@ function PaperCard({
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
         {saved ? (
           <>
-            <button className="button secondary small-button" onClick={onAnnotate}><Pencil size={13} /> Annotate</button>
-            <button className="button secondary small-button" onClick={onImportFullText} disabled={importingFullText}>
+            <button className="button secondary small-button" onClick={onAnnotate} disabled={!canCommentOnProject}><Pencil size={13} /> Comment</button>
+            <button className="button secondary small-button" onClick={onImportFullText} disabled={!canEditProject || importingFullText}>
               {importingFullText ? <LoaderCircle size={13} className="spin" /> : <FileText size={13} />}
               {importingFullText ? "Importing…" : "Extract full text"}
             </button>
-            <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>
+            {onRemove && <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>}
           </>
         ) : (
-          <button className="button secondary small-button" onClick={onSave}><Plus size={15} /> Save</button>
+          <button className="button secondary small-button" onClick={onSave} disabled={!canEditProject}><Plus size={15} /> Save</button>
         )}
       </div>
     </article>
@@ -2877,11 +2909,17 @@ function AnnotationEditor({
   sourcePath,
   sourceText,
   sourceStatus,
+  canComment,
+  currentUserId,
+  isProjectOwner,
 }: {
   annotationsPath: string;
   sourcePath?: string;
   sourceText?: string;
   sourceStatus?: string;
+  canComment: boolean;
+  currentUserId: string | null;
+  isProjectOwner: boolean;
 }) {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [text, setText] = useState(sourceText ?? "");
@@ -3038,7 +3076,7 @@ function AnnotationEditor({
   return (
     <section className="annotation-editor" aria-label="Source annotations">
       <div className="annotation-heading">
-        <div><h3>Read & annotate</h3><p>Select text to highlight it, or add a note on its own.</p></div>
+        <div><h3>Source comments</h3><p>Select text to highlight it, or add a comment on its own.</p></div>
         <span>{annotations.length} saved</span>
       </div>
       {error && <p className="inline-error" role="alert">{error}</p>}
@@ -3051,13 +3089,13 @@ function AnnotationEditor({
           ) : (
             <p className="muted compact">No extracted text or abstract is available. You can still add a note.</p>
           )}
-          {text && (
+          {canComment && text && (
             <div className="annotation-selection">
               <button className="button secondary small-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={captureSelection}>Highlight selection</button>
               {selection && <span>Selected: “{selection.quote.slice(0, 180)}{selection.quote.length > 180 ? "…" : ""}”</span>}
             </div>
           )}
-          <form className="annotation-form" onSubmit={(event) => void saveAnnotation(event)}>
+          {canComment && <form className="annotation-form" onSubmit={(event) => void saveAnnotation(event)}>
             <label htmlFor={`annotation-note-${annotationsPath}`}>Note</label>
             <textarea
               id={`annotation-note-${annotationsPath}`}
@@ -3068,14 +3106,15 @@ function AnnotationEditor({
               rows={3}
             />
             <button className="button primary small-button" disabled={busy || (!note.trim() && !selection)}>
-              {busy ? "Saving…" : "Save annotation"}
+              {busy ? "Saving…" : "Add comment"}
             </button>
-          </form>
+          </form>}
           {!!annotations.length && (
             <div className="annotation-list">
               {annotations.map((item) => (
                 <article className="annotation-item" key={item.annotation_id}>
                   {item.quote && <blockquote>{item.quote}</blockquote>}
+                  <small className="annotation-author">{item.author_name ?? "Original project note"}</small>
                   {editingId === item.annotation_id ? (
                     <div className="annotation-edit">
                       <textarea value={editNote} onChange={(event) => setEditNote(event.target.value)} maxLength={5000} rows={2} />
@@ -3085,10 +3124,12 @@ function AnnotationEditor({
                   ) : (
                     <>
                       {item.note && <p>{item.note}</p>}
-                      <div className="annotation-actions">
-                        <button className="text-button" type="button" onClick={() => { setEditingId(item.annotation_id); setEditNote(item.note); }}>Edit note</button>
-                        <button className="text-button danger-text" type="button" disabled={busy} onClick={() => void deleteAnnotation(item)}>Delete</button>
-                      </div>
+                      {(isProjectOwner || item.author_id === currentUserId) && (
+                        <div className="annotation-actions">
+                          <button className="text-button" type="button" onClick={() => { setEditingId(item.annotation_id); setEditNote(item.note); }}>Edit comment</button>
+                          <button className="text-button danger-text" type="button" disabled={busy} onClick={() => void deleteAnnotation(item)}>Delete</button>
+                        </div>
+                      )}
                     </>
                   )}
                 </article>

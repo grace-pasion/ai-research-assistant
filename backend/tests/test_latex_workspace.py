@@ -1,14 +1,23 @@
 import uuid
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.database import get_db
 from app.models import LatexWorkspace, ProjectInvitation, ResearchProject, TeamWorkspace, User, UserActivity
-from app.routers.latex import DEFAULT_MAIN_TEX, get_latex_workspace, save_latex_workspace
+from app.routers import latex
+from app.routers.latex import (
+    DEFAULT_MAIN_TEX,
+    compile_latex_workspace,
+    get_latex_workspace,
+    save_latex_workspace,
+)
 from app.schemas import LatexWorkspaceUpdate
+from app.security import get_current_user
 
 
 @pytest.fixture
@@ -119,3 +128,73 @@ def test_latex_workspace_rejects_oversized_source():
         LatexWorkspaceUpdate(main_tex="x" * 1_000_001, references_bib="")
     with pytest.raises(ValidationError):
         LatexWorkspaceUpdate(main_tex="", references_bib="x" * 500_001)
+
+
+def test_compile_returns_pdf_for_readers_and_checks_project_access(latex_database, monkeypatch):
+    db, owner, project = latex_database
+    reader = User(
+        email="reader@example.com",
+        name="Reader",
+        password_hash="hashed",
+    )
+    db.add(reader)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=reader.user_id,
+            status="accepted",
+            role="read",
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(latex, "compile_latex", lambda _main, _bib: b"%PDF-1.7 test")
+
+    response = compile_latex_workspace(project.project_id, db, reader)
+    assert response.media_type == "application/pdf"
+    assert response.body.startswith(b"%PDF-")
+
+    outsider = User(
+        user_id=uuid.uuid4(),
+        email="outsider@example.com",
+        name="Outsider",
+        password_hash="hashed",
+    )
+    with pytest.raises(HTTPException) as error:
+        compile_latex_workspace(project.project_id, db, outsider)
+    assert error.value.status_code == 404
+
+
+def test_compile_rejects_citation_keys_missing_from_bibliography(latex_database):
+    db, owner, project = latex_database
+    save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex=r"\begin{document}\cite{missing2024}\end{document}",
+            references_bib="",
+        ),
+        db,
+        owner,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        compile_latex_workspace(project.project_id, db, owner)
+    assert error.value.status_code == 422
+    assert "missing2024" in error.value.detail
+
+
+def test_compile_http_route_returns_pdf_bytes(latex_database, monkeypatch):
+    db, owner, project = latex_database
+    api = FastAPI()
+    api.include_router(latex.router)
+    api.dependency_overrides[get_db] = lambda: db
+    api.dependency_overrides[get_current_user] = lambda: owner
+    monkeypatch.setattr(latex, "compile_latex", lambda _main, _bib: b"%PDF-1.7 route test")
+
+    with TestClient(api) as client:
+        response = client.post(f"/api/projects/{project.project_id}/latex/compile")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF-")

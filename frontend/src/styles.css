@@ -83,6 +83,7 @@ a { color: inherit; }
 h1, h2, h3, p { margin-top: 0; }
 .project-heading h1, .empty-workspace h1, .auth-card h1 { color: #222b26; font: 700 31px/1.2 var(--serif); letter-spacing: -1.3px; margin: 0 0 8px; }
 .project-description { color: #87918a; font-size: 12px; margin: 0; }
+.project-access-role { background: #edf3ee; border-radius: 12px; color: #55725f; display: inline-block; font-size: 9px; margin-top: 8px; padding: 5px 9px; text-transform: capitalize; }
 .project-stat { align-items: baseline; color: #748078; display: flex; gap: 7px; padding: 0 2px 6px; }
 .project-stat span { color: #43594b; font: 700 16px var(--serif); }
 .project-stat small { font-size: 10px; margin-right: 9px; }
@@ -159,6 +160,7 @@ h1, h2, h3, p { margin-top: 0; }
 .annotation-item { border-bottom: 1px solid #f0f2f0; padding: 12px 0; }
 .annotation-item blockquote { border-left: 3px solid #e5c568; color: #68746b; font-size: 10px; line-height: 1.6; margin: 0 0 7px; padding-left: 9px; }
 .annotation-item p { color: #46534b; font-size: 11px; line-height: 1.5; margin: 0 0 6px; white-space: pre-wrap; }
+.annotation-author { color: #89938b; display: block; font-size: 9px; margin-bottom: 5px; }
 .annotation-actions, .annotation-edit { align-items: center; display: flex; gap: 10px; }
 .annotation-edit { align-items: flex-start; flex-direction: column; }
 .annotation-actions .text-button, .annotation-edit .text-button { color: #547462; font-size: 10px; margin: 0; padding: 0; }
@@ -275,9 +277,14 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-header p:not(.eyebrow) { color: #89938b; font-size: 10px; margin: 0; }
 .latex-header .eyebrow { margin-bottom: 5px; }
 .latex-header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.latex-access-role { color: #7d8981; font-size: 9px; text-transform: capitalize; }
 .latex-save-status { align-items: center; color: #63816b; display: inline-flex; font-size: 10px; gap: 5px; margin-right: 4px; white-space: nowrap; }
 .latex-save-status.unsaved, .latex-save-status.error { color: #a56d38; }
 .latex-error { margin: 10px 18px; }
+.latex-citation-tools { align-items: center; background: #fff; border-bottom: 1px solid #e9ede9; color: #758078; display: flex; flex-wrap: wrap; font-size: 9px; gap: 8px; padding: 8px 12px; }
+.latex-citation-tools select { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #526057; font: inherit; max-width: 240px; padding: 5px 7px; }
+.latex-citation-tools select:disabled { opacity: .7; }
+.latex-citation-warning { color: #9c633c; }
 .latex-loading { align-items: center; color: #77837a; display: flex; font-size: 11px; gap: 8px; min-height: 250px; justify-content: center; }
 .latex-layout { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 650px; }
 .latex-sources { background: #fbfcfa; border-right: 1px solid #e9ede9; max-height: 760px; overflow-y: auto; }
@@ -311,7 +318,7 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-view-toggle button { align-items: center; background: transparent; border: 0; border-radius: 4px; color: #7d8981; display: inline-flex; font-size: 9px; gap: 4px; padding: 5px 7px; }
 .latex-view-toggle button.active { background: #fff; box-shadow: 0 1px 3px #2533291c; color: #38644d; }
 .latex-panes { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 605px; }
-.latex-panes.mode-source, .latex-panes.mode-preview { grid-template-columns: minmax(0, 1fr); }
+.latex-panes.mode-source, .latex-panes.mode-preview, .latex-panes.mode-pdf { grid-template-columns: minmax(0, 1fr); }
 .latex-source-pane, .latex-preview-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .latex-source-pane { border-right: 1px solid #e9ede9; }
 .latex-editor-caption { align-items: center; background: #fbfcfa; border-bottom: 1px solid #eef1ee; color: #78847b; display: flex; font-size: 9px; gap: 6px; padding: 9px 12px; }
@@ -326,6 +333,7 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-paper-preview .latex-preview-author { color: #737e76; font-style: italic; text-align: center; }
 .latex-bib-preview { background: #fff; color: #566158; flex: 1; font: 10px/1.7 Consolas, "Courier New", monospace; margin: 17px; min-height: 510px; overflow: auto; padding: 20px; white-space: pre-wrap; }
 .latex-preview-note { color: #929b95; font-size: 8px; margin: 0 17px 12px; }
+.latex-pdf-frame { background: #fff; border: 0; flex: 1; min-height: 605px; width: 100%; }
 
 .assistant-layout { background: #fff; border: 1px solid #e7ebe7; border-radius: 9px; display: grid; grid-template-columns: 220px minmax(0, 1fr); margin-top: 23px; min-height: 600px; overflow: hidden; }
 .conversation-sidebar { background: #fbfcfa; border-right: 1px solid #edf0ed; padding: 17px 11px; }
@@ -447,8 +455,9 @@ h1, h2, h3, p { margin-top: 0; }
 .team-channel-message small { color: #929b95; display: block; font-size: 8px; text-align: right; }
 .collaboration-help { color: #7d8980; font-size: 11px; line-height: 1.6; margin: 13px 0; }
 .collaboration-invite-form { display: flex; gap: 8px; }
-.collaboration-invite-form input, .inbox-search input, .inbox-compose input { background: #fff; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 11px; min-width: 0; outline: 0; padding: 10px 11px; }
+.collaboration-invite-form input, .collaboration-invite-form select, .collaboration-person select, .inbox-search input, .inbox-compose input { background: #fff; border: 1px solid #e0e6e0; border-radius: 6px; color: #38443c; font-size: 10px; min-width: 0; outline: 0; padding: 9px 8px; }
 .collaboration-invite-form input { flex: 1; }
+.collaboration-invite-form select, .collaboration-person select { flex: 0 0 auto; }
 .collaboration-list { border-top: 1px solid #edf0ed; margin-top: 20px; padding-top: 13px; }
 .collaboration-list-heading { color: #667269; font-size: 10px; font-weight: 700; margin-bottom: 8px; }
 .collaboration-person { align-items: center; border-bottom: 1px solid #f0f2f0; display: flex; gap: 10px; min-height: 57px; padding: 7px 0; }
