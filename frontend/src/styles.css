@@ -366,7 +366,7 @@ h1, h2, h3, p { margin-top: 0; }
 .python-workspace { background: #fbfcfa; display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 16px; }
 .python-workspace-header { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
 .python-workspace-title { align-items: center; color: #718779; display: flex; gap: 6px; margin-bottom: 5px; }
-.python-workspace-title h3 { color: #89938b; font: 700 8px var(--sans); letter-spacing: 1.1px; margin: 0; text-transform: uppercase; }
+.python-workspace-title h3 { color: #89938b; font-family: inherit; font-size: 8px; font-weight: 700; letter-spacing: 1.1px; margin: 0; text-transform: uppercase; }
 .python-workspace-header p:not(.eyebrow) { color: #89938b; font-size: 10px; margin: 0; }
 .python-workspace-header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .python-save-status { color: #63816b; font-size: 9px; white-space: nowrap; }
