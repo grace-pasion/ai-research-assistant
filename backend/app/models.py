@@ -456,6 +456,22 @@ class ProjectPaper(ResearchBase):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SystematicReviewWorkspace(ResearchBase):
+    __tablename__ = "systematic_review_workspaces"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), primary_key=True
+    )
+    review_question: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    protocol: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DocumentPaper(ResearchBase):
     __tablename__ = "document_papers"
 

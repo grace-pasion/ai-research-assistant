@@ -142,6 +142,20 @@ export type Paper = {
   screening_note: string;
 };
 
+export type SystematicReview = {
+  review_question: string;
+  protocol: string;
+  updated_at: string | null;
+  screening_counts: {
+    total: number;
+    unread: number;
+    undecided: number;
+    include: number;
+    exclude: number;
+    reviewed: number;
+  };
+};
+
 export type PaperImportResponse = {
   added_count: number;
   duplicate_count: number;

@@ -246,6 +246,17 @@ h1, h2, h3, p { margin-top: 0; }
 .doi-line { color: #9aa39c; margin: 0; }
 .paper-actions { align-items: center; display: flex; gap: 3px; }
 .saved-group { border-top: 1px solid #e7ebe7; margin-top: 33px; padding-top: 23px; }
+.systematic-review-card { background: #fff; border: 1px solid #e3e9e4; border-radius: 10px; margin: 18px 0; padding: 16px; }
+.systematic-review-heading, .systematic-review-footer { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.systematic-review-heading { margin-bottom: 14px; }
+.systematic-review-heading h3 { color: #34443a; font-size: 13px; margin: 0 0 4px; }
+.systematic-review-heading p, .systematic-review-footer span { color: #77827a; font-size: 11px; margin: 0; }
+.systematic-review-form { display: grid; gap: 12px; }
+.systematic-review-form label { color: #536157; display: grid; font-size: 11px; gap: 6px; }
+.systematic-review-form input, .systematic-review-form textarea { background: #fbfcfb; border: 1px solid #dfe6e0; border-radius: 7px; color: #334139; font: inherit; font-size: 12px; padding: 9px 10px; resize: vertical; width: 100%; }
+.systematic-review-form input:read-only, .systematic-review-form textarea:read-only { background: #f5f7f5; color: #667168; }
+.systematic-review-footer { border-top: 1px solid #edf0ed; padding-top: 11px; }
+.systematic-review-error { align-items: center; color: #a53d34; display: flex; font-size: 11px; gap: 10px; justify-content: space-between; }
 .screening-progress { background: #f7f9f7; border: 1px solid #e8ede8; border-radius: 8px; margin-bottom: 14px; padding: 12px 14px; }
 .screening-progress-heading, .screening-counts { align-items: center; color: #647168; display: flex; font-size: 10px; justify-content: space-between; }
 .screening-progress-heading strong { color: #405347; font-size: 11px; }

@@ -10,7 +10,7 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from app.models import (
     SavedPaperSearch,
     SearchQuery,
     SearchQueryResult,
+    SystematicReviewWorkspace,
     Notification,
     User,
 )
@@ -37,7 +38,10 @@ from app.schemas import (
     PaperScreeningResponse,
     PaperScreeningBulkResponse,
     PaperScreeningBulkUpdate,
+    PaperScreeningCounts,
     PaperScreeningUpdate,
+    SystematicReviewResponse,
+    SystematicReviewUpdate,
     SavedPaperSearchAlertsCheckResponse,
     SavedPaperSearchCreate,
     SavedPaperSearchResponse,
@@ -207,12 +211,215 @@ def export_reference_file(
     )
 
 
+def _screening_counts(db: Session, project_id: uuid.UUID) -> PaperScreeningCounts:
+    grouped_counts = db.execute(
+        select(ProjectPaper.screening_status, func.count())
+        .where(ProjectPaper.project_id == project_id)
+        .group_by(ProjectPaper.screening_status)
+    ).all()
+    counts = {status: 0 for status in ("unread", "undecided", "include", "exclude")}
+    total = sum(count for _, count in grouped_counts)
+    for screening_status, count in grouped_counts:
+        if screening_status in counts:
+            counts[screening_status] = count
+    reviewed = counts["undecided"] + counts["include"] + counts["exclude"]
+    return PaperScreeningCounts(
+        total=total,
+        unread=counts["unread"],
+        undecided=counts["undecided"],
+        include=counts["include"],
+        exclude=counts["exclude"],
+        reviewed=reviewed,
+    )
+
+
+def _systematic_review_response(
+    db: Session,
+    project_id: uuid.UUID,
+    workspace: SystematicReviewWorkspace | None,
+) -> SystematicReviewResponse:
+    return SystematicReviewResponse(
+        review_question=workspace.review_question if workspace else "",
+        protocol=workspace.protocol if workspace else "",
+        updated_at=workspace.updated_at if workspace else None,
+        screening_counts=_screening_counts(db, project_id),
+    )
+
+
+@router.get("/review", response_model=SystematicReviewResponse)
+def get_systematic_review(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    workspace = db.get(SystematicReviewWorkspace, project_id)
+    return _systematic_review_response(db, project_id, workspace)
+
+
+@router.put("/review", response_model=SystematicReviewResponse)
+def save_systematic_review(
+    project_id: uuid.UUID,
+    payload: SystematicReviewUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    workspace = db.get(SystematicReviewWorkspace, project_id)
+    expected = payload.expected_updated_at
+    current = workspace.updated_at if workspace else None
+    if expected is not None and expected.tzinfo is None:
+        expected = expected.replace(tzinfo=timezone.utc)
+    if current is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if expected != current:
+        raise HTTPException(
+            status_code=409,
+            detail="This review protocol changed in another session. Reload the latest version before saving.",
+        )
+
+    if workspace is None:
+        workspace = SystematicReviewWorkspace(
+            project_id=project_id,
+            review_question=payload.review_question,
+            protocol=payload.protocol,
+            updated_by=user.user_id,
+        )
+        db.add(workspace)
+    else:
+        result = db.execute(
+            update(SystematicReviewWorkspace)
+            .where(
+                SystematicReviewWorkspace.project_id == project_id,
+                SystematicReviewWorkspace.updated_at == workspace.updated_at,
+            )
+            .values(
+                review_question=payload.review_question,
+                protocol=payload.protocol,
+                updated_by=user.user_id,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This review protocol changed in another session. Reload the latest version before saving.",
+            )
+
+    record_activity(db, user.user_id, "systematic_review.saved")
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This review protocol changed in another session. Reload the latest version before saving.",
+        ) from None
+    db.refresh(workspace)
+    return _systematic_review_response(db, project_id, workspace)
+
+
 def _safe_csv_cell(value: str | None) -> str:
     if value is None:
         return ""
     if value.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
         return f"'{value}"
     return value
+
+
+@router.get("/review/export")
+def export_systematic_review_csv(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    papers = list_saved_papers(project_id, db, literature_db, user)
+    workspace = db.get(SystematicReviewWorkspace, project_id)
+    counts = _screening_counts(db, project_id)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "record_type",
+            "review_question",
+            "protocol",
+            "total_papers",
+            "reviewed_papers",
+            "unread_count",
+            "undecided_count",
+            "included_count",
+            "excluded_count",
+            "paper_id",
+            "title",
+            "authors",
+            "publication_year",
+            "doi",
+            "url",
+            "venue",
+            "citation_count",
+            "screening_status",
+            "screening_note",
+            "abstract",
+        ]
+    )
+    writer.writerow(
+        [
+            "summary",
+            _safe_csv_cell(workspace.review_question if workspace else ""),
+            _safe_csv_cell(workspace.protocol if workspace else ""),
+            counts.total,
+            counts.reviewed,
+            counts.unread,
+            counts.undecided,
+            counts.include,
+            counts.exclude,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
+    )
+    for paper in papers:
+        writer.writerow(
+            [
+                "paper",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                paper.paper_id,
+                _safe_csv_cell(paper.title),
+                _safe_csv_cell(", ".join(author.author_name for author in paper.authors)),
+                paper.publication_year if paper.publication_year is not None else "",
+                _safe_csv_cell(paper.doi),
+                _safe_csv_cell(paper.paper_url),
+                _safe_csv_cell(paper.venue),
+                paper.citation_count if paper.citation_count is not None else "",
+                paper.screening_status,
+                _safe_csv_cell(paper.screening_note),
+                _safe_csv_cell(paper.abstract),
+            ]
+        )
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="systematic-review-report.csv"'
+        },
+    )
 
 
 @router.get("/screening/export")

@@ -3,12 +3,13 @@ import csv
 import io
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.database import ensure_project_paper_screening_columns
+from app.database import ensure_project_paper_screening_columns, get_db, get_literature_db
 from app.models import (
     Author,
     Paper,
@@ -16,6 +17,7 @@ from app.models import (
     ProjectInvitation,
     ProjectPaper,
     ResearchProject,
+    SystematicReviewWorkspace,
     TeamWorkspace,
     User,
     UserActivity,
@@ -24,19 +26,31 @@ from app.routers import papers as papers_router
 from app.routers.papers import (
     bulk_update_paper_screening,
     export_screening_csv,
+    export_systematic_review_csv,
+    get_systematic_review,
     list_saved_papers,
     save_paper,
+    save_systematic_review,
     update_paper_screening,
 )
-from app.schemas import PaperScreeningBulkUpdate, PaperScreeningUpdate
+from app.schemas import PaperScreeningBulkUpdate, PaperScreeningUpdate, SystematicReviewUpdate
 from sqlalchemy.exc import IntegrityError
+from app.security import get_current_user
 
 
 @pytest.fixture
 def screening_databases(tmp_path):
     research_engine = create_engine(f"sqlite:///{tmp_path / 'research.sqlite'}")
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
-    for model in (User, TeamWorkspace, ResearchProject, ProjectInvitation, ProjectPaper, UserActivity):
+    for model in (
+        User,
+        TeamWorkspace,
+        ResearchProject,
+        ProjectInvitation,
+        ProjectPaper,
+        SystematicReviewWorkspace,
+        UserActivity,
+    ):
         model.__table__.create(research_engine)
     for model in (Paper, Author, PaperAuthor):
         model.__table__.create(literature_engine)
@@ -264,6 +278,199 @@ def test_screening_csv_exports_decisions_and_neutralizes_spreadsheet_formulas(sc
     assert rows[0]["title"].startswith("'=")
     assert rows[0]["screening_status"] == "unread"
     assert rows[0]["screening_note"] == "'  - formula"
+
+
+def test_systematic_review_persists_protocol_and_reports_shared_screening_counts(screening_databases):
+    db, _literature_db, user, project, paper = screening_databases
+
+    initial = get_systematic_review(project.project_id, db, user)
+    assert initial.review_question == ""
+    assert initial.screening_counts.total == 1
+    assert initial.screening_counts.unread == 1
+    assert initial.screening_counts.reviewed == 0
+
+    saved = save_systematic_review(
+        project.project_id,
+        SystematicReviewUpdate(
+            review_question="  Does the intervention improve outcomes?  ",
+            protocol="  Include controlled studies.\nExclude editorials.  ",
+            expected_updated_at=initial.updated_at,
+        ),
+        db,
+        user,
+    )
+    assert saved.review_question == "Does the intervention improve outcomes?"
+    assert saved.protocol == "Include controlled studies.\nExclude editorials."
+    assert saved.updated_at is not None
+    assert saved.screening_counts.total == 1
+
+    update_paper_screening(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningUpdate(screening_status="include"),
+        db,
+        user,
+    )
+    refreshed = get_systematic_review(project.project_id, db, user)
+    assert refreshed.screening_counts.include == 1
+    assert refreshed.screening_counts.reviewed == 1
+
+    with pytest.raises(HTTPException) as stale:
+        save_systematic_review(
+            project.project_id,
+            SystematicReviewUpdate(
+                review_question="Stale question",
+                protocol="Stale protocol",
+                expected_updated_at=initial.updated_at,
+            ),
+            db,
+            user,
+        )
+    assert stale.value.status_code == 409
+    assert get_systematic_review(project.project_id, db, user).review_question == saved.review_question
+
+
+def test_systematic_review_is_shared_read_only_to_commenters(screening_databases):
+    db, _, owner, project, _paper = screening_databases
+    commenter = User(
+        email="commenter@example.com",
+        name="Commenter",
+        password_hash="hashed",
+    )
+    db.add(commenter)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=commenter.user_id,
+            status="accepted",
+            role="comment",
+        )
+    )
+    db.commit()
+
+    assert get_systematic_review(project.project_id, db, commenter).review_question == ""
+    with pytest.raises(HTTPException) as error:
+        save_systematic_review(
+            project.project_id,
+            SystematicReviewUpdate(
+                review_question="Question",
+                protocol="Protocol",
+                expected_updated_at=None,
+            ),
+            db,
+            commenter,
+        )
+    assert error.value.status_code == 403
+
+    editor = User(
+        email="editor@example.com",
+        name="Editor",
+        password_hash="hashed",
+    )
+    db.add(editor)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=editor.user_id,
+            status="accepted",
+            role="edit",
+        )
+    )
+    db.commit()
+    saved = save_systematic_review(
+        project.project_id,
+        SystematicReviewUpdate(
+            review_question="Editor question",
+            protocol="Editor protocol",
+            expected_updated_at=None,
+        ),
+        db,
+        editor,
+    )
+    assert saved.review_question == "Editor question"
+
+
+def test_review_report_exports_metadata_decisions_and_safe_counts(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    paper.title = '=HYPERLINK("https://example.test")'
+    db.get(ProjectPaper, (project.project_id, paper.paper_id)).screening_note = "  - formula"
+    db.add(
+        SystematicReviewWorkspace(
+            project_id=project.project_id,
+            review_question="=SUM(1,1)",
+            protocol="@include controlled studies",
+            updated_by=user.user_id,
+        )
+    )
+    literature_db.commit()
+    db.commit()
+
+    response = export_systematic_review_csv(project.project_id, db, literature_db, user)
+    rows = list(csv.DictReader(io.StringIO(response.body.decode("utf-8"))))
+    summary, paper_row = rows
+
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="systematic-review-report.csv"'
+    )
+    assert summary["record_type"] == "summary"
+    assert summary["review_question"] == "'=SUM(1,1)"
+    assert summary["protocol"] == "'@include controlled studies"
+    assert summary["total_papers"] == "1"
+    assert summary["unread_count"] == "1"
+    assert summary["reviewed_papers"] == "0"
+    assert paper_row["record_type"] == "paper"
+    assert paper_row["title"].startswith("'=")
+    assert paper_row["screening_status"] == "unread"
+    assert paper_row["screening_note"] == "'  - formula"
+
+
+def test_review_report_exports_zero_counts_without_saved_papers(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    db.delete(db.get(ProjectPaper, (project.project_id, paper.paper_id)))
+    db.commit()
+
+    response = export_systematic_review_csv(project.project_id, db, literature_db, user)
+    rows = list(csv.DictReader(io.StringIO(response.body.decode("utf-8"))))
+
+    assert len(rows) == 1
+    assert rows[0]["record_type"] == "summary"
+    assert rows[0]["total_papers"] == "0"
+    assert rows[0]["unread_count"] == "0"
+
+
+def test_systematic_review_http_routes_round_trip_and_export(screening_databases):
+    db, literature_db, user, project, _paper = screening_databases
+    app = FastAPI()
+    app.include_router(papers_router.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_literature_db] = lambda: literature_db
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        path = f"/api/projects/{project.project_id}/papers/review"
+        initial = client.get(path)
+        assert initial.status_code == 200
+        assert initial.json()["screening_counts"]["total"] == 1
+
+        updated = client.put(
+            path,
+            json={
+                "review_question": "Can the method improve outcomes?",
+                "protocol": "Include randomized studies.",
+                "expected_updated_at": None,
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["review_question"] == "Can the method improve outcomes?"
+
+        report = client.get(f"{path}/export")
+        assert report.status_code == 200
+        assert report.headers["content-type"] == "text/csv; charset=utf-8"
+        assert "Can the method improve outcomes?" in report.text
 
 
 def test_bulk_screening_requires_at_least_one_paper():

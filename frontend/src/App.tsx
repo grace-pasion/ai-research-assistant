@@ -66,6 +66,7 @@ import type {
   SavedPaperSearchRun,
   SearchResult,
   Source,
+  SystematicReview,
   TeamWorkspace,
   User,
 } from "./types";
@@ -131,6 +132,14 @@ function App() {
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [systematicReview, setSystematicReview] = useState<SystematicReview | null>(null);
+  const [reviewQuestion, setReviewQuestion] = useState("");
+  const [reviewProtocol, setReviewProtocol] = useState("");
+  const [reviewSaveBusy, setReviewSaveBusy] = useState(false);
+  const [reviewConflict, setReviewConflict] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewLoadError, setReviewLoadError] = useState("");
+  const [reviewReloadKey, setReviewReloadKey] = useState(0);
   const [screeningFilter, setScreeningFilter] = useState<ScreeningStatusFilter>("all");
   const [screeningQuery, setScreeningQuery] = useState("");
   const [screeningSort, setScreeningSort] = useState<ScreeningSort>("saved");
@@ -269,6 +278,13 @@ function App() {
     selectedProjectIdRef.current = project?.project_id ?? null;
     setDocuments([]);
     setPapers([]);
+    setSystematicReview(null);
+    setReviewQuestion("");
+    setReviewProtocol("");
+    setReviewSaveBusy(false);
+    setReviewConflict(false);
+    setReviewLoading(false);
+    setReviewLoadError("");
     setProjectAnnotations([]);
     setSavedPaperSearches([]);
     setConversations([]);
@@ -313,6 +329,32 @@ function App() {
       active = false;
     };
   }, [loadProjectData, project, token]);
+
+  useEffect(() => {
+    if (!project || !token) return;
+    const projectId = project.project_id;
+    let active = true;
+    setReviewLoading(true);
+    setReviewLoadError("");
+    request<SystematicReview>(`/api/projects/${projectId}/papers/review`)
+      .then((loaded) => {
+        if (!active || selectedProjectIdRef.current !== projectId) return;
+        setSystematicReview(loaded);
+        setReviewQuestion(loaded.review_question);
+        setReviewProtocol(loaded.protocol);
+        setReviewConflict(false);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setReviewLoadError(cause instanceof Error ? cause.message : "Could not load the review workspace.");
+      })
+      .finally(() => {
+        if (active) setReviewLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [project?.project_id, request, reviewReloadKey, token]);
 
   useEffect(() => {
     if (!project || !token) return;
@@ -365,6 +407,10 @@ function App() {
     exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
   }), [papers]);
   const reviewedPaperCount = screeningCounts.undecided + screeningCounts.include + screeningCounts.exclude;
+  const reviewDirty = systematicReview !== null && (
+    reviewQuestion !== systematicReview.review_question
+    || reviewProtocol !== systematicReview.protocol
+  );
   const visibleScreeningPapers = useMemo(
     () => filterAndSortScreeningPapers(papers, screeningFilter, screeningQuery, screeningSort),
     [papers, screeningFilter, screeningQuery, screeningSort],
@@ -514,6 +560,56 @@ function App() {
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not export screening decisions.");
+    } finally {
+      setReferenceBusy(false);
+    }
+  }
+
+  async function saveSystematicReview() {
+    if (!project || !systematicReview || !canEditProject || reviewSaveBusy || !reviewDirty) return;
+    const projectId = project.project_id;
+    setReviewSaveBusy(true);
+    setReviewConflict(false);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await request<SystematicReview>(
+        `/api/projects/${projectId}/papers/review`,
+        {
+          method: "PUT",
+          body: jsonBody({
+            review_question: reviewQuestion,
+            protocol: reviewProtocol,
+            expected_updated_at: systematicReview.updated_at,
+          }),
+        },
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setSystematicReview(saved);
+      setReviewQuestion(saved.review_question);
+      setReviewProtocol(saved.protocol);
+      setNotice("Review question and protocol saved for this project.");
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== projectId) return;
+      const message = cause instanceof Error ? cause.message : "Could not save the review protocol.";
+      setReviewConflict(message.includes("changed in another session"));
+      setError(message);
+    } finally {
+      if (selectedProjectIdRef.current === projectId) setReviewSaveBusy(false);
+    }
+  }
+
+  async function exportSystematicReview() {
+    if (!project || !systematicReview || reviewDirty || referenceBusy) return;
+    setReferenceBusy(true);
+    setError("");
+    try {
+      await downloadFile(
+        `/api/projects/${project.project_id}/papers/review/export`,
+        "systematic-review-report.csv",
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not export the systematic review report.");
     } finally {
       setReferenceBusy(false);
     }
@@ -1948,6 +2044,94 @@ function App() {
                       )) : <EmptyState icon={<Search size={21} />} title="No results found" text="Try a broader query or use the other search provider." />}
                     </div>
                   )}
+                  <section className="systematic-review-card" aria-labelledby="systematic-review-title">
+                    <div className="systematic-review-heading">
+                      <div>
+                        <h3 id="systematic-review-title">Systematic review workspace</h3>
+                        <p>Share the review question and protocol with this project’s collaborators.</p>
+                      </div>
+                      <button
+                        className="button secondary small-button"
+                        onClick={() => void exportSystematicReview()}
+                        disabled={!systematicReview || reviewDirty || referenceBusy}
+                        title={reviewDirty ? "Save your review details before exporting." : undefined}
+                      >
+                        <Download size={14} /> Export review report
+                      </button>
+                    </div>
+                    {reviewLoading && !systematicReview && (
+                      <p className="muted compact">Loading the shared review workspace…</p>
+                    )}
+                    {reviewLoadError && (
+                      <div className="systematic-review-error" role="alert">
+                        <span>{reviewLoadError}</span>
+                        <button
+                          className="text-button"
+                          onClick={() => setReviewReloadKey((current) => current + 1)}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {systematicReview && (
+                      <div className="systematic-review-form">
+                        <label>
+                          Review question
+                          <input
+                            value={reviewQuestion}
+                            onChange={(event) => setReviewQuestion(event.target.value)}
+                            maxLength={2_000}
+                            placeholder="What question will this review answer?"
+                            readOnly={!canEditProject || reviewSaveBusy}
+                          />
+                        </label>
+                        <label>
+                          Protocol
+                          <textarea
+                            value={reviewProtocol}
+                            onChange={(event) => setReviewProtocol(event.target.value)}
+                            maxLength={20_000}
+                            rows={5}
+                            placeholder="Record eligibility criteria, screening rules, and other review decisions."
+                            readOnly={!canEditProject || reviewSaveBusy}
+                          />
+                        </label>
+                        <div className="systematic-review-footer">
+                          <span>
+                            {reviewDirty
+                              ? "Unsaved changes"
+                              : systematicReview.updated_at
+                                ? `Saved ${new Date(systematicReview.updated_at).toLocaleString()}`
+                                : "No review details saved yet"}
+                          </span>
+                          <button
+                            className="button primary small-button"
+                            onClick={() => void saveSystematicReview()}
+                            disabled={!canEditProject || reviewLoading || reviewSaveBusy || !reviewDirty}
+                          >
+                            {reviewSaveBusy ? "Saving…" : "Save review details"}
+                          </button>
+                        </div>
+                        {reviewConflict && (
+                          <div className="systematic-review-error" role="alert">
+                            <span>This protocol changed in another session. Reload the latest version before saving.</span>
+                            <button
+                              className="text-button"
+                              onClick={() => {
+                                setError("");
+                                setReviewReloadKey((current) => current + 1);
+                              }}
+                            >
+                              Reload latest
+                            </button>
+                          </div>
+                        )}
+                        {reviewDirty && (
+                          <p className="muted compact">Save your changes before exporting the review report.</p>
+                        )}
+                      </div>
+                    )}
+                  </section>
                   <div className="result-group saved-group">
                     <div className="result-label"><span>Saved to this project</span><small>{papers.length} papers</small></div>
                     <section className="screening-progress" aria-label="Literature screening progress">

@@ -534,6 +534,33 @@ class PaperScreeningBulkResponse(BaseModel):
     updated_count: int
 
 
+class SystematicReviewUpdate(BaseModel):
+    review_question: str = Field(max_length=2_000)
+    protocol: str = Field(max_length=20_000)
+    expected_updated_at: datetime | None
+
+    @field_validator("review_question", "protocol")
+    @classmethod
+    def normalize_review_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class PaperScreeningCounts(BaseModel):
+    total: int
+    unread: int
+    undecided: int
+    include: int
+    exclude: int
+    reviewed: int
+
+
+class SystematicReviewResponse(BaseModel):
+    review_question: str
+    protocol: str
+    updated_at: datetime | None
+    screening_counts: PaperScreeningCounts
+
+
 class PaperSearchResponse(BaseModel):
     query_id: uuid.UUID
     provider: str
