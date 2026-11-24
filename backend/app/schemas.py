@@ -386,6 +386,37 @@ class LatexWorkspaceResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class PythonWorkspaceFile(BaseModel):
+    filename: str = Field(min_length=4, max_length=128)
+    code: str = Field(max_length=100_000)
+
+
+class PythonWorkspaceUpdate(BaseModel):
+    code: str | None = Field(default=None, max_length=100_000)
+    files: list[PythonWorkspaceFile] | None = Field(default=None, max_length=20)
+    expected_updated_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def require_code_or_files(self):
+        if self.code is None and self.files is None:
+            raise ValueError("Provide Python code or a list of Python files.")
+        return self
+
+
+class PythonArtifactMetadata(BaseModel):
+    filename: str
+    content_type: str
+    byte_size: int
+    updated_at: datetime
+
+
+class PythonWorkspaceResponse(BaseModel):
+    code: str
+    files: list[PythonWorkspaceFile] = Field(default_factory=list)
+    updated_at: datetime | None = None
+    artifacts: list[PythonArtifactMetadata] = Field(default_factory=list)
+
+
 class DocumentResponse(APIModel):
     document_id: uuid.UUID
     project_id: uuid.UUID

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, fetchPdfObjectUrl } from "./api";
+import { api, fetchFileBlob, fetchPdfObjectUrl } from "./api";
 
 describe("API client", () => {
   afterEach(() => {
@@ -67,5 +67,47 @@ describe("API client", () => {
     expect(new Headers(options.headers).get("Content-Type")).toBe("application/json");
     expect(new Headers(options.headers).get("Authorization")).toBe("Bearer smoke-test-token");
     objectUrl.mockRestore();
+  });
+
+  it("uploads multipart outputs without setting a JSON content type", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("[]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const form = new FormData();
+    form.append("files", new Blob(["table"], { type: "text/plain" }), "table.tex");
+
+    await api("/api/projects/project-1/python/artifacts", {
+      method: "PUT",
+      body: form,
+    }, "smoke-test-token");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:8000/api/projects/project-1/python/artifacts");
+    expect(new Headers(options.headers).get("Content-Type")).toBeNull();
+    expect(new Headers(options.headers).get("Authorization")).toBe("Bearer smoke-test-token");
+  });
+
+  it("fetches authenticated output blobs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("figure bytes", {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await fetchFileBlob(
+      "/api/projects/project-1/python/artifacts/figure.png",
+      "smoke-test-token",
+    );
+
+    expect(blob.type).toBe("image/png");
+    expect(await blob.text()).toBe("figure bytes");
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Authorization"))
+      .toBe("Bearer smoke-test-token");
   });
 });

@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     JSON,
     String,
     Text,
@@ -258,6 +259,48 @@ class LatexWorkspace(ResearchBase):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class PythonWorkspace(ResearchBase):
+    __tablename__ = "python_workspaces"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), primary_key=True
+    )
+    code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    files: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PythonWorkspaceArtifact(ResearchBase):
+    __tablename__ = "python_workspace_artifacts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "filename"),
+        Index("ix_python_workspace_artifacts_project", "project_id"),
+    )
+
+    artifact_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE")
+    )
+    filename: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+Index(
+    "uq_python_workspace_artifacts_project_filename_ci",
+    PythonWorkspaceArtifact.project_id,
+    func.lower(PythonWorkspaceArtifact.filename),
+    unique=True,
+)
 
 
 class Document(ResearchBase):

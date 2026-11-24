@@ -95,3 +95,23 @@ export async function fetchPdfObjectUrl(
   const content = await response.blob();
   return URL.createObjectURL(new Blob([content], { type: "application/pdf" }));
 }
+
+export async function fetchFileBlob(
+  path: string,
+  token = getToken(),
+): Promise<Blob> {
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (!response.ok) {
+    let message = `Could not load file (${response.status})`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      message = response.statusText || message;
+    }
+    throw new Error(message);
+  }
+  return response.blob();
+}

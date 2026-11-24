@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import LatexWorkspace, User
+from app.models import LatexWorkspace, PythonWorkspaceArtifact, User
 from app.schemas import LatexWorkspaceResponse, LatexWorkspaceUpdate
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
@@ -77,8 +77,14 @@ def compile_latex_workspace(
     workspace = _get_workspace(db, project_id)
     main_tex = workspace.main_tex if workspace else DEFAULT_MAIN_TEX
     references_bib = workspace.references_bib if workspace else ""
+    artifacts = db.scalars(
+        select(PythonWorkspaceArtifact).where(
+            PythonWorkspaceArtifact.project_id == project_id
+        )
+    ).all()
+    generated_assets = {artifact.filename: artifact.content for artifact in artifacts}
     try:
-        pdf = compile_latex(main_tex, references_bib)
+        pdf = compile_latex(main_tex, references_bib, generated_assets)
     except LatexCompilerUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LatexCompilationError as exc:

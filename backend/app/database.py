@@ -92,6 +92,15 @@ def ensure_document_chunk_page_column(engine) -> None:
             )
 
 
+def ensure_python_workspace_files_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("python_workspaces")}
+    if "files" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE python_workspaces ADD COLUMN files JSON")
+            )
+
+
 def ensure_project_team_workspace_column(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("research_projects")}
     if "team_workspace_id" not in columns:

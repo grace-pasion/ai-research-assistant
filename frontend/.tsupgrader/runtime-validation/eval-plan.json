@@ -67,7 +67,7 @@
         "run",
         "--rm",
         "-p",
-        "127.0.0.1:5174:5173",
+        "127.0.0.1:5191:5173",
         "--mount",
         "type=bind,source=C:\\Users\\grpas\\Downloads\\cs452-final-project\\frontend,target=/app",
         "--workdir",
@@ -82,7 +82,7 @@
         "--port",
         "5173"
       ],
-      "url": "http://localhost:5174/",
+      "url": "http://localhost:5191/",
       "verificationMethod": "http-status",
       "expected": "200",
       "timeoutSeconds": 120

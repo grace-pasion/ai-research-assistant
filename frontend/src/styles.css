@@ -295,6 +295,11 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-save-status { align-items: center; color: #63816b; display: inline-flex; font-size: 10px; gap: 5px; margin-right: 4px; white-space: nowrap; }
 .latex-save-status.unsaved, .latex-save-status.error { color: #a56d38; }
 .latex-error { margin: 10px 18px; }
+.writing-workspace-tabs { background: #fff; border-bottom: 1px solid #e9ede9; display: flex; padding: 0 16px; }
+.writing-workspace-tabs button { align-items: center; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #78847b; cursor: pointer; display: inline-flex; font: 11px var(--sans); gap: 6px; margin-bottom: -1px; padding: 10px 8px; }
+.writing-workspace-tabs button:hover, .writing-workspace-tabs button:focus-visible { color: #2d654f; }
+.writing-workspace-tabs button:focus-visible { outline: 2px solid #63816b; outline-offset: -2px; }
+.writing-workspace-tabs button.active { border-bottom-color: #63816b; color: #2d654f; font-weight: 650; }
 .latex-citation-tools { align-items: center; background: #fff; border-bottom: 1px solid #e9ede9; color: #758078; display: flex; flex-wrap: wrap; font-size: 9px; gap: 8px; padding: 8px 12px; }
 .latex-citation-tools select { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #526057; font: inherit; max-width: 240px; padding: 5px 7px; }
 .latex-citation-tools select:disabled { opacity: .7; }
@@ -311,6 +316,13 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-group-heading { align-items: center; display: flex; gap: 6px; margin: 0 4px 10px; }
 .latex-group-heading svg { color: #718779; }
 .latex-group-heading small { font-size: 9px; font-weight: 400; letter-spacing: 0; margin-left: auto; }
+.python-source-heading { background: transparent; border: 0; color: #89938b; cursor: pointer; font: inherit; padding: 0; text-align: left; width: 100%; }
+.python-source-heading:hover, .python-source-heading.active { color: #2d654f; }
+.python-source-heading:focus-visible { outline: 2px solid #63816b; outline-offset: 2px; }
+.python-source-heading small { color: #89938b; }
+.python-source-file { overflow: hidden; }
+.python-source-file svg { flex: 0 0 auto; }
+.python-source-file { overflow-wrap: anywhere; }
 .latex-source-card { border-top: 1px solid #eef1ee; padding: 10px 3px 8px; }
 .latex-source-card strong { color: #46534b; display: -webkit-box; font-size: 10px; font-weight: 600; line-height: 1.45; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .latex-source-card > span { color: #8c968e; display: block; font-size: 9px; line-height: 1.5; margin-top: 4px; }
@@ -324,7 +336,10 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-document-source .latex-load-excerpt { margin-top: 8px; }
 .latex-document-source .latex-insert-excerpt { margin-top: 6px; }
 .latex-empty { color: #969f98; font-size: 9px; line-height: 1.5; margin: 8px 3px 2px; }
-.latex-editor-panel { display: flex; flex-direction: column; min-width: 0; }
+.latex-editor-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.latex-editor-content { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+.latex-editor-content[hidden], .latex-python-panel[hidden] { display: none; }
+.latex-python-panel { display: flex; flex: 1; min-height: 650px; min-width: 0; }
 .latex-toolbar { align-items: center; background: #fbfcfa; border-bottom: 1px solid #e9ede9; display: flex; justify-content: space-between; min-height: 44px; padding: 6px 12px; }
 .latex-current-file { align-items: center; color: #5b685f; display: inline-flex; font: 10px Consolas, "Courier New", monospace; gap: 7px; }
 .latex-current-file svg { color: #63816b; }
@@ -348,6 +363,50 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-bib-preview { background: #fff; color: #566158; flex: 1; font: 10px/1.7 Consolas, "Courier New", monospace; margin: 17px; min-height: 510px; overflow: auto; padding: 20px; white-space: pre-wrap; }
 .latex-preview-note { color: #929b95; font-size: 8px; margin: 0 17px 12px; }
 .latex-pdf-frame { background: #fff; border: 0; flex: 1; min-height: 605px; width: 100%; }
+.python-workspace { background: #fbfcfa; display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 16px; }
+.python-workspace-header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
+.python-workspace-header h3 { color: #2e3933; font: 650 15px var(--serif); margin: 0 0 4px; }
+.python-workspace-header p:not(.eyebrow) { color: #89938b; font-size: 10px; margin: 0; }
+.python-save-status { color: #63816b; font-size: 9px; white-space: nowrap; }
+.python-save-status.unsaved, .python-save-status.error { color: #a56d38; }
+.python-source-toolbar { align-items: center; border-bottom: 1px solid #e7ece7; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-top: 12px; padding-bottom: 9px; }
+.python-source-toolbar > span, .python-source-toolbar > div { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
+.python-source-toolbar > span { color: #4b5a50; font: 10px Consolas, "Courier New", monospace; gap: 6px; overflow-wrap: anywhere; }
+.python-source-toolbar > span svg { color: #63816b; flex: 0 0 auto; }
+.python-delete-source { color: #9c633c !important; }
+.python-new-file-form { align-items: center; background: #f3f6f3; border: 1px solid #e3e9e3; border-radius: 6px; display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; padding: 9px; }
+.python-new-file-form label { color: #69766d; font-size: 9px; }
+.python-new-file-form input { background: #fff; border: 1px solid #dfe6df; border-radius: 4px; color: #45554a; font: 10px Consolas, "Courier New", monospace; min-width: 130px; padding: 6px 7px; }
+.python-code-editor { background: #222b26; border: 1px solid #39483e; border-radius: 6px; flex: 0 0 auto; margin-top: 12px; min-height: 280px; overflow: hidden; width: 100%; }
+.python-code-editor .cm-editor { border-radius: 5px; height: 100%; }
+.python-code-editor .cm-scroller { font: 12px/1.65 Consolas, "Courier New", monospace; }
+.python-code-editor .cm-gutters { background: #1c2520; border-right: 1px solid #39483e; }
+.python-workspace-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.python-input-label { align-items: center; background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #52715e; cursor: pointer; display: inline-flex; font-size: 9px; gap: 5px; padding: 7px 9px; }
+.python-input-label input { height: 1px; opacity: 0; overflow: hidden; position: absolute; width: 1px; }
+.python-input-label:focus-within { outline: 2px solid #63816b; outline-offset: 2px; }
+.python-input-label:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.python-input-hint, .python-workspace-note { color: #929b95; font-size: 9px; line-height: 1.5; }
+.python-input-list { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.python-input-list span { background: #edf3ee; border-radius: 4px; color: #52715e; font-size: 9px; padding: 4px 6px; }
+.python-clear-inputs { background: transparent; border: 0; color: #748178; font-size: 9px; text-decoration: underline; }
+.python-workspace-note { margin: 10px 0; }
+.python-workspace-note code { background: #eff2ef; border-radius: 3px; color: #4b6253; padding: 1px 3px; }
+.python-run-output { background: #f0f3f0; border: 1px solid #e3e8e3; border-radius: 5px; color: #4d5b51; font: 10px/1.6 Consolas, "Courier New", monospace; margin: 10px 0; max-height: 200px; overflow: auto; padding: 10px; white-space: pre-wrap; }
+.python-artifacts { border-top: 1px solid #e7ece7; margin-top: 12px; padding-top: 10px; }
+.python-artifacts-heading { align-items: center; color: #718779; display: flex; font-size: 10px; gap: 6px; }
+.python-artifacts-heading strong { color: #5b685f; font-weight: 600; }
+.python-artifacts-heading span { color: #89938b; margin-left: auto; }
+.python-artifact { align-items: center; border-top: 1px solid #eef1ee; color: #66736a; display: flex; flex-wrap: wrap; font-size: 9px; gap: 7px; padding: 8px 2px; }
+.python-artifact-name { color: #45554a; font: 10px Consolas, "Courier New", monospace; overflow-wrap: anywhere; }
+.python-artifact small { color: #929b95; margin-right: auto; }
+.python-artifact button { align-items: center; background: #fff; border: 1px solid #e2e8e2; border-radius: 4px; color: #52715e; display: inline-flex; font-size: 8px; gap: 3px; padding: 4px 6px; }
+.python-artifact button:disabled { cursor: not-allowed; opacity: .55; }
+.python-artifact .python-delete-output { color: #9c633c; }
+.python-output-preview { background: #fff; border: 1px solid #e5eae5; border-radius: 5px; margin: 10px 0 0; padding: 10px; }
+.python-output-preview img { display: block; height: auto; margin: 0 auto; max-height: 460px; max-width: 100%; object-fit: contain; }
+.python-output-preview figcaption { color: #89938b; font-size: 9px; margin-top: 7px; text-align: center; }
+.python-text-preview { color: #566158; font: 9px/1.6 Consolas, "Courier New", monospace; max-height: 260px; overflow: auto; white-space: pre-wrap; }
 
 .assistant-layout { background: #fff; border: 1px solid #e7ebe7; border-radius: 9px; display: grid; grid-template-columns: 220px minmax(0, 1fr); margin-top: 23px; min-height: 600px; overflow: hidden; }
 .conversation-sidebar { background: #fbfcfa; border-right: 1px solid #edf0ed; padding: 17px 11px; }
@@ -642,6 +701,10 @@ h1, h2, h3, p { margin-top: 0; }
   .latex-paper-preview, .latex-bib-preview { min-height: 360px; padding: 23px 18px; }
   .latex-view-toggle button { padding: 5px 7px; }
   .latex-view-toggle button span { display: inline; }
+  .python-workspace { padding: 12px; }
+  .python-workspace-controls { align-items: stretch; }
+  .python-input-hint { flex-basis: 100%; }
+  .python-artifact { align-items: flex-start; }
 }
 
 .admin-page { background: var(--canvas); min-height: 100vh; padding: 28px; }

@@ -5,7 +5,15 @@ import subprocess
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
+
+from app.services.python_workspace import (
+    MAX_ARTIFACT_BYTES,
+    MAX_ARTIFACT_COUNT,
+    MAX_ARTIFACT_TOTAL_BYTES,
+    validate_artifact,
+)
 
 MAX_PDF_BYTES = 25 * 1024 * 1024
 MAX_COMPILE_FILE_BYTES = 30 * 1024 * 1024
@@ -132,7 +140,32 @@ def _run(
     return result
 
 
-def compile_latex(main_tex: str, references_bib: str) -> bytes:
+def _validate_assets(assets: Mapping[str, bytes] | None) -> dict[str, bytes]:
+    if not assets:
+        return {}
+    if len(assets) > MAX_ARTIFACT_COUNT:
+        raise LatexCompilationError("A maximum of 20 generated outputs can be included.")
+    total_bytes = 0
+    validated: dict[str, bytes] = {}
+    for filename, content in assets.items():
+        try:
+            validate_artifact(filename, content)
+        except ValueError as exc:
+            raise LatexCompilationError(str(exc)) from exc
+        if len(content) > MAX_ARTIFACT_BYTES:
+            raise LatexCompilationError(f"{filename} exceeds the 5 MB per-file limit.")
+        total_bytes += len(content)
+        if total_bytes > MAX_ARTIFACT_TOTAL_BYTES:
+            raise LatexCompilationError("Generated outputs exceed the 20 MB limit.")
+        validated[filename] = content
+    return validated
+
+
+def compile_latex(
+    main_tex: str,
+    references_bib: str,
+    assets: Mapping[str, bytes] | None = None,
+) -> bytes:
     issues = citation_key_issues(main_tex, references_bib)
     if issues["missing_keys"]:
         keys = ", ".join(issues["missing_keys"])
@@ -140,6 +173,7 @@ def compile_latex(main_tex: str, references_bib: str) -> bytes:
     if issues["duplicate_keys"]:
         keys = ", ".join(issues["duplicate_keys"])
         raise LatexCompilationError(f"Duplicate BibTeX citation keys: {keys}")
+    validated_assets = _validate_assets(assets)
 
     binaries = {name: shutil.which(name) for name in LATEX_COMMANDS}
     if binaries["pdflatex"] is None:
@@ -169,6 +203,13 @@ def compile_latex(main_tex: str, references_bib: str) -> bytes:
         (source_dir / "references.bib").write_text(references_bib, encoding="utf-8")
         source_file.chmod(0o644)
         (source_dir / "references.bib").chmod(0o644)
+        if validated_assets:
+            asset_dir = source_dir / "python-output"
+            asset_dir.mkdir(mode=0o755)
+            for filename, content in validated_assets.items():
+                asset_file = asset_dir / filename
+                asset_file.write_bytes(content)
+                asset_file.chmod(0o644)
         root.chmod(0o755)
 
         latex_user = pwd.getpwnam("latex")

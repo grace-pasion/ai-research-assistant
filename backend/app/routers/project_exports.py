@@ -17,6 +17,8 @@ from app.models import (
     Document,
     LatexWorkspace,
     Message,
+    PythonWorkspace,
+    PythonWorkspaceArtifact,
     ResearchProject,
     SystematicReviewWorkspace,
     User,
@@ -74,6 +76,14 @@ def export_project_bundle(
     papers = list_saved_papers(project_id, db, literature_db, user)
     annotations = list_project_annotations(project_id, "", db, literature_db, user)
     workspace = db.get(LatexWorkspace, project_id)
+    python_workspace = db.get(PythonWorkspace, project_id)
+    python_artifacts = list(
+        db.scalars(
+            select(PythonWorkspaceArtifact)
+            .where(PythonWorkspaceArtifact.project_id == project_id)
+            .order_by(PythonWorkspaceArtifact.filename)
+        ).all()
+    )
     review = db.get(SystematicReviewWorkspace, project_id)
     conversations = (
         list(
@@ -143,6 +153,8 @@ def export_project_bundle(
         "note_count": len(annotations),
         "conversation_count": len(conversations),
         "latex_workspace_saved": workspace is not None,
+        "python_workspace_saved": python_workspace is not None,
+        "python_artifact_count": len(python_artifacts),
         "systematic_review_saved": review is not None,
     }
     archive_file = tempfile.SpooledTemporaryFile(max_size=SPOOL_MAX_BYTES, mode="w+b")
@@ -161,7 +173,8 @@ def export_project_bundle(
                     "=========================\n\n"
                     "project.json contains project metadata. References are provided as "
                     "JSON, RIS, and BibTeX; notes and review details are JSON; writing "
-                    "files are plain text.\n"
+                    "files are plain text. Python source and generated outputs are "
+                    "included under writing/python/ and writing/python-output/.\n"
                     "documents/index.json lists project documents. Original files are "
                     "included only when selected in the export options.\n"
                     "When conversations are selected, the archive contains only "
@@ -192,6 +205,22 @@ def export_project_bundle(
                 "writing/references.bib",
                 workspace.references_bib if workspace else "",
             )
+            if python_workspace is not None:
+                python_files = (
+                    python_workspace.files
+                    if python_workspace.files
+                    else [{"filename": "main.py", "code": python_workspace.code}]
+                )
+                for source in python_files:
+                    archive.writestr(
+                        f"writing/python/{source['filename']}",
+                        source["code"],
+                    )
+            for artifact in python_artifacts:
+                archive.writestr(
+                    f"writing/python-output/{artifact.filename}",
+                    artifact.content,
+                )
             _write_json(
                 archive,
                 "review/systematic_review.json",

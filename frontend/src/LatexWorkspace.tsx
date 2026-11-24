@@ -12,7 +12,15 @@ import {
   Save,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { DocumentRecord, Paper, Project } from "./types";
 import { parseLatexPreview } from "./latexPreview";
 import {
@@ -20,7 +28,18 @@ import {
   findLatexBibliographyStyle,
   stripLatexComments,
 } from "./latexCitations";
+import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { fetchPdfObjectUrl } from "./api";
+import {
+  ensureLatexPackage,
+  pythonOutputInsertion,
+  pythonOutputPackage,
+} from "./pythonWorkspace";
+
+const PythonAnalysisWorkspace = lazy(async () => {
+  const module = await import("./PythonAnalysisWorkspace");
+  return { default: module.PythonAnalysisWorkspace };
+});
 
 type WorkspaceFiles = {
   main_tex: string;
@@ -90,15 +109,6 @@ function bibtexEntry(paper: Paper): string {
   return `@article{${key},\n${fields.join(",\n")}\n}`;
 }
 
-function insertAtCursor(source: string, insertion: string, position: number): string {
-  const at = Math.max(0, Math.min(position, source.length));
-  const before = source.slice(0, at);
-  const after = source.slice(at);
-  const prefix = before && !/\s$/.test(before) ? "\n\n" : "";
-  const suffix = after && !/^\s/.test(after) ? "\n\n" : "";
-  return `${before}${prefix}${insertion}${suffix}${after}`;
-}
-
 function downloadText(filename: string, content: string): void {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
   const anchor = document.createElement("a");
@@ -113,6 +123,10 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeFile, setActiveFile] = useState<EditorFile>("main.tex");
+  const [pythonWorkspaceVisited, setPythonWorkspaceVisited] = useState(false);
+  const [pythonWorkspaceActive, setPythonWorkspaceActive] = useState(false);
+  const [pythonFiles, setPythonFiles] = useState<string[]>([]);
+  const [selectedPythonFile, setSelectedPythonFile] = useState("main.py");
   const [paneMode, setPaneMode] = useState<PaneMode>("split");
   const [saveStatus, setSaveStatus] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
   const [workspaceError, setWorkspaceError] = useState("");
@@ -124,6 +138,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [loadingExcerpt, setLoadingExcerpt] = useState<string | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const cursorPositionRef = useRef<number | null>(null);
+  const insertionSequenceRef = useRef(0);
   const workspaceRef = useRef(workspace);
   const savedContentRef = useRef("");
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -138,6 +153,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    setActiveFile("main.tex");
+    setPythonWorkspaceVisited(false);
+    setPythonWorkspaceActive(false);
+    setPythonFiles([]);
+    setSelectedPythonFile("main.py");
+  }, [project.project_id]);
 
   useEffect(() => {
     let active = true;
@@ -265,19 +288,54 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     if (!canEdit) return;
     const textarea = editorRef.current;
     const source = workspaceRef.current.main_tex;
-    const position = activeFile === "main.tex" && textarea && cursorPositionRef.current !== null
+    const preferredPosition = !pythonWorkspaceActive
+      && activeFile === "main.tex"
+      && paneMode !== "preview"
+      && paneMode !== "pdf"
+      && textarea
       ? cursorPositionRef.current
-      : Math.max(0, source.lastIndexOf("\\end{document}"));
-    const updated = { ...workspaceRef.current, main_tex: insertAtCursor(source, insertion, position) };
+      : null;
+    const position = documentBodyInsertionPosition(source, preferredPosition);
+    const inserted = insertAtCursor(source, insertion, position);
+    const updated = { ...workspaceRef.current, main_tex: inserted.source };
     workspaceRef.current = updated;
     setWorkspace(updated);
+    setPythonWorkspaceActive(false);
     setActiveFile("main.tex");
     setSaveStatus("unsaved");
+    cursorPositionRef.current = inserted.cursorPosition;
+    const sequence = ++insertionSequenceRef.current;
     window.setTimeout(() => {
+      if (sequence !== insertionSequenceRef.current) return;
       editorRef.current?.focus();
-      editorRef.current?.setSelectionRange(position + insertion.length + 2, position + insertion.length + 2);
-      cursorPositionRef.current = position + insertion.length + 2;
+      editorRef.current?.setSelectionRange(inserted.cursorPosition, inserted.cursorPosition);
     }, 0);
+  }
+
+  function insertPythonOutput(filename: string) {
+    const insertion = pythonOutputInsertion(filename);
+    if (!insertion) return;
+    const packageName = pythonOutputPackage(filename);
+    if (packageName) {
+      const current = workspaceRef.current;
+      const mainTex = ensureLatexPackage(current.main_tex, packageName);
+      if (mainTex !== current.main_tex) {
+        const cursorPosition = cursorPositionRef.current;
+        const packagePosition = mainTex.indexOf(`\\usepackage{${packageName}}`);
+        if (
+          !pythonWorkspaceActive
+          && activeFile === "main.tex"
+          && cursorPosition !== null
+          && packagePosition <= cursorPosition
+        ) {
+          cursorPositionRef.current = cursorPosition + mainTex.length - current.main_tex.length;
+        }
+        workspaceRef.current = { ...current, main_tex: mainTex };
+        setWorkspace(workspaceRef.current);
+        setSaveStatus("unsaved");
+      }
+    }
+    insertIntoMain(insertion);
   }
 
   function citePaper(paper: Paper, includeAbstract = false) {
@@ -304,6 +362,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
         setSourceError(`${document.filename} does not contain extracted text yet.`);
         return;
       }
+
       setExcerpts((current) => ({
         ...current,
         [document.document_id]: reader.text.slice(0, 2000),
@@ -313,6 +372,12 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     } finally {
       setLoadingExcerpt(null);
     }
+  }
+
+  function openPythonWorkspace(filename = selectedPythonFile) {
+    setPythonWorkspaceVisited(true);
+    setPythonWorkspaceActive(true);
+    setSelectedPythonFile(filename);
   }
 
   function insertDocumentExcerpt(document: DocumentRecord) {
@@ -341,7 +406,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       const insertionAt = bibliographyAt >= 0
         ? bibliographyAt
         : documentEndAt >= 0 ? documentEndAt : source.length;
-      updatedSource = insertAtCursor(source, command, insertionAt);
+      updatedSource = insertAtCursor(source, command, insertionAt).source;
     }
     const updated = { ...workspaceRef.current, main_tex: updatedSource };
     workspaceRef.current = updated;
@@ -389,18 +454,22 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <span className="latex-access-role">
             {{ owner: "Owner", read: "Reader", comment: "Commenter", edit: "Editor" }[project.access_role]} access
           </span>
-          <span className={`latex-save-status ${saveStatus}`} role="status">
-            {saveStatus === "saving" ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}
-            {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved changes" : saveStatus === "error" ? "Save failed" : "Saved"}
-          </span>
-          <button
-            type="button"
-            className="button secondary small-button"
-            onClick={() => downloadText(activeFile, currentValue)}
-            disabled={loading}
-          >
-            <Download size={14} /> Download {activeFile}
-          </button>
+          {!pythonWorkspaceActive && (
+            <>
+              <span className={`latex-save-status ${saveStatus}`} role="status">
+                {saveStatus === "saving" ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}
+                {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved changes" : saveStatus === "error" ? "Save failed" : "Saved"}
+              </span>
+              <button
+                type="button"
+                className="button secondary small-button"
+                onClick={() => downloadText(activeFile, currentValue)}
+                disabled={loading}
+              >
+                <Download size={14} /> Download {activeFile}
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="button primary small-button"
@@ -410,7 +479,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
             {compiling ? <LoaderCircle size={14} className="spin" /> : <FileOutput size={14} />}
             {compiling ? "Compiling…" : "Compile PDF"}
           </button>
-          {canEdit && (
+          {canEdit && !pythonWorkspaceActive && (
           <button
             type="button"
             className="button primary small-button"
@@ -430,6 +499,16 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           Reload latest version
         </button>
       )}
+      <div className="writing-workspace-tabs" role="group" aria-label="Main document">
+        <button
+          type="button"
+          className={!pythonWorkspaceActive ? "active" : ""}
+          aria-pressed={!pythonWorkspaceActive}
+          onClick={() => setPythonWorkspaceActive(false)}
+        >
+          <FileCode2 size={14} /> LaTeX
+        </button>
+      </div>
       {loading ? (
         <div className="latex-loading"><LoaderCircle className="spin" size={18} /> Loading project files…</div>
       ) : (
@@ -437,12 +516,37 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <aside className="latex-sources">
             <div className="latex-files">
               <span className="latex-label">PROJECT FILES</span>
-              <button type="button" className={`latex-file ${activeFile === "main.tex" ? "active" : ""}`} onClick={() => setActiveFile("main.tex")}>
+              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
                 <FileCode2 size={15} /> main.tex
               </button>
-              <button type="button" className={`latex-file ${activeFile === "references.bib" ? "active" : ""}`} onClick={() => setActiveFile("references.bib")}>
+              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
                 <BookOpen size={15} /> references.bib
               </button>
+            </div>
+            <div className="latex-source-group">
+              <button
+                type="button"
+                className={`latex-group-heading python-source-heading${pythonWorkspaceActive ? " active" : ""}`}
+                onClick={() => openPythonWorkspace()}
+                aria-pressed={pythonWorkspaceActive}
+              >
+                <Code2 size={14} />
+                <span>PYTHON ANALYSIS</span>
+                <small>{pythonWorkspaceVisited ? pythonFiles.length : "Open"}</small>
+              </button>
+              {pythonFiles.map((filename) => (
+                <button
+                  type="button"
+                  className={`latex-file python-source-file${pythonWorkspaceActive && selectedPythonFile === filename ? " active" : ""}`}
+                  key={filename}
+                  onClick={() => openPythonWorkspace(filename)}
+                >
+                  <FileCode2 size={14} /> {filename}
+                </button>
+              ))}
+              {!pythonWorkspaceVisited && (
+                <p className="latex-empty">Open Python analysis to manage scripts and generated figures.</p>
+              )}
             </div>
             <div className="latex-source-group">
               <div className="latex-group-heading"><Library size={14} /><span>SAVED LITERATURE</span><small>{papers.length}</small></div>
@@ -504,99 +608,117 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
             </div>
           </aside>
           <div className="latex-editor-panel">
-            <div className="latex-toolbar">
-              <span className="latex-current-file"><FileCode2 size={15} />{activeFile}</span>
-              <div className="latex-view-toggle" role="group" aria-label="Editor layout">
-                <button type="button" className={paneMode === "source" ? "active" : ""} onClick={() => setPaneMode("source")} aria-pressed={paneMode === "source"} title="Source only">
-                  <Code2 size={14} /><span>Source</span>
-                </button>
-                <button type="button" className={paneMode === "split" ? "active" : ""} onClick={() => setPaneMode("split")} aria-pressed={paneMode === "split"} title="Source and preview">
-                  <BookOpen size={14} /><span>Split</span>
-                </button>
-                <button type="button" className={paneMode === "preview" ? "active" : ""} onClick={() => setPaneMode("preview")} aria-pressed={paneMode === "preview"} title="Preview only">
-                  <Eye size={14} /><span>Preview</span>
-                </button>
-                <button type="button" className={paneMode === "pdf" ? "active" : ""} onClick={() => setPaneMode("pdf")} aria-pressed={paneMode === "pdf"} title="Compiled PDF">
-                  <FileOutput size={14} /><span>PDF</span>
-                </button>
+            <div className="latex-editor-content" hidden={pythonWorkspaceActive}>
+              <div className="latex-toolbar">
+                <span className="latex-current-file"><FileCode2 size={15} />{activeFile}</span>
+                <div className="latex-view-toggle" role="group" aria-label="Editor layout">
+                  <button type="button" className={paneMode === "source" ? "active" : ""} onClick={() => setPaneMode("source")} aria-pressed={paneMode === "source"} title="Source only">
+                    <Code2 size={14} /><span>Source</span>
+                  </button>
+                  <button type="button" className={paneMode === "split" ? "active" : ""} onClick={() => setPaneMode("split")} aria-pressed={paneMode === "split"} title="Source and preview">
+                    <BookOpen size={14} /><span>Split</span>
+                  </button>
+                  <button type="button" className={paneMode === "preview" ? "active" : ""} onClick={() => setPaneMode("preview")} aria-pressed={paneMode === "preview"} title="Preview only">
+                    <Eye size={14} /><span>Preview</span>
+                  </button>
+                  <button type="button" className={paneMode === "pdf" ? "active" : ""} onClick={() => setPaneMode("pdf")} aria-pressed={paneMode === "pdf"} title="Compiled PDF">
+                    <FileOutput size={14} /><span>PDF</span>
+                  </button>
+                </div>
+              </div>
+              <div className="latex-citation-tools">
+                <label htmlFor="latex-citation-style">Bibliography style</label>
+                <select
+                  id="latex-citation-style"
+                  disabled={!canEdit}
+                  onChange={(event) => changeCitationStyle(event.target.value as CitationStyle)}
+                  value={CITATION_STYLES.some((style) => style.value === citationStyle) ? citationStyle : "plainnat"}
+                >
+                  {CITATION_STYLES.map((style) => <option value={style.value} key={style.value}>{style.label}</option>)}
+                </select>
+                {!!citationIssues.missingKeys.length && (
+                  <span className="latex-citation-warning" role="status">
+                    Missing BibTeX entries: {citationIssues.missingKeys.join(", ")}
+                  </span>
+                )}
+                {!!citationIssues.duplicateKeys.length && (
+                  <span className="latex-citation-warning" role="status">
+                    Duplicate BibTeX keys: {citationIssues.duplicateKeys.join(", ")}
+                  </span>
+                )}
+              </div>
+              <div className={`latex-panes mode-${paneMode}`}>
+                {paneMode !== "preview" && paneMode !== "pdf" && (
+                  <div className="latex-source-pane">
+                    <div className="latex-editor-caption"><Code2 size={13} /> LaTeX source</div>
+                    <textarea
+                      ref={editorRef}
+                      aria-label={`${activeFile} source`}
+                      autoCapitalize="off"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      readOnly={!canEdit}
+                      value={currentValue}
+                      onChange={(event) => {
+                        cursorPositionRef.current = event.currentTarget.selectionStart;
+                        updateFile(event.currentTarget.value);
+                      }}
+                      onClick={(event) => {
+                        cursorPositionRef.current = event.currentTarget.selectionStart;
+                      }}
+                      onKeyUp={(event) => {
+                        cursorPositionRef.current = event.currentTarget.selectionStart;
+                      }}
+                    />
+                  </div>
+                )}
+                {paneMode !== "source" && paneMode !== "pdf" && (
+                  <div className="latex-preview-pane">
+                    <div className="latex-editor-caption"><Eye size={13} /> {activeFile === "main.tex" ? "Quick article preview" : "Bibliography source"}</div>
+                    {activeFile === "main.tex" ? (
+                      <article className="latex-paper-preview">
+                        {preview.title && <h1>{preview.title}</h1>}
+                        {preview.author && <p className="latex-preview-author">{preview.author}</p>}
+                        {preview.blocks.map((block, index) => {
+                          if (block.type === "section") return <h2 key={index}>{block.text}</h2>;
+                          if (block.type === "subsection") return <h3 key={index}>{block.text}</h3>;
+                          return <p key={index}>{block.text}</p>;
+                        })}
+                        {!preview.blocks.length && <p className="latex-empty">Your article preview will appear here as you write.</p>}
+                      </article>
+                    ) : (
+                      <pre className="latex-bib-preview">{workspace.references_bib || "% Add citations from saved literature to build this bibliography."}</pre>
+                    )}
+                    <p className="latex-preview-note">Quick structural preview only. Use Compile PDF for full TeX output.</p>
+                  </div>
+                )}
+                {paneMode === "pdf" && (
+                  <div className="latex-preview-pane latex-pdf-pane">
+                    <div className="latex-editor-caption"><FileOutput size={13} /> Compiled PDF</div>
+                    {pdfUrl
+                      ? <iframe className="latex-pdf-frame" src={pdfUrl} title="Compiled research draft PDF" />
+                      : <p className="latex-empty">Compile the saved draft to view its PDF here.</p>}
+                  </div>
+                )}
               </div>
             </div>
-            <div className="latex-citation-tools">
-              <label htmlFor="latex-citation-style">Bibliography style</label>
-              <select
-                id="latex-citation-style"
-                disabled={!canEdit}
-                onChange={(event) => changeCitationStyle(event.target.value as CitationStyle)}
-                value={CITATION_STYLES.some((style) => style.value === citationStyle) ? citationStyle : "plainnat"}
-              >
-                {CITATION_STYLES.map((style) => <option value={style.value} key={style.value}>{style.label}</option>)}
-              </select>
-              {!!citationIssues.missingKeys.length && (
-                <span className="latex-citation-warning" role="status">
-                  Missing BibTeX entries: {citationIssues.missingKeys.join(", ")}
-                </span>
-              )}
-              {!!citationIssues.duplicateKeys.length && (
-                <span className="latex-citation-warning" role="status">
-                  Duplicate BibTeX keys: {citationIssues.duplicateKeys.join(", ")}
-                </span>
-              )}
-            </div>
-            <div className={`latex-panes mode-${paneMode}`}>
-              {paneMode !== "preview" && paneMode !== "pdf" && (
-                <div className="latex-source-pane">
-                  <div className="latex-editor-caption"><Code2 size={13} /> LaTeX source</div>
-                  <textarea
-                    ref={editorRef}
-                    aria-label={`${activeFile} source`}
-                    autoCapitalize="off"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    readOnly={!canEdit}
-                    value={currentValue}
-                    onChange={(event) => {
-                      cursorPositionRef.current = event.currentTarget.selectionStart;
-                      updateFile(event.currentTarget.value);
-                    }}
-                    onClick={(event) => {
-                      cursorPositionRef.current = event.currentTarget.selectionStart;
-                    }}
-                    onKeyUp={(event) => {
-                      cursorPositionRef.current = event.currentTarget.selectionStart;
-                    }}
+            {pythonWorkspaceVisited && (
+              <div className="latex-python-panel" hidden={!pythonWorkspaceActive}>
+                <Suspense fallback={<div className="latex-loading">Loading Python editor…</div>}>
+                  <PythonAnalysisWorkspace
+                    key={project.project_id}
+                    projectId={project.project_id}
+                    canEdit={canEdit}
+                    request={request}
+                    selectedFilename={selectedPythonFile}
+                    onFilesChange={setPythonFiles}
+                    onSelectedFileChange={setSelectedPythonFile}
+                    onInsertOutput={insertPythonOutput}
                   />
-                </div>
-              )}
-              {paneMode !== "source" && paneMode !== "pdf" && (
-                <div className="latex-preview-pane">
-                  <div className="latex-editor-caption"><Eye size={13} /> {activeFile === "main.tex" ? "Quick article preview" : "Bibliography source"}</div>
-                  {activeFile === "main.tex" ? (
-                    <article className="latex-paper-preview">
-                      {preview.title && <h1>{preview.title}</h1>}
-                      {preview.author && <p className="latex-preview-author">{preview.author}</p>}
-                      {preview.blocks.map((block, index) => {
-                        if (block.type === "section") return <h2 key={index}>{block.text}</h2>;
-                        if (block.type === "subsection") return <h3 key={index}>{block.text}</h3>;
-                        return <p key={index}>{block.text}</p>;
-                      })}
-                      {!preview.blocks.length && <p className="latex-empty">Your article preview will appear here as you write.</p>}
-                    </article>
-                  ) : (
-                    <pre className="latex-bib-preview">{workspace.references_bib || "% Add citations from saved literature to build this bibliography."}</pre>
-                  )}
-                  <p className="latex-preview-note">Quick structural preview only. Use Compile PDF for full TeX output.</p>
-                </div>
-              )}
-              {paneMode === "pdf" && (
-                <div className="latex-preview-pane latex-pdf-pane">
-                  <div className="latex-editor-caption"><FileOutput size={13} /> Compiled PDF</div>
-                  {pdfUrl
-                    ? <iframe className="latex-pdf-frame" src={pdfUrl} title="Compiled research draft PDF" />
-                    : <p className="latex-empty">Compile the saved draft to view its PDF here.</p>}
-                </div>
-              )}
-            </div>
+                </Suspense>
+              </div>
+            )}
           </div>
         </div>
       )}

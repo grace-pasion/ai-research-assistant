@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,7 @@ def test_compiler_checks_citations_before_requiring_texlive():
 
 def test_compiler_runs_bibtex_and_pdflatex_without_shell_escape(monkeypatch):
     calls = []
+    copied_assets = {}
 
     def which(binary):
         return (
@@ -47,6 +49,10 @@ def test_compiler_runs_bibtex_and_pdflatex_without_shell_escape(monkeypatch):
     def fake_run(command, *, cwd, env, **kwargs):
         calls.append((command, cwd, env, kwargs))
         if any("pdflatex" in argument for argument in command):
+            source_file = Path(next(argument for argument in command if argument.endswith("main.tex")))
+            asset_dir = source_file.parent / "python-output"
+            copied_assets["figure.png"] = (asset_dir / "figure.png").read_bytes()
+            copied_assets["table.tex"] = (asset_dir / "table.tex").read_text(encoding="utf-8")
             output_dir = next(
                 argument.split("=", 1)[1]
                 for argument in command
@@ -70,9 +76,17 @@ def test_compiler_runs_bibtex_and_pdflatex_without_shell_escape(monkeypatch):
         r"\begin{document}\citep{smith2024}\bibliographystyle{plainnat}"
         r"\bibliography{references}\end{document}",
         "@article{smith2024, title={A study}}",
+        {
+            "figure.png": b"\x89PNG\r\n\x1a\nfigure-bytes",
+            "table.tex": r"\begin{tabular}{c}Study\end{tabular}".encode("utf-8"),
+        },
     )
 
     assert pdf.startswith(b"%PDF-")
+    assert copied_assets == {
+        "figure.png": b"\x89PNG\r\n\x1a\nfigure-bytes",
+        "table.tex": r"\begin{tabular}{c}Study\end{tabular}",
+    }
     assert sum(any("pdflatex" in argument for argument in call[0]) for call in calls) == 3
     assert sum(any("bibtex" in argument for argument in call[0]) for call in calls) == 1
     for command, _cwd, env, kwargs in calls:
@@ -87,3 +101,12 @@ def test_compiler_reports_unavailable_texlive(monkeypatch):
     monkeypatch.setattr(latex_compiler.shutil, "which", lambda _binary: None)
     with pytest.raises(LatexCompilerUnavailable, match="pdflatex"):
         compile_latex(r"\begin{document}Hello\end{document}", "")
+
+
+def test_compiler_rejects_unsafe_generated_asset_paths_before_invoking_tex():
+    with pytest.raises(LatexCompilationError, match="path separators"):
+        compile_latex(
+            r"\begin{document}Hello\end{document}",
+            "",
+            {"../outside.tex": r"\input{secret}"},
+        )

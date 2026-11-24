@@ -21,6 +21,8 @@ from app.models import (
     PaperAuthor,
     ProjectInvitation,
     ProjectPaper,
+    PythonWorkspace,
+    PythonWorkspaceArtifact,
     ResearchProject,
     SystematicReviewWorkspace,
     User,
@@ -42,6 +44,8 @@ def project_export_databases(tmp_path):
         ProjectPaper,
         Annotation,
         LatexWorkspace,
+        PythonWorkspace,
+        PythonWorkspaceArtifact,
         SystematicReviewWorkspace,
         Conversation,
         Message,
@@ -132,6 +136,26 @@ def project_export_databases(tmp_path):
                 project_id=project.project_id,
                 review_question="What can be preserved?",
                 protocol="Include portable studies.",
+            )
+        )
+        db.add(
+            PythonWorkspace(
+                project_id=project.project_id,
+                code="print('portable')",
+                files=[
+                    {"filename": "main.py", "code": "print('portable')"},
+                    {"filename": "analysis.py", "code": "from helpers import summarize"},
+                    {"filename": "helpers.py", "code": "def summarize(): return 1"},
+                ],
+            )
+        )
+        db.add(
+            PythonWorkspaceArtifact(
+                project_id=project.project_id,
+                filename="figure.png",
+                content_type="image/png",
+                content=b"\x89PNG\r\n\x1a\nfigure",
+                byte_size=14,
             )
         )
         owner_conversation = Conversation(
@@ -228,6 +252,10 @@ def test_project_export_contains_shared_content_but_omits_optional_private_data_
             "notes/annotations.json",
             "writing/main.tex",
             "writing/references.bib",
+            "writing/python/main.py",
+            "writing/python/analysis.py",
+            "writing/python/helpers.py",
+            "writing/python-output/figure.png",
             "review/systematic_review.json",
         }.issubset(names)
         assert not any(name.startswith("original_documents/") for name in names)
@@ -254,6 +282,11 @@ def test_project_export_contains_shared_content_but_omits_optional_private_data_
         assert notes[0]["note"] == "Keep this passage."
         assert archive.read("writing/main.tex").decode("utf-8") == r"\section{Findings}"
         assert "portable2024" in archive.read("writing/references.bib").decode("utf-8")
+        assert archive.read("writing/python/main.py").decode("utf-8") == "print('portable')"
+        assert archive.read("writing/python/analysis.py").decode("utf-8") == "from helpers import summarize"
+        assert archive.read("writing/python-output/figure.png") == b"\x89PNG\r\n\x1a\nfigure"
+        assert manifest["python_workspace_saved"] is True
+        assert manifest["python_artifact_count"] == 1
 
 
 def test_optional_export_includes_original_bytes_and_only_requesters_conversations(

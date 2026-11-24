@@ -12,6 +12,7 @@ from app.database import (
     ensure_project_collaboration_columns,
     ensure_project_paper_screening_columns,
     ensure_project_team_workspace_column,
+    ensure_python_workspace_files_column,
     ensure_user_profile_picture_column,
     ensure_user_username_column,
     initialize_database,
@@ -29,6 +30,7 @@ from app.routers import (
     papers,
     project_exports,
     projects,
+    python_workspace,
     source_summaries,
     team_workspaces,
     usage,
@@ -57,6 +59,7 @@ async def lifespan(app: FastAPI):
     ensure_document_chunk_page_column(research_engine)
     ensure_project_team_workspace_column(research_engine)
     ensure_project_collaboration_columns(research_engine)
+    ensure_python_workspace_files_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield
     research_engine.dispose()
@@ -84,6 +87,7 @@ app.include_router(projects.router)
 app.include_router(collaboration.router)
 app.include_router(team_workspaces.router)
 app.include_router(latex.router)
+app.include_router(python_workspace.router)
 app.include_router(documents.router)
 app.include_router(papers.router)
 app.include_router(annotations.router)

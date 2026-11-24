@@ -8,7 +8,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import LatexWorkspace, ProjectInvitation, ResearchProject, TeamWorkspace, User, UserActivity
+from app.models import (
+    LatexWorkspace,
+    ProjectInvitation,
+    PythonWorkspaceArtifact,
+    ResearchProject,
+    TeamWorkspace,
+    User,
+    UserActivity,
+)
 from app.routers import latex
 from app.routers.latex import (
     DEFAULT_MAIN_TEX,
@@ -23,7 +31,15 @@ from app.security import get_current_user
 @pytest.fixture
 def latex_database(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'latex.sqlite'}")
-    for model in (User, TeamWorkspace, ResearchProject, ProjectInvitation, LatexWorkspace, UserActivity):
+    for model in (
+        User,
+        TeamWorkspace,
+        ResearchProject,
+        ProjectInvitation,
+        LatexWorkspace,
+        PythonWorkspaceArtifact,
+        UserActivity,
+    ):
         model.__table__.create(engine)
     with Session(engine) as db:
         user = User(email="writer@example.com", name="Writer", password_hash="hashed")
@@ -149,7 +165,7 @@ def test_compile_returns_pdf_for_readers_and_checks_project_access(latex_databas
         )
     )
     db.commit()
-    monkeypatch.setattr(latex, "compile_latex", lambda _main, _bib: b"%PDF-1.7 test")
+    monkeypatch.setattr(latex, "compile_latex", lambda _main, _bib, _assets: b"%PDF-1.7 test")
 
     response = compile_latex_workspace(project.project_id, db, reader)
     assert response.media_type == "application/pdf"
@@ -190,7 +206,11 @@ def test_compile_http_route_returns_pdf_bytes(latex_database, monkeypatch):
     api.include_router(latex.router)
     api.dependency_overrides[get_db] = lambda: db
     api.dependency_overrides[get_current_user] = lambda: owner
-    monkeypatch.setattr(latex, "compile_latex", lambda _main, _bib: b"%PDF-1.7 route test")
+    monkeypatch.setattr(
+        latex,
+        "compile_latex",
+        lambda _main, _bib, _assets: b"%PDF-1.7 route test",
+    )
 
     with TestClient(api) as client:
         response = client.post(f"/api/projects/{project.project_id}/latex/compile")
