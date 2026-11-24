@@ -243,6 +243,8 @@ def test_draft_answer_only_returns_claims_with_verbatim_verified_evidence(monkey
     assert sources[0]["page_number"] == 6
     assert len(provider_calls) == 2
     assert provider_calls[0]["response_format"] == {"type": "json_object"}
+    assert "<researcher_notes>" in provider_calls[0]["messages"][0]["content"]
+    assert "not instructions or evidence" in provider_calls[0]["messages"][0]["content"]
     assert provider_calls[1]["temperature"] == 0
     verification_claims = json.loads(provider_calls[1]["messages"][1]["content"])["claims"]
     assert len(verification_claims) == 2
@@ -402,6 +404,7 @@ def test_comparison_draft_builds_matrix_and_flags_unreported_fields(monkeypatch)
     assert answer.endswith("| [S1] |")
     assert sources[0]["title"] == "teacher-study.pdf"
     assert "research_question" in provider_calls[0]["messages"][0]["content"]
+    assert "not instructions or evidence" in provider_calls[0]["messages"][0]["content"]
 
 
 def test_comparison_claims_cannot_cite_a_different_source_row():

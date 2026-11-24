@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, project sharing, workspace/project channels and direct messages, document and paper views, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
+| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, project sharing, workspace/project channels and direct messages, document and paper views, project-wide annotation library, LaTeX editor, source annotations, assistant review UI, and cited research brief export. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -64,7 +64,7 @@ OpenAI request failures are returned as HTTP 502 responses, while a missing API 
 - **Project invitations and notifications:** `project_invitations` stores inviter, invitee, project, status (`pending`, `accepted`, or `declined`), and timestamps. `notifications` records invitations, invitation responses, direct messages, and saved-search alerts for inbox display; notification details are stored as JSON.
 - **Direct messages:** `direct_messages` stores sender, recipient, message text, creation time, and read time. Messages are private to the two users; notification rows link to the original message.
 - **LaTeX workspaces:** one project-owned `latex_workspaces` row per project stores `main.tex`, `references.bib`, and its last-update timestamp in the research database. Accepted collaborators can read and edit it. Polling syncs saved changes, and timestamp checks reject stale saves rather than silently overwriting another user's newer edit.
-- **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
+- **Annotations:** the `annotations` table in the research database stores project-owned notes and optional highlighted excerpts, with document IDs or paper IDs and source offsets. Document and project deletion cascade to their annotations; saved-paper annotations are only available while the paper is saved in that project. The project-wide Notes view reads the annotations with document filenames and paper titles from their respective databases; selected note content can be added to an assistant prompt as explicitly untrusted context, not source evidence. Since records live in PostgreSQL rather than browser storage, they survive logout, login, and API restarts.
 - **Document retrieval:** document chunks and 1,536-dimensional embeddings, queried with pgvector cosine distance. PDF chunks retain their 1-based page number; other document chunks have no page locator. Existing research databases receive the nullable chunk page column additively at startup; already-processed PDFs need reprocessing once to populate page locators.
 - **Literature:** cached paper and author metadata, search-query history/results, project- and user-scoped saved searches with seen provider result IDs and optional six-hour alerts, and project-to-paper relationships with a persistent screening status (`unread`, `undecided`, `include`, or `exclude`) and optional short note. Existing databases receive the notification-details column additively at startup.
 - **Assistant history:** conversations, reviewed user/assistant messages, and ordered references to document chunks or saved papers. A conversation is created only after the user approves a draft.
@@ -125,6 +125,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 2. The browser lets the user select text and save it as a highlight, optionally with a note. Notes can also be saved without a selection; existing notes can be edited or deleted.
 3. The API verifies project access and that paper annotations target a paper saved in that project. It validates selected text offsets against the current source, then stores annotations in the research database. Offsets use Unicode code points so the saved highlight can be restored after reload.
 4. Annotations are shared with project collaborators and persist across sessions. Annotation activity does not include passage or note contents in the metadata-only activity log.
+5. The project-wide **Notes** view loads annotations across both source types, lets the user search note/highlight/source text, filter by documents or papers, sort by update time, and open the annotated source. Selected notes can be appended to a **Compare sources** prompt in a length-bounded, structured block. That block is treated as untrusted context, not evidence or instructions; generated claims still require cited retrieved-source excerpts.
 
 ### Ask the research assistant
 
@@ -190,6 +191,8 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Import available open-access PDFs for saved papers; after processing, query their extracted full text through Documents search or the research assistant. Upload a copy when no open-access PDF is available.
 - Screen saved papers as unread, undecided, included, or excluded; add an optional short reason and track project-level screening progress.
 - Open a saved paper's available abstract to highlight passages and add, edit, or delete persistent project notes.
+- Search and organize annotations from saved documents and papers in the project **Notes** view; filter by source type, sort by update time, and reopen the annotation's source.
+- Select annotations to add them to a source-comparison prompt as bounded researcher context. Note text is not treated as evidence; the assistant must support factual claims with retrieved source excerpts.
 
 ### Source-grounded assistant
 
@@ -254,6 +257,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/documents` | List project documents and processing states. |
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
 | `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |
+| `GET` | `/api/projects/{project_id}/annotations?q=...` | List project annotations with document/paper source labels; optional search across source title, highlight, and note. |
 | `POST` | `/api/projects/{project_id}/documents` | Upload a document. |
 | `POST` | `/api/projects/{project_id}/documents/bulk` | Upload up to 20 documents with an independent accepted/error result for each file; accepted documents are processed in the API background. |
 | `GET` | `/api/documents/{document_id}/download` | Download the original document. |

@@ -153,6 +153,57 @@ def test_annotations_are_scoped_to_the_project_owner(annotation_databases):
     assert error.value.status_code == 404
 
 
+def test_project_annotations_combine_and_search_saved_sources(annotation_databases):
+    db, literature_db, user, project, document, paper = annotation_databases
+    document_annotation = Annotation(
+        project_id=project.project_id,
+        document_id=document.document_id,
+        quote="uploaded study",
+        note="Check the methods.",
+    )
+    paper_annotation = Annotation(
+        project_id=project.project_id,
+        paper_id=paper.paper_id,
+        quote="published study",
+        note="Important finding.",
+    )
+    db.add_all([document_annotation, paper_annotation])
+    db.commit()
+
+    all_annotations = annotations.list_project_annotations(
+        project.project_id, db=db, literature_db=literature_db, user=user
+    )
+    assert {item.source_type for item in all_annotations} == {"document", "paper"}
+    assert {item.source_title for item in all_annotations} == {"study.txt", "A saved study"}
+
+    matching = annotations.list_project_annotations(
+        project.project_id, q="important finding", db=db, literature_db=literature_db, user=user
+    )
+    assert len(matching) == 1
+    assert matching[0].annotation_id == paper_annotation.annotation_id
+
+    db.delete(db.get(ProjectPaper, (project.project_id, paper.paper_id)))
+    remaining = annotations.list_project_annotations(
+        project.project_id, db=db, literature_db=literature_db, user=user
+    )
+    assert [item.annotation_id for item in remaining] == [document_annotation.annotation_id]
+
+
+def test_project_annotations_require_project_access(annotation_databases):
+    db, literature_db, _, project, _, _ = annotation_databases
+    other_user = User(
+        user_id=uuid.uuid4(),
+        email="other@example.com",
+        name="Other",
+        password_hash="hashed",
+    )
+    with pytest.raises(HTTPException) as error:
+        annotations.list_project_annotations(
+            project.project_id, db=db, literature_db=literature_db, user=other_user
+        )
+    assert error.value.status_code == 404
+
+
 def test_document_reader_returns_extracted_text_only_to_the_owner(annotation_databases):
     db, _, user, _, document, _ = annotation_databases
     result = documents.read_document_text(document.document_id, db, user)

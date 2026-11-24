@@ -465,6 +465,11 @@ class AnnotationResponse(APIModel):
     updated_at: datetime
 
 
+class ProjectAnnotationResponse(AnnotationResponse):
+    source_type: Literal["document", "paper"]
+    source_title: str
+
+
 class PaperAuthorResponse(BaseModel):
     author_id: uuid.UUID
     author_name: str

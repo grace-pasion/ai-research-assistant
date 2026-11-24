@@ -117,6 +117,11 @@ export type Annotation = {
   updated_at: string;
 };
 
+export type ProjectAnnotation = Annotation & {
+  source_type: "document" | "paper";
+  source_title: string;
+};
+
 export type Paper = {
   paper_id: string;
   external_paper_id: string;

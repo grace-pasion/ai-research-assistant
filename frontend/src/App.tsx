@@ -43,6 +43,12 @@ import {
   type ScreeningSort,
   type ScreeningStatusFilter,
 } from "./literatureScreening";
+import {
+  filterProjectAnnotations,
+  formatSelectedAnnotations,
+  type AnnotationSort,
+  type AnnotationSourceFilter,
+} from "./projectAnnotations";
 import type {
   AIUsageResponse,
   Annotation,
@@ -54,6 +60,7 @@ import type {
   Message,
   PaperImportResponse,
   Paper,
+  ProjectAnnotation,
   Project,
   SavedPaperSearch,
   SavedPaperSearchRun,
@@ -63,7 +70,7 @@ import type {
   User,
 } from "./types";
 
-type View = "documents" | "papers" | "latex" | "assistant";
+type View = "documents" | "papers" | "notes" | "latex" | "assistant";
 type LoginResponse = { access_token: string; user: User };
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
@@ -116,6 +123,11 @@ function App() {
   const [citationPage, setCitationPage] = useState<number | null>(null);
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
   const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
+  const [projectAnnotations, setProjectAnnotations] = useState<ProjectAnnotation[]>([]);
+  const [annotationQuery, setAnnotationQuery] = useState("");
+  const [annotationSourceFilter, setAnnotationSourceFilter] = useState<AnnotationSourceFilter>("all");
+  const [annotationSort, setAnnotationSort] = useState<AnnotationSort>("newest");
+  const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(() => new Set());
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -155,6 +167,7 @@ function App() {
 
   useEffect(() => {
     setSelectedPaperIds(new Set());
+    setSelectedAnnotationIds(new Set());
   }, [project?.project_id]);
 
   const request = useCallback(
@@ -254,10 +267,31 @@ function App() {
     selectedProjectIdRef.current = project?.project_id ?? null;
     setDocuments([]);
     setPapers([]);
+    setProjectAnnotations([]);
     setSavedPaperSearches([]);
     setConversations([]);
     setAiUsage(null);
   }, [project?.project_id, token]);
+
+  useEffect(() => {
+    if (!project || !token || view !== "notes") return;
+    let active = true;
+    const loadAnnotations = () => {
+      request<ProjectAnnotation[]>(`/api/projects/${project.project_id}/annotations`)
+        .then((loaded) => {
+          if (active) setProjectAnnotations(loaded);
+        })
+        .catch((cause: unknown) => {
+          if (active) setError(cause instanceof Error ? cause.message : "Could not load project notes.");
+        });
+    };
+    loadAnnotations();
+    const timer = window.setInterval(loadAnnotations, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [project?.project_id, request, token, view]);
 
   useEffect(() => {
     if (!project || !token) {
@@ -334,6 +368,19 @@ function App() {
     [papers, screeningFilter, screeningQuery, screeningSort],
   );
   const selectedScreeningCount = papers.filter((paper) => selectedPaperIds.has(paper.paper_id)).length;
+  const visibleProjectAnnotations = useMemo(
+    () => filterProjectAnnotations(
+      projectAnnotations,
+      annotationQuery,
+      annotationSourceFilter,
+      annotationSort,
+    ),
+    [annotationQuery, annotationSourceFilter, annotationSort, projectAnnotations],
+  );
+  const selectedProjectAnnotationCount = projectAnnotations
+    .filter((annotation) => selectedAnnotationIds.has(annotation.annotation_id)).length;
+  const allVisibleAnnotationsSelected = visibleProjectAnnotations.length > 0
+    && visibleProjectAnnotations.every((annotation) => selectedAnnotationIds.has(annotation.annotation_id));
   const allVisibleScreeningPapersSelected = visibleScreeningPapers.length > 0
     && visibleScreeningPapers.every((paper) => selectedPaperIds.has(paper.paper_id));
   const openedDocument = annotationDocumentId
@@ -349,6 +396,50 @@ function App() {
     setCitationPage(pageNumber);
     setCitationExcerpt(excerpt);
     setView("documents");
+  }
+
+  function openProjectAnnotation(annotation: ProjectAnnotation) {
+    if (annotation.document_id) {
+      openDocumentEvidence(annotation.document_id);
+      return;
+    }
+    if (annotation.paper_id) {
+      setScreeningQuery(annotation.source_title);
+      setScreeningFilter("all");
+      setAnnotationPaperId(annotation.paper_id);
+      setView("papers");
+    }
+  }
+
+  function toggleAnnotationSelection(annotationId: string, selected: boolean) {
+    setSelectedAnnotationIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(annotationId);
+      else next.delete(annotationId);
+      return next;
+    });
+  }
+
+  function useSelectedAnnotationsInAssistant() {
+    const baseQuestion = question.trim() || "Compare the selected notes with my project sources.";
+    const remainingChars = Math.max(0, 5000 - baseQuestion.length - 2);
+    const formatted = formatSelectedAnnotations(
+      projectAnnotations,
+      selectedAnnotationIds,
+      remainingChars,
+    );
+    if (!formatted.includedCount) {
+      setError("The selected notes do not fit in the assistant prompt. Shorten the prompt or select fewer notes.");
+      return;
+    }
+    setError("");
+    setNotice(formatted.omittedCount
+      ? `${formatted.includedCount} selected notes added; ${formatted.omittedCount} did not fit.`
+      : `${formatted.includedCount} selected ${formatted.includedCount === 1 ? "note" : "notes"} added to the comparison prompt.`);
+    setAskMode("compare");
+    setQuestion(`${baseQuestion}\n\n${formatted.text}`);
+    setSelectedAnnotationIds(new Set());
+    setView("assistant");
   }
 
   function openSource(source: Source) {
@@ -1473,6 +1564,7 @@ function App() {
               <div className="tab-bar" role="tablist" aria-label="Project sections">
                 <TabButton active={view === "documents"} onClick={() => setView("documents")} icon={<FileText size={16} />}>Documents</TabButton>
                 <TabButton active={view === "papers"} onClick={() => setView("papers")} icon={<Library size={16} />}>Literature</TabButton>
+                <TabButton active={view === "notes"} onClick={() => setView("notes")} icon={<BookOpen size={16} />}>Notes</TabButton>
                 <TabButton active={view === "latex"} onClick={() => setView("latex")} icon={<FileCode2 size={16} />}>Main document</TabButton>
                 <TabButton active={view === "assistant"} onClick={() => setView("assistant")} icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
               </div>
@@ -1625,6 +1717,98 @@ function App() {
                       )}
                       {processing && <p className="processing-note"><LoaderCircle className="spin" size={15} /> Extracting text and preparing documents…</p>}
                     </>
+                  )}
+                </section>
+              )}
+
+              {view === "notes" && (
+                <section className="section-content">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Project notes and highlights</h2>
+                      <p>Search saved annotations across documents and papers, then select notes to add as context to a source comparison.</p>
+                    </div>
+                    <button
+                      className="button primary"
+                      disabled={!selectedProjectAnnotationCount}
+                      onClick={useSelectedAnnotationsInAssistant}
+                    >
+                      <MessageSquareText size={15} /> Use selected in comparison ({selectedProjectAnnotationCount})
+                    </button>
+                  </div>
+                  <div className="annotation-library-controls">
+                    <input
+                      type="search"
+                      value={annotationQuery}
+                      onChange={(event) => setAnnotationQuery(event.target.value)}
+                      placeholder="Search notes, highlights, or sources…"
+                      aria-label="Search project notes and highlights"
+                    />
+                    <select
+                      value={annotationSourceFilter}
+                      onChange={(event) => setAnnotationSourceFilter(event.target.value as AnnotationSourceFilter)}
+                      aria-label="Filter notes by source type"
+                    >
+                      <option value="all">All sources</option>
+                      <option value="document">Documents</option>
+                      <option value="paper">Papers</option>
+                    </select>
+                    <select
+                      value={annotationSort}
+                      onChange={(event) => setAnnotationSort(event.target.value as AnnotationSort)}
+                      aria-label="Sort project notes"
+                    >
+                      <option value="newest">Recently updated</option>
+                      <option value="oldest">Least recently updated</option>
+                    </select>
+                    <button
+                      className="button secondary small-button"
+                      disabled={!visibleProjectAnnotations.length}
+                      onClick={() => setSelectedAnnotationIds((current) => {
+                        const next = new Set(current);
+                        for (const annotation of visibleProjectAnnotations) {
+                          if (allVisibleAnnotationsSelected) next.delete(annotation.annotation_id);
+                          else next.add(annotation.annotation_id);
+                        }
+                        return next;
+                      })}
+                    >
+                      {allVisibleAnnotationsSelected ? "Clear visible selection" : "Select visible"}
+                    </button>
+                  </div>
+                  {visibleProjectAnnotations.length ? (
+                    <div className="annotation-library-list">
+                      {visibleProjectAnnotations.map((annotation) => (
+                        <article className="annotation-library-card" key={annotation.annotation_id}>
+                          <label className="annotation-library-select">
+                            <input
+                              type="checkbox"
+                              checked={selectedAnnotationIds.has(annotation.annotation_id)}
+                              onChange={(event) => toggleAnnotationSelection(annotation.annotation_id, event.target.checked)}
+                              aria-label={`Select note from ${annotation.source_title}`}
+                            />
+                          </label>
+                          <div className="annotation-library-body">
+                            <div className="annotation-library-source">
+                              <span>{annotation.source_type === "document" ? "DOCUMENT" : "PAPER"}</span>
+                              <button type="button" onClick={() => openProjectAnnotation(annotation)}>
+                                {annotation.source_title}
+                              </button>
+                            </div>
+                            {annotation.quote && <blockquote>{annotation.quote}</blockquote>}
+                            {annotation.note && <p>{annotation.note}</p>}
+                            <small>Updated {new Date(annotation.updated_at).toLocaleDateString()}</small>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="annotation-library-empty">
+                      <BookOpen size={22} />
+                      <p>{projectAnnotations.length
+                        ? "No saved notes match these filters."
+                        : "No notes or highlights yet. Annotate a document or saved paper to see it here."}</p>
+                    </div>
                   )}
                 </section>
               )}

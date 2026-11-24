@@ -1,13 +1,19 @@
 import re
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db, get_literature_db
 from app.models import Annotation, Document, Paper, ProjectPaper, User
-from app.schemas import AnnotationCreate, AnnotationResponse, AnnotationUpdate
+from app.schemas import (
+    AnnotationCreate,
+    AnnotationResponse,
+    AnnotationUpdate,
+    ProjectAnnotationResponse,
+)
 from app.security import get_current_user, require_project_access
 
 router = APIRouter(tags=["annotations"])
@@ -83,6 +89,76 @@ def _get_annotation(
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found.")
     return annotation
+
+
+@router.get(
+    "/api/projects/{project_id}/annotations",
+    response_model=list[ProjectAnnotationResponse],
+)
+def list_project_annotations(
+    project_id: uuid.UUID,
+    q: Annotated[str, Query(max_length=200)] = "",
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    annotations = db.scalars(
+        select(Annotation)
+        .where(Annotation.project_id == project_id)
+        .order_by(Annotation.updated_at.desc(), Annotation.annotation_id)
+    ).all()
+    document_ids = {item.document_id for item in annotations if item.document_id is not None}
+    paper_ids = {item.paper_id for item in annotations if item.paper_id is not None}
+    saved_paper_ids = set(
+        db.scalars(
+            select(ProjectPaper.paper_id).where(
+                ProjectPaper.project_id == project_id,
+                ProjectPaper.paper_id.in_(paper_ids),
+            )
+        ).all()
+    ) if paper_ids else set()
+    paper_ids.intersection_update(saved_paper_ids)
+    documents = db.scalars(
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.document_id.in_(document_ids),
+        )
+    ).all() if document_ids else []
+    papers = literature_db.scalars(
+        select(Paper).where(Paper.paper_id.in_(paper_ids))
+    ).all() if paper_ids else []
+    documents_by_id = {document.document_id: document for document in documents}
+    papers_by_id = {paper.paper_id: paper for paper in papers}
+    search_text = q.strip().casefold()
+    results = []
+    for annotation in annotations:
+        if annotation.document_id is not None:
+            source_type = "document"
+            source = documents_by_id.get(annotation.document_id)
+            if source is None:
+                continue
+            source_title = source.filename
+        else:
+            source_type = "paper"
+            if annotation.paper_id not in saved_paper_ids:
+                continue
+            source = papers_by_id.get(annotation.paper_id)
+            if source is None:
+                continue
+            source_title = source.title
+        if search_text and search_text not in " ".join(
+            (source_title, annotation.quote or "", annotation.note)
+        ).casefold():
+            continue
+        results.append(
+            ProjectAnnotationResponse(
+                **AnnotationResponse.model_validate(annotation).model_dump(),
+                source_type=source_type,
+                source_title=source_title,
+            )
+        )
+    return results
 
 
 @router.get(
