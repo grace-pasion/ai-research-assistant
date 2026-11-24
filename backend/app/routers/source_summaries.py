@@ -19,7 +19,10 @@ from app.models import (
 )
 from app.schemas import ProjectSourceSummaryRequest, ProjectSourceSummaryResponse
 from app.security import get_current_user, require_project_access
-from app.services.source_summarization import generate_source_summary
+from app.services.source_summarization import (
+    SOURCE_SUMMARY_POLICY_VERSION,
+    generate_source_summary,
+)
 
 router = APIRouter(tags=["source-summaries"])
 
@@ -130,9 +133,10 @@ def summarize_project_source(
             db, literature_db, project_id, payload.source_id
         )
 
-    source_hash = hashlib.sha256(
-        f"{payload.source_type}\0{title}\0{source_text}".encode("utf-8")
-    ).hexdigest()
+    source_fingerprint = "\0".join(
+        (SOURCE_SUMMARY_POLICY_VERSION, payload.source_type, title, source_text)
+    )
+    source_hash = hashlib.sha256(source_fingerprint.encode("utf-8")).hexdigest()
     summary = db.scalar(
         select(ProjectSourceSummary)
         .where(

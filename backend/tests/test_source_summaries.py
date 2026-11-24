@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from types import SimpleNamespace
 
@@ -143,6 +144,35 @@ def test_changed_document_text_generates_a_new_saved_summary(summary_context, mo
     assert second.cached is False
     assert len(generated) == 2
     assert db.query(ProjectSourceSummary).count() == 1
+
+
+def test_summary_policy_change_regenerates_existing_cache(summary_context, monkeypatch):
+    db, literature_db, owner, project, document, _ = summary_context
+    old_hash = hashlib.sha256(
+        f"document\0{document.filename}\0{document.extracted_text}".encode("utf-8")
+    ).hexdigest()
+    db.add(
+        ProjectSourceSummary(
+            project_id=project.project_id,
+            source_type="document",
+            source_id=document.document_id,
+            source_hash=old_hash,
+            summary_text="A previously cached summary.",
+        )
+    )
+    db.commit()
+    generated = []
+    monkeypatch.setattr(
+        source_summaries,
+        "generate_source_summary",
+        lambda title, text: generated.append((title, text)) or "A refreshed summary.",
+    )
+
+    result = _summarize(db, literature_db, owner, project, "document", document.document_id)
+
+    assert result.summary == "A refreshed summary."
+    assert result.cached is False
+    assert generated == [(document.filename, document.extracted_text)]
 
 
 def test_saved_paper_summary_prefers_imported_full_text(summary_context, monkeypatch):
@@ -340,6 +370,9 @@ def test_summary_service_uses_configured_ai_and_treats_source_as_untrusted(monke
     assert calls[0]["messages"][0]["role"] == "system"
     assert "untrusted data" in calls[0]["messages"][0]["content"]
     assert "Study findings." in calls[0]["messages"][1]["content"]
+    assert "do not strengthen comparisons" in calls[0]["messages"][0]["content"]
+    assert "Preserve the source's distinctions and qualifiers" in calls[0]["messages"][1]["content"]
+    assert "omit the detail rather than infer it" in calls[0]["messages"][1]["content"]
 
 
 def test_summary_service_synthesizes_long_sources_in_chunks(monkeypatch):
