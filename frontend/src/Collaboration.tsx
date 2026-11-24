@@ -336,10 +336,28 @@ export function InboxDialog({
                       </button>
                     </>
                   ) : (
+                    notification.kind === "saved_search_alert" ? (
+                      <>
+                        <strong>New research matches</strong>: {notification.details.new_result_count ?? 0} new
+                        {" "}{notification.details.provider ?? "academic search"} result
+                        {(notification.details.new_result_count ?? 0) === 1 ? "" : "s"} for{" "}
+                        <strong>{notification.details.query ?? "a saved search"}</strong> in{" "}
+                        <strong>{notification.project_name}</strong>.
+                        <button
+                          className="text-button"
+                          onClick={() => void markRead(notification).catch((cause: unknown) =>
+                            setError(cause instanceof Error ? cause.message : "Could not update the notification."),
+                          )}
+                        >
+                          Mark read
+                        </button>
+                      </>
+                    ) : (
                     <>
                       <strong>{notification.actor_name}</strong> sent you a message.
                       <button className="text-button" onClick={() => openMessage(notification)}>Open conversation</button>
                     </>
+                    )
                   )}
                   <small>{new Date(notification.created_at).toLocaleString()}</small>
                 </div>

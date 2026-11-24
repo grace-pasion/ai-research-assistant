@@ -351,7 +351,7 @@ class MessageThreadResponse(BaseModel):
 
 class NotificationResponse(BaseModel):
     notification_id: uuid.UUID
-    kind: Literal["project_invitation", "invitation_response", "message"]
+    kind: Literal["project_invitation", "invitation_response", "message", "saved_search_alert"]
     actor_id: uuid.UUID
     actor_name: str
     actor_username: str | None
@@ -361,6 +361,7 @@ class NotificationResponse(BaseModel):
     invitation_id: uuid.UUID | None
     invitation_status: Literal["pending", "accepted", "declined"] | None
     message_id: uuid.UUID | None
+    details: dict[str, str | int] = Field(default_factory=dict)
     created_at: datetime
     read_at: datetime | None
 
@@ -521,6 +522,34 @@ class PaperSearchResponse(BaseModel):
     provider: str
     query: str
     results: list[PaperResponse]
+
+
+class SavedPaperSearchCreate(BaseModel):
+    query_id: uuid.UUID
+    alert_enabled: bool = False
+
+
+class SavedPaperSearchUpdate(BaseModel):
+    alert_enabled: bool
+
+
+class SavedPaperSearchResponse(APIModel):
+    saved_search_id: uuid.UUID
+    project_id: uuid.UUID
+    query_text: str
+    api_provider: str
+    alert_enabled: bool
+    last_checked_at: datetime | None
+    created_at: datetime
+
+
+class SavedPaperSearchRunResponse(PaperSearchResponse):
+    new_result_count: int
+
+
+class SavedPaperSearchAlertsCheckResponse(BaseModel):
+    checked_count: int
+    notifications_created: int
 
 
 class PaperImportResult(BaseModel):

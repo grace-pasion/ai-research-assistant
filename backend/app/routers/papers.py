@@ -3,6 +3,7 @@ import io
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -23,8 +24,10 @@ from app.models import (
     PaperAuthor,
     ProjectPaper,
     ResearchProject,
+    SavedPaperSearch,
     SearchQuery,
     SearchQueryResult,
+    Notification,
     User,
 )
 from app.schemas import (
@@ -35,6 +38,11 @@ from app.schemas import (
     PaperScreeningBulkResponse,
     PaperScreeningBulkUpdate,
     PaperScreeningUpdate,
+    SavedPaperSearchAlertsCheckResponse,
+    SavedPaperSearchCreate,
+    SavedPaperSearchResponse,
+    SavedPaperSearchRunResponse,
+    SavedPaperSearchUpdate,
     PaperSearchResponse,
 )
 from app.security import get_current_user, require_project_access
@@ -305,6 +313,240 @@ def search(
         provider=provider,
         query=q.strip(),
         results=[_paper_response(paper, literature_db) for paper in papers],
+    )
+
+
+def _saved_paper_search(
+    db: Session,
+    project_id: uuid.UUID,
+    saved_search_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> SavedPaperSearch:
+    saved_search = db.scalar(
+        select(SavedPaperSearch).where(
+            SavedPaperSearch.saved_search_id == saved_search_id,
+            SavedPaperSearch.project_id == project_id,
+            SavedPaperSearch.user_id == user_id,
+        )
+    )
+    if saved_search is None:
+        raise HTTPException(status_code=404, detail="Saved search not found in this project.")
+    return saved_search
+
+
+@router.get("/saved-searches", response_model=list[SavedPaperSearchResponse])
+def list_saved_searches(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    return db.scalars(
+        select(SavedPaperSearch)
+        .where(
+            SavedPaperSearch.project_id == project_id,
+            SavedPaperSearch.user_id == user.user_id,
+        )
+        .order_by(SavedPaperSearch.created_at.desc())
+    ).all()
+
+
+@router.post(
+    "/saved-searches",
+    response_model=SavedPaperSearchResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_saved_search(
+    project_id: uuid.UUID,
+    payload: SavedPaperSearchCreate,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    query = db.scalar(
+        select(SearchQuery).where(
+            SearchQuery.query_id == payload.query_id,
+            SearchQuery.project_id == project_id,
+        )
+    )
+    if query is None:
+        raise HTTPException(status_code=404, detail="Search history entry not found in this project.")
+
+    existing = db.scalar(
+        select(SavedPaperSearch).where(
+            SavedPaperSearch.project_id == project_id,
+            SavedPaperSearch.user_id == user.user_id,
+            SavedPaperSearch.query_text == query.query_text,
+            SavedPaperSearch.api_provider == query.api_provider,
+        )
+    )
+    if existing is not None:
+        if payload.alert_enabled and not existing.alert_enabled:
+            existing.alert_enabled = True
+            db.commit()
+        return existing
+
+    result_ids = db.scalars(
+        select(SearchQueryResult.paper_id).where(SearchQueryResult.query_id == query.query_id)
+    ).all()
+    papers = literature_db.scalars(select(Paper).where(Paper.paper_id.in_(result_ids))).all()
+    saved_search = SavedPaperSearch(
+        project_id=project_id,
+        user_id=user.user_id,
+        query_text=query.query_text,
+        api_provider=query.api_provider,
+        alert_enabled=payload.alert_enabled,
+        seen_external_ids=[paper.external_paper_id for paper in papers],
+        last_checked_at=datetime.now(timezone.utc),
+    )
+    db.add(saved_search)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(SavedPaperSearch).where(
+                SavedPaperSearch.project_id == project_id,
+                SavedPaperSearch.user_id == user.user_id,
+                SavedPaperSearch.query_text == query.query_text,
+                SavedPaperSearch.api_provider == query.api_provider,
+            )
+        )
+        if existing is None:
+            raise
+        if payload.alert_enabled and not existing.alert_enabled:
+            existing.alert_enabled = True
+            db.commit()
+        return existing
+    return saved_search
+
+
+@router.patch("/saved-searches/{saved_search_id}", response_model=SavedPaperSearchResponse)
+def update_saved_search(
+    project_id: uuid.UUID,
+    saved_search_id: uuid.UUID,
+    payload: SavedPaperSearchUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    saved_search = _saved_paper_search(db, project_id, saved_search_id, user.user_id)
+    saved_search.alert_enabled = payload.alert_enabled
+    db.commit()
+    return saved_search
+
+
+@router.delete("/saved-searches/{saved_search_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_saved_search(
+    project_id: uuid.UUID,
+    saved_search_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    saved_search = _saved_paper_search(db, project_id, saved_search_id, user.user_id)
+    db.delete(saved_search)
+    db.commit()
+
+
+def _run_saved_paper_search(
+    project_id: uuid.UUID,
+    saved_search: SavedPaperSearch,
+    db: Session,
+    literature_db: Session,
+    user: User,
+) -> tuple[PaperSearchResponse, int, int]:
+    saved_search.last_checked_at = datetime.now(timezone.utc)
+    db.commit()
+    result = search(
+        project_id,
+        saved_search.query_text,
+        saved_search.api_provider,
+        10,
+        db,
+        literature_db,
+        user,
+    )
+    current_ids = {paper.external_paper_id for paper in result.results}
+    seen_ids = set(saved_search.seen_external_ids)
+    new_result_count = len(current_ids - seen_ids)
+    saved_search.seen_external_ids = sorted(seen_ids | current_ids)
+    notifications_created = 0
+    if saved_search.alert_enabled and new_result_count:
+        db.add(
+            Notification(
+                recipient_id=user.user_id,
+                actor_id=user.user_id,
+                kind="saved_search_alert",
+                project_id=project_id,
+                details={
+                    "query": saved_search.query_text,
+                    "provider": saved_search.api_provider,
+                    "new_result_count": new_result_count,
+                },
+            )
+        )
+        notifications_created = 1
+    db.commit()
+    return result, new_result_count, notifications_created
+
+
+@router.post(
+    "/saved-searches/{saved_search_id}/run",
+    response_model=SavedPaperSearchRunResponse,
+)
+def run_saved_search(
+    project_id: uuid.UUID,
+    saved_search_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    saved_search = _saved_paper_search(db, project_id, saved_search_id, user.user_id)
+    result, new_result_count, _ = _run_saved_paper_search(
+        project_id, saved_search, db, literature_db, user
+    )
+    return SavedPaperSearchRunResponse(
+        **result.model_dump(),
+        new_result_count=new_result_count,
+    )
+
+
+@router.post(
+    "/saved-searches/check-alerts",
+    response_model=SavedPaperSearchAlertsCheckResponse,
+)
+def check_saved_search_alerts(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+    due_searches = db.scalars(
+        select(SavedPaperSearch)
+        .where(
+            SavedPaperSearch.project_id == project_id,
+            SavedPaperSearch.user_id == user.user_id,
+            SavedPaperSearch.alert_enabled.is_(True),
+            (SavedPaperSearch.last_checked_at.is_(None))
+            | (SavedPaperSearch.last_checked_at <= cutoff),
+        )
+        .order_by(SavedPaperSearch.last_checked_at.asc())
+        .limit(10)
+    ).all()
+    notifications_created = 0
+    for saved_search in due_searches:
+        _, _, new_notifications = _run_saved_paper_search(
+            project_id, saved_search, db, literature_db, user
+        )
+        notifications_created += new_notifications
+    return SavedPaperSearchAlertsCheckResponse(
+        checked_count=len(due_searches),
+        notifications_created=notifications_created,
     )
 
 

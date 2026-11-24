@@ -55,6 +55,8 @@ import type {
   PaperImportResponse,
   Paper,
   Project,
+  SavedPaperSearch,
+  SavedPaperSearchRun,
   SearchResult,
   Source,
   TeamWorkspace,
@@ -125,6 +127,9 @@ function App() {
     useState<Paper["screening_status"]>("include");
   const [screeningBusy, setScreeningBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+  const [savedPaperSearches, setSavedPaperSearches] = useState<SavedPaperSearch[]>([]);
+  const [saveSearchAlerts, setSaveSearchAlerts] = useState(false);
+  const [savedSearchBusy, setSavedSearchBusy] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -249,6 +254,7 @@ function App() {
     selectedProjectIdRef.current = project?.project_id ?? null;
     setDocuments([]);
     setPapers([]);
+    setSavedPaperSearches([]);
     setConversations([]);
     setAiUsage(null);
   }, [project?.project_id, token]);
@@ -257,6 +263,7 @@ function App() {
     if (!project || !token) {
       setDocuments([]);
       setPapers([]);
+      setSavedPaperSearches([]);
       setConversations([]);
       setAiUsage(null);
       return;
@@ -270,6 +277,40 @@ function App() {
       active = false;
     };
   }, [loadProjectData, project, token]);
+
+  useEffect(() => {
+    if (!project || !token) return;
+    let active = true;
+    const path = `/api/projects/${project.project_id}/papers/saved-searches`;
+    request<SavedPaperSearch[]>(path)
+      .then((saved) => {
+        if (active) setSavedPaperSearches(saved);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load saved searches.");
+      });
+    const checkAlerts = () => {
+      request<{ checked_count: number; notifications_created: number }>(
+        `${path}/check-alerts`,
+        { method: "POST" },
+      )
+        .then(async (result) => {
+          if (!active) return;
+          if (result.notifications_created) await refreshUnreadCount();
+        })
+        .catch((cause: unknown) => {
+          if (active) setError((current) => current || (
+            cause instanceof Error ? cause.message : "Could not check saved search alerts."
+          ));
+        });
+    };
+    void checkAlerts();
+    const timer = window.setInterval(checkAlerts, 15 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [project?.project_id, refreshUnreadCount, request, token]);
 
   const processing = useMemo(
     () => documents.some((document) => document.processing_status === "processing"),
@@ -737,20 +778,117 @@ function App() {
     }
   }
 
-  async function searchPapers(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!project || searchText.trim().length < 2) return;
+  async function runPaperSearch(queryText: string, searchProvider: string) {
+    if (!project || queryText.trim().length < 2 || busy) return;
     setBusy(true);
     setError("");
     try {
       const result = await request<SearchResult>(
-        `/api/projects/${project.project_id}/papers/search?q=${encodeURIComponent(searchText)}&provider=${provider}&limit=10`,
+        `/api/projects/${project.project_id}/papers/search?q=${encodeURIComponent(queryText.trim())}&provider=${searchProvider}&limit=10`,
       );
       setSearchResults(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Academic search failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function searchPapers(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runPaperSearch(searchText, provider);
+  }
+
+  async function savePaperSearch(result: SearchResult) {
+    if (!project || savedSearchBusy) return;
+    setSavedSearchBusy(true);
+    setError("");
+    try {
+      const saved = await request<SavedPaperSearch>(
+        `/api/projects/${project.project_id}/papers/saved-searches`,
+        {
+          method: "POST",
+          body: jsonBody({ query_id: result.query_id, alert_enabled: saveSearchAlerts }),
+        },
+      );
+      setSavedPaperSearches((current) => [
+        saved,
+        ...current.filter((item) => item.saved_search_id !== saved.saved_search_id),
+      ]);
+      setNotice("Search saved for this project.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this search.");
+    } finally {
+      setSavedSearchBusy(false);
+    }
+  }
+
+  async function rerunSavedPaperSearch(saved: SavedPaperSearch) {
+    if (!project || busy) return;
+    setSearchText(saved.query_text);
+    setProvider(saved.api_provider);
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await request<SavedPaperSearchRun>(
+        `/api/projects/${project.project_id}/papers/saved-searches/${saved.saved_search_id}/run`,
+        { method: "POST" },
+      );
+      setSearchResults(result);
+      if (result.new_result_count > 0) {
+        setNotice(`Found ${result.new_result_count} new result${result.new_result_count === 1 ? "" : "s"}.`);
+        if (saved.alert_enabled) await refreshUnreadCount();
+      } else {
+        setNotice("Search rerun; no new results were found.");
+      }
+      setSavedPaperSearches((current) => current.map((item) =>
+        item.saved_search_id === saved.saved_search_id
+          ? { ...item, last_checked_at: new Date().toISOString() }
+          : item,
+      ));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not rerun this saved search.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setSavedSearchAlerts(saved: SavedPaperSearch, alertEnabled: boolean) {
+    if (!project || savedSearchBusy) return;
+    setSavedSearchBusy(true);
+    setError("");
+    try {
+      const updated = await request<SavedPaperSearch>(
+        `/api/projects/${project.project_id}/papers/saved-searches/${saved.saved_search_id}`,
+        { method: "PATCH", body: jsonBody({ alert_enabled: alertEnabled }) },
+      );
+      setSavedPaperSearches((current) => current.map((item) =>
+        item.saved_search_id === updated.saved_search_id ? updated : item,
+      ));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update saved search alerts.");
+    } finally {
+      setSavedSearchBusy(false);
+    }
+  }
+
+  async function removeSavedPaperSearch(saved: SavedPaperSearch) {
+    if (!project || savedSearchBusy) return;
+    setSavedSearchBusy(true);
+    setError("");
+    try {
+      await request<void>(
+        `/api/projects/${project.project_id}/papers/saved-searches/${saved.saved_search_id}`,
+        { method: "DELETE" },
+      );
+      setSavedPaperSearches((current) =>
+        current.filter((item) => item.saved_search_id !== saved.saved_search_id),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not remove this saved search.");
+    } finally {
+      setSavedSearchBusy(false);
     }
   }
 
@@ -1533,6 +1671,42 @@ function App() {
                       </button>
                     </div>
                   </div>
+                  {savedPaperSearches.length > 0 && (
+                    <section className="saved-searches">
+                      <div className="result-label"><span>Saved searches</span><small>{savedPaperSearches.length} queries</small></div>
+                      {savedPaperSearches.map((saved) => (
+                        <article className="saved-search-row" key={saved.saved_search_id}>
+                          <div className="saved-search-copy">
+                            <strong>{saved.query_text}</strong>
+                            <small>{saved.api_provider === "openalex" ? "OpenAlex" : "Crossref"}</small>
+                          </div>
+                          <label className="saved-search-alert-toggle">
+                            <input
+                              type="checkbox"
+                              checked={saved.alert_enabled}
+                              disabled={savedSearchBusy}
+                              onChange={(event) => void setSavedSearchAlerts(saved, event.target.checked)}
+                            />
+                            Alert me
+                          </label>
+                          <button
+                            className="button secondary small-button"
+                            disabled={busy}
+                            onClick={() => void rerunSavedPaperSearch(saved)}
+                          >
+                            {busy ? "Searching…" : "Rerun"}
+                          </button>
+                          <button
+                            className="button secondary small-button"
+                            disabled={savedSearchBusy}
+                            onClick={() => void removeSavedPaperSearch(saved)}
+                          >
+                            Remove
+                          </button>
+                        </article>
+                      ))}
+                    </section>
+                  )}
                   <form className="search-form" onSubmit={(event) => void searchPapers(event)}>
                     <Search size={18} />
                     <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search a topic, title, author, or DOI…" minLength={2} />
@@ -1547,6 +1721,28 @@ function App() {
                   {searchResults && (
                     <div className="result-group">
                       <div className="result-label"><span>Search results</span><small>{searchResults.results.length} papers · {searchResults.provider}</small></div>
+                      <div className="save-search-control">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={saveSearchAlerts}
+                            onChange={(event) => setSaveSearchAlerts(event.target.checked)}
+                            aria-label="Enable alerts for this saved search"
+                          />
+                          Alert me when new results match
+                        </label>
+                        <button
+                          className="button secondary small-button"
+                          disabled={savedSearchBusy || savedPaperSearches.some((saved) =>
+                            saved.query_text === searchResults.query && saved.api_provider === searchResults.provider
+                          )}
+                          onClick={() => void savePaperSearch(searchResults)}
+                        >
+                          {savedPaperSearches.some((saved) =>
+                            saved.query_text === searchResults.query && saved.api_provider === searchResults.provider
+                          ) ? "Search saved" : "Save search"}
+                        </button>
+                      </div>
                       {searchResults.results.length ? searchResults.results.map((paper) => (
                         <PaperCard key={paper.paper_id} paper={paper} onSave={() => void savePaper(paper)} />
                       )) : <EmptyState icon={<Search size={21} />} title="No results found" text="Try a broader query or use the other search provider." />}

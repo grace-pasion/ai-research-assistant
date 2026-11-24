@@ -209,6 +209,14 @@ h1, h2, h3, p { margin-top: 0; }
 .result-group { margin-top: 29px; }
 .result-label { align-items: center; color: #46534b; display: flex; font-size: 12px; font-weight: 600; justify-content: space-between; margin-bottom: 11px; }
 .result-label small { color: #9aa29d; font-size: 10px; font-weight: 400; }
+.saved-searches { margin: 20px 0 16px; }
+.saved-search-row { align-items: center; background: #fff; border: 1px solid #e9ede9; border-radius: 7px; display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 7px; padding: 10px 12px; }
+.saved-search-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 150px; }
+.saved-search-copy strong { color: #46534b; font-size: 11px; overflow-wrap: anywhere; }
+.saved-search-copy small { color: #9aa29d; font-size: 9px; }
+.saved-search-alert-toggle, .save-search-control label { align-items: center; color: #77837a; display: flex; font-size: 10px; gap: 6px; }
+.saved-search-alert-toggle input, .save-search-control input { accent-color: #4b8062; margin: 0; }
+.save-search-control { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-bottom: 10px; }
 .paper-card { align-items: flex-start; background: #fff; border: 1px solid #e9ede9; border-radius: 8px; display: flex; gap: 12px; margin-bottom: 9px; padding: 14px; }
 .paper-icon { flex-basis: 33px; height: 33px; }
 .paper-main { flex: 1; min-width: 0; }
@@ -512,6 +520,8 @@ h1, h2, h3, p { margin-top: 0; }
 }
 @media (max-width: 650px) {
   body { min-width: 360px; }
+  .saved-search-row { align-items: flex-start; }
+  .saved-search-copy { flex-basis: 100%; }
   .screening-counts { flex-wrap: wrap; }
   .screening-controls input { min-width: 150px; width: 100%; }
   .bulk-screening-actions { align-items: flex-start; flex-direction: column; }

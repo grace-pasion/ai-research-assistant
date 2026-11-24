@@ -241,6 +241,7 @@ class Notification(ResearchBase):
     message_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("direct_messages.message_id", ondelete="CASCADE"), nullable=True
     )
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -405,6 +406,27 @@ class SearchQueryResult(ResearchBase):
     )
     paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     relevance_score: Mapped[float | None] = mapped_column(Float)
+
+
+class SavedPaperSearch(ResearchBase):
+    __tablename__ = "saved_paper_searches"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", "query_text", "api_provider"),
+    )
+
+    saved_search_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    query_text: Mapped[str] = mapped_column(Text)
+    api_provider: Mapped[str] = mapped_column(String(32))
+    alert_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    seen_external_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ProjectPaper(ResearchBase):

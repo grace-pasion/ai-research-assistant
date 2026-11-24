@@ -289,6 +289,7 @@ def list_notifications(
             "invitation_id": notification.invitation_id,
             "invitation_status": invitation_status,
             "message_id": notification.message_id,
+            "details": notification.details,
             "created_at": notification.created_at,
             "read_at": notification.read_at,
         }

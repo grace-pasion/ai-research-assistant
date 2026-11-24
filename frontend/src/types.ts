@@ -152,6 +152,20 @@ export type SearchResult = {
   results: Paper[];
 };
 
+export type SavedPaperSearch = {
+  saved_search_id: string;
+  project_id: string;
+  query_text: string;
+  api_provider: string;
+  alert_enabled: boolean;
+  last_checked_at: string | null;
+  created_at: string;
+};
+
+export type SavedPaperSearchRun = SearchResult & {
+  new_result_count: number;
+};
+
 export type Source = {
   kind: "document" | "paper";
   source_id: string;
@@ -228,7 +242,8 @@ export type MessageThread = {
 
 export type Notification = {
   notification_id: string;
-  kind: "project_invitation" | "invitation_response" | "message";
+  kind: "project_invitation" | "invitation_response" | "message" | "saved_search_alert";
+  details: { query?: string; provider?: string; new_result_count?: number };
   actor_id: string;
   actor_name: string;
   actor_username: string | null;
