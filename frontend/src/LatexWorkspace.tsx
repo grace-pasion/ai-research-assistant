@@ -539,6 +539,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   type="button"
                   className={`latex-file python-source-file${pythonWorkspaceActive && selectedPythonFile === filename ? " active" : ""}`}
                   key={filename}
+                  aria-pressed={pythonWorkspaceActive && selectedPythonFile === filename}
                   onClick={() => openPythonWorkspace(filename)}
                 >
                   <FileCode2 size={14} /> {filename}
@@ -712,6 +713,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                     canEdit={canEdit}
                     request={request}
                     selectedFilename={selectedPythonFile}
+                    onExit={() => setPythonWorkspaceActive(false)}
                     onFilesChange={setPythonFiles}
                     onSelectedFileChange={setSelectedPythonFile}
                     onInsertOutput={insertPythonOutput}

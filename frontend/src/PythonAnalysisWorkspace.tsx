@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Download,
   FileCode2,
   FileImage,
@@ -46,6 +47,7 @@ type Props = {
   canEdit: boolean;
   request: WorkspaceRequest;
   selectedFilename: string;
+  onExit: () => void;
   onFilesChange: (filenames: string[]) => void;
   onSelectedFileChange: (filename: string) => void;
   onInsertOutput: (filename: string) => void;
@@ -72,6 +74,7 @@ export function PythonAnalysisWorkspace({
   canEdit,
   request,
   selectedFilename,
+  onExit,
   onFilesChange,
   onSelectedFileChange,
   onInsertOutput,
@@ -433,19 +436,44 @@ export function PythonAnalysisWorkspace({
     <section className="python-workspace" aria-label="Python figures and tables workspace">
       <header className="python-workspace-header">
         <div>
-          <p className="eyebrow">PYTHON ANALYSIS</p>
-          <h3>Figures &amp; tables</h3>
+          <div className="python-workspace-title">
+            <FileCode2 size={14} />
+            <h3>Python analysis</h3>
+          </div>
           <p>Run Python in your browser and include generated outputs in the LaTeX draft.</p>
         </div>
-        <span className={`python-save-status ${status}`} role="status">
-          {status === "unsaved" ? "Unsaved files" : status === "error" ? "Save failed" : "Files saved"}
-        </span>
+        <div className="python-workspace-header-actions">
+          <span className={`python-save-status ${status}`} role="status">
+            {status === "unsaved" ? "Unsaved files" : status === "error" ? "Save failed" : "Files saved"}
+          </span>
+          <button type="button" className="button secondary small-button" onClick={onExit}>
+            <ArrowLeft size={13} /> Back to LaTeX
+          </button>
+        </div>
       </header>
       {error && <p className="inline-error latex-error" role="alert">{error}</p>}
       {error.includes("changed in another session") && (
         <button type="button" className="button secondary small-button" onClick={() => void reloadWorkspace()}>
           <RotateCw size={13} /> Reload latest files
         </button>
+      )}
+      {!loading && (
+        <div className="python-file-switcher">
+          <span className="python-file-switcher-label">Python files <small>Select a file to switch scripts</small></span>
+          <div className="python-file-tabs" role="group" aria-label="Python files">
+            {workspace.files?.map((file) => (
+              <button
+                type="button"
+                className="python-file-tab"
+                aria-pressed={selectedFilename === file.filename}
+                key={file.filename}
+                onClick={() => onSelectedFileChange(file.filename)}
+              >
+                <FileCode2 size={13} /> {file.filename}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
       {!loading && (
         <div className="python-source-toolbar">

@@ -364,11 +364,20 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-preview-note { color: #929b95; font-size: 8px; margin: 0 17px 12px; }
 .latex-pdf-frame { background: #fff; border: 0; flex: 1; min-height: 605px; width: 100%; }
 .python-workspace { background: #fbfcfa; display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 16px; }
-.python-workspace-header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
-.python-workspace-header h3 { color: #2e3933; font: 650 15px var(--serif); margin: 0 0 4px; }
+.python-workspace-header { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.python-workspace-title { align-items: center; color: #718779; display: flex; gap: 6px; margin-bottom: 5px; }
+.python-workspace-title h3 { color: #89938b; font: 700 8px var(--sans); letter-spacing: 1.1px; margin: 0; text-transform: uppercase; }
 .python-workspace-header p:not(.eyebrow) { color: #89938b; font-size: 10px; margin: 0; }
+.python-workspace-header-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .python-save-status { color: #63816b; font-size: 9px; white-space: nowrap; }
 .python-save-status.unsaved, .python-save-status.error { color: #a56d38; }
+.python-file-switcher { border-bottom: 1px solid #e7ece7; margin-top: 12px; padding-bottom: 9px; }
+.python-file-switcher-label { align-items: baseline; color: #718779; display: flex; flex-wrap: wrap; font-size: 9px; font-weight: 650; gap: 7px; }
+.python-file-switcher-label small { color: #929b95; font-size: 9px; font-weight: 400; }
+.python-file-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.python-file-tab { align-items: center; background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #657168; cursor: pointer; display: inline-flex; font: 10px Consolas, "Courier New", monospace; gap: 5px; max-width: 100%; overflow-wrap: anywhere; padding: 6px 8px; }
+.python-file-tab:hover, .python-file-tab[aria-pressed="true"] { background: #eaf2ed; border-color: #b9cbbd; color: #2d654f; }
+.python-file-tab:focus-visible { outline: 2px solid #63816b; outline-offset: 2px; }
 .python-source-toolbar { align-items: center; border-bottom: 1px solid #e7ece7; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-top: 12px; padding-bottom: 9px; }
 .python-source-toolbar > span, .python-source-toolbar > div { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
 .python-source-toolbar > span { color: #4b5a50; font: 10px Consolas, "Courier New", monospace; gap: 6px; overflow-wrap: anywhere; }
