@@ -27,6 +27,7 @@ from app.routers import (
     documents,
     latex,
     papers,
+    project_exports,
     projects,
     team_workspaces,
     usage,
@@ -85,6 +86,7 @@ app.include_router(latex.router)
 app.include_router(documents.router)
 app.include_router(papers.router)
 app.include_router(annotations.router)
+app.include_router(project_exports.router)
 app.include_router(assistant.router)
 app.include_router(usage.router)
 

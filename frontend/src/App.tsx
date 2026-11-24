@@ -161,6 +161,11 @@ function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
   const [showShareProject, setShowShareProject] = useState(false);
+  const [showProjectExport, setShowProjectExport] = useState(false);
+  const [includeOriginalDocuments, setIncludeOriginalDocuments] = useState(false);
+  const [includeConversations, setIncludeConversations] = useState(false);
+  const [projectExportBusy, setProjectExportBusy] = useState(false);
+  const [projectExportError, setProjectExportError] = useState("");
   const [showInbox, setShowInbox] = useState(false);
   const [showTeamWorkspaces, setShowTeamWorkspaces] = useState(false);
   const [showTeamChannels, setShowTeamChannels] = useState(false);
@@ -285,6 +290,9 @@ function App() {
     setReviewConflict(false);
     setReviewLoading(false);
     setReviewLoadError("");
+    setShowProjectExport(false);
+    setProjectExportBusy(false);
+    setProjectExportError("");
     setProjectAnnotations([]);
     setSavedPaperSearches([]);
     setConversations([]);
@@ -612,6 +620,42 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Could not export the systematic review report.");
     } finally {
       setReferenceBusy(false);
+    }
+  }
+
+  function openProjectExport() {
+    setError("");
+    setNotice("");
+    setProjectExportError("");
+    setIncludeOriginalDocuments(false);
+    setIncludeConversations(false);
+    setShowProjectExport(true);
+  }
+
+  async function exportProjectBundle() {
+    if (!project || projectExportBusy) return;
+    const projectId = project.project_id;
+    setProjectExportBusy(true);
+    setProjectExportError("");
+    setError("");
+    setNotice("");
+    const params = new URLSearchParams({
+      include_original_documents: String(includeOriginalDocuments),
+      include_conversations: String(includeConversations),
+    });
+    try {
+      await downloadFile(
+        `/api/projects/${projectId}/export?${params.toString()}`,
+        "project-backup.zip",
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setShowProjectExport(false);
+      setNotice("Project backup downloaded.");
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== projectId) return;
+      setProjectExportError(cause instanceof Error ? cause.message : "Could not export this project.");
+    } finally {
+      if (selectedProjectIdRef.current === projectId) setProjectExportBusy(false);
     }
   }
 
@@ -1574,6 +1618,87 @@ function App() {
               onClose={() => setShowShareProject(false)}
             />
           )}
+          {showProjectExport && project && (
+            <div className="modal-backdrop" onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !projectExportBusy) {
+                setShowProjectExport(false);
+              }
+            }}>
+              <section
+                className="modal-card project-export-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="project-export-title"
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">PROJECT BACKUP</p>
+                    <h2 id="project-export-title">Export project bundle</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setShowProjectExport(false)}
+                    aria-label="Close"
+                    disabled={projectExportBusy}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="muted">
+                  The ZIP always includes project details, references, notes, writing files,
+                  review protocol, and a document inventory. Choose whether to include the
+                  original files or your assistant conversations.
+                </p>
+                {projectExportError && (
+                  <p className="project-export-error" role="alert">{projectExportError}</p>
+                )}
+                <label className="project-export-option">
+                  <input
+                    type="checkbox"
+                    checked={includeOriginalDocuments}
+                    onChange={(event) => setIncludeOriginalDocuments(event.target.checked)}
+                    disabled={projectExportBusy}
+                  />
+                  <span>
+                    <strong>Original uploaded documents</strong>
+                    <small>Include copies of the files stored for this project. The ZIP may be large.</small>
+                  </span>
+                </label>
+                <label className="project-export-option">
+                  <input
+                    type="checkbox"
+                    checked={includeConversations}
+                    onChange={(event) => setIncludeConversations(event.target.checked)}
+                    disabled={projectExportBusy}
+                  />
+                  <span>
+                    <strong>My assistant conversations</strong>
+                    <small>Includes only conversations you authored; collaborators’ histories stay private.</small>
+                  </span>
+                </label>
+                <div className="project-export-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setShowProjectExport(false)}
+                    disabled={projectExportBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => void exportProjectBundle()}
+                    disabled={projectExportBusy}
+                  >
+                    <Download size={15} />
+                    {projectExportBusy ? "Preparing ZIP…" : "Download project ZIP"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
           {showInbox && (
             <InboxDialog
               request={request}
@@ -1655,11 +1780,16 @@ function App() {
                   <i />
                   <span>{papers.length}</span><small>saved papers</small>
                 </div>
-                {user && project.user_id === user.user_id && (
-                  <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>
-                    <Pencil size={14} /> Edit
+                <div className="project-heading-actions">
+                  <button className="button secondary small-button" onClick={openProjectExport}>
+                    <Download size={14} /> Export bundle
                   </button>
-                )}
+                  {user && project.user_id === user.user_id && (
+                    <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>
+                      <Pencil size={14} /> Edit
+                    </button>
+                  )}
+                </div>
               </section>
 
               <div className="tab-bar" role="tablist" aria-label="Project sections">

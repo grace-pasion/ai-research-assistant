@@ -10,7 +10,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, document and paper views, project-wide source comments, LaTeX editor/PDF compilation, assistant review UI, and cited research brief export. |
+| Web client | React 18, TypeScript, Vite | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, document and paper views, project-wide source comments, LaTeX editor/PDF compilation, assistant review UI, cited research brief export, and project backup bundles. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -152,6 +152,12 @@ The verifier is another model call and can still make mistakes; evidence checkin
 2. The API creates an editable Word DOCX without another AI request. Its synthesis restates verified findings source-by-source without implying consensus, followed by the complete research-question/methods/sampling/findings/limitations matrix and a bibliography.
 3. Matrix citation markers such as `[S1]` are retained and map to bibliography entries for papers or project documents, including DOI/URL metadata or PDF page numbers when available. Missing-evidence fields remain explicit, with a note that an excerpt gap does not prove the full source lacks the information.
 
+### Export a project bundle
+
+1. A collaborator with project read access opens **Export project bundle** in the project header. The API verifies project access and builds a ZIP with project metadata, references as JSON/RIS/BibTeX, shared source annotations, the LaTeX files, review-protocol data when saved, and a document inventory.
+2. Original uploaded files and assistant conversations are independent opt-in options, both off by default. When selected, originals are read by the API from private storage and safely placed under `original_documents/`; any storage failure aborts the export instead of returning a partial archive.
+3. Conversation exports are limited to conversations authored by the requesting user. Source links are restricted to documents and papers in the exported project, so collaborator histories and unrelated project sources remain private. The manifest records the options and counts. The ZIP is a portable data export, not an automatic restore file.
+
 ## User feature inventory
 
 ### Accounts and workspace access
@@ -170,6 +176,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Create a project with a name and optional description.
 - Switch between the user's projects; see document and saved-paper counts for the selected project.
 - Edit the project name and description.
+- Download a ZIP backup with project details, references, notes, writing files, review protocol, and document inventory. Original uploads and the requesting user's assistant conversations are optional; other collaborators' conversations are never included.
 - Delete a project and its associated research data and stored document files after confirmation.
 
 ### Documents
@@ -250,6 +257,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `DELETE` | `/api/admin/users/{user_id}` | Permanently delete another user and their associated data/files. |
 | `GET`, `POST` | `/api/projects` | List owned, accepted shared, and team-workspace projects, or create a personal or team-workspace project owned by the authenticated user. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
+| `GET` | `/api/projects/{project_id}/export?include_original_documents=...&include_conversations=...` | Download a ZIP of project data; optional original files and only the requesting user's conversations. |
 | `POST`, `GET` | `/api/projects/{project_id}/invitations` | Owner-only: invite a registered account with a `read`, `comment`, or `edit` role; list invitations and statuses. |
 | `DELETE` | `/api/projects/{project_id}/invitations/{invitation_id}` | Owner-only: revoke a pending invitation or accepted collaborator's access. |
 | `PATCH` | `/api/projects/{project_id}/invitations/{invitation_id}` | Owner-only: update a collaborator's project role. |
