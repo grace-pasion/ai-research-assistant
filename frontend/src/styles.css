@@ -230,7 +230,15 @@ h1, h2, h3, p { margin-top: 0; }
 .screening-controls label { color: #77837a; display: flex; flex-direction: column; font-size: 9px; gap: 4px; }
 .screening-controls select, .screening-controls input { background: #fff; border: 1px solid #e3e9e3; border-radius: 5px; color: #4c5a50; font: inherit; font-size: 10px; min-height: 29px; padding: 5px 7px; }
 .screening-controls input { min-width: 190px; width: min(30vw, 320px); }
-.screening-controls .button { margin-left: auto; }
+.screening-workbench { margin: 0 0 14px; }
+.screening-workbench-controls { align-items: flex-end; border: 0; margin: 0; padding: 0; }
+.screening-workbench-controls .button { margin-left: 0; }
+.bulk-screening-actions { align-items: center; background: #f7f9f7; border: 1px solid #e8ede8; border-radius: 7px; color: #647168; display: flex; flex-wrap: wrap; gap: 9px; margin-top: 9px; padding: 9px 11px; }
+.bulk-screening-actions > span { font-size: 10px; font-weight: 600; }
+.bulk-screening-actions label { align-items: center; color: #77837a; display: flex; font-size: 9px; gap: 6px; }
+.bulk-screening-actions select { background: #fff; border: 1px solid #e3e9e3; border-radius: 5px; color: #4c5a50; font: inherit; font-size: 10px; min-height: 29px; padding: 5px 7px; }
+.paper-select { align-items: center; display: flex; flex: 0 0 auto; min-height: 33px; }
+.paper-select input { accent-color: #4b8062; cursor: pointer; margin: 0; }
 .muted { color: #858f88; }
 .compact { font-size: 11px; }
 
@@ -504,6 +512,9 @@ h1, h2, h3, p { margin-top: 0; }
 }
 @media (max-width: 650px) {
   body { min-width: 360px; }
+  .screening-counts { flex-wrap: wrap; }
+  .screening-controls input { min-width: 150px; width: 100%; }
+  .bulk-screening-actions { align-items: flex-start; flex-direction: column; }
   .sidebar { flex-basis: 64px; padding: 20px 8px 12px; }
   .brand { justify-content: center; margin: 1px 0 34px; }
   .brand > span:not(.brand-mark), .sidebar-label, .new-project-button, .team-workspace-link span, .project-link-name, .account-name, .logout, .sidebar-empty { display: none; }

@@ -1,3 +1,5 @@
+import csv
+import io
 import logging
 import re
 import uuid
@@ -30,6 +32,8 @@ from app.schemas import (
     PaperResponse,
     PaperImportResponse,
     PaperScreeningResponse,
+    PaperScreeningBulkResponse,
+    PaperScreeningBulkUpdate,
     PaperScreeningUpdate,
     PaperSearchResponse,
 )
@@ -192,6 +196,60 @@ def export_reference_file(
         content=format_references(references, format),
         media_type=f"{media_type}; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _safe_csv_cell(value: str | None) -> str:
+    if value is None:
+        return ""
+    if value.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
+@router.get("/screening/export")
+def export_screening_csv(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    papers = list_saved_papers(project_id, db, literature_db, user)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "title",
+            "authors",
+            "publication_year",
+            "doi",
+            "url",
+            "venue",
+            "citation_count",
+            "screening_status",
+            "screening_note",
+            "abstract",
+        ]
+    )
+    for paper in papers:
+        writer.writerow(
+            [
+                _safe_csv_cell(paper.title),
+                _safe_csv_cell(", ".join(author.author_name for author in paper.authors)),
+                paper.publication_year if paper.publication_year is not None else "",
+                _safe_csv_cell(paper.doi),
+                _safe_csv_cell(paper.paper_url),
+                _safe_csv_cell(paper.venue),
+                paper.citation_count if paper.citation_count is not None else "",
+                paper.screening_status,
+                _safe_csv_cell(paper.screening_note),
+                _safe_csv_cell(paper.abstract),
+            ]
+        )
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="screening.csv"'},
     )
 
 
@@ -443,4 +501,36 @@ def update_paper_screening(
         screening_status=relation.screening_status,
         screening_note=relation.screening_note,
     )
+
+
+@router.post("/screening/bulk", response_model=PaperScreeningBulkResponse)
+def bulk_update_paper_screening(
+    project_id: uuid.UUID,
+    payload: PaperScreeningBulkUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    paper_ids = set(payload.paper_ids)
+    relations = db.scalars(
+        select(ProjectPaper).where(
+            ProjectPaper.project_id == project_id,
+            ProjectPaper.paper_id.in_(paper_ids),
+        )
+    ).all()
+    if len(relations) != len(paper_ids):
+        raise HTTPException(status_code=404, detail="One or more papers are not saved in this project.")
+
+    for relation in relations:
+        relation.screening_status = payload.screening_status
+        if payload.screening_note is not None:
+            relation.screening_note = payload.screening_note
+    record_activity(
+        db,
+        user.user_id,
+        "paper.screening.bulk_updated",
+        {"status": payload.screening_status, "count": len(relations)},
+    )
+    db.commit()
+    return PaperScreeningBulkResponse(updated_count=len(relations))
 

@@ -38,6 +38,11 @@ import {
 } from "./Collaboration";
 import { LatexWorkspace } from "./LatexWorkspace";
 import { fetchProjectData } from "./projectData";
+import {
+  filterAndSortScreeningPapers,
+  type ScreeningSort,
+  type ScreeningStatusFilter,
+} from "./literatureScreening";
 import type {
   AIUsageResponse,
   Annotation,
@@ -112,6 +117,13 @@ function App() {
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [screeningFilter, setScreeningFilter] = useState<ScreeningStatusFilter>("all");
+  const [screeningQuery, setScreeningQuery] = useState("");
+  const [screeningSort, setScreeningSort] = useState<ScreeningSort>("saved");
+  const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
+  const [bulkScreeningStatus, setBulkScreeningStatus] =
+    useState<Paper["screening_status"]>("include");
+  const [screeningBusy, setScreeningBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -135,6 +147,10 @@ function App() {
   const [question, setQuestion] = useState("");
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
   const selectedProjectIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setSelectedPaperIds(new Set());
+  }, [project?.project_id]);
 
   const request = useCallback(
     async <T,>(path: string, options?: RequestInit) => api<T>(path, options, token),
@@ -272,6 +288,13 @@ function App() {
     exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
   }), [papers]);
   const reviewedPaperCount = screeningCounts.undecided + screeningCounts.include + screeningCounts.exclude;
+  const visibleScreeningPapers = useMemo(
+    () => filterAndSortScreeningPapers(papers, screeningFilter, screeningQuery, screeningSort),
+    [papers, screeningFilter, screeningQuery, screeningSort],
+  );
+  const selectedScreeningCount = papers.filter((paper) => selectedPaperIds.has(paper.paper_id)).length;
+  const allVisibleScreeningPapersSelected = visibleScreeningPapers.length > 0
+    && visibleScreeningPapers.every((paper) => selectedPaperIds.has(paper.paper_id));
   const openedDocument = annotationDocumentId
     ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
     : null;
@@ -292,6 +315,73 @@ function App() {
       openDocumentEvidence(source.document_id, source.page_number, source.excerpt);
     } else if (source.paper_url) {
       window.open(source.paper_url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  function togglePaperSelection(paperId: string, selected: boolean) {
+    setSelectedPaperIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(paperId);
+      else next.delete(paperId);
+      return next;
+    });
+  }
+
+  function toggleVisiblePaperSelection() {
+    setSelectedPaperIds((current) => {
+      const next = new Set(current);
+      for (const paper of visibleScreeningPapers) {
+        if (allVisibleScreeningPapersSelected) next.delete(paper.paper_id);
+        else next.add(paper.paper_id);
+      }
+      return next;
+    });
+  }
+
+  async function bulkUpdatePaperScreening() {
+    if (!project || screeningBusy) return;
+    const paperIds = papers
+      .filter((paper) => selectedPaperIds.has(paper.paper_id))
+      .map((paper) => paper.paper_id);
+    if (!paperIds.length) return;
+    setScreeningBusy(true);
+    setError("");
+    try {
+      const result = await request<{ updated_count: number }>(
+        `/api/projects/${project.project_id}/papers/screening/bulk`,
+        {
+          method: "POST",
+          body: jsonBody({ paper_ids: paperIds, screening_status: bulkScreeningStatus }),
+        },
+      );
+      const updatedPaperIds = new Set(paperIds);
+      setPapers((current) => current.map((paper) =>
+        updatedPaperIds.has(paper.paper_id)
+          ? { ...paper, screening_status: bulkScreeningStatus }
+          : paper,
+      ));
+      setSelectedPaperIds(new Set());
+      setNotice(`Updated ${result.updated_count} screening decision${result.updated_count === 1 ? "" : "s"}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not apply bulk screening decisions.");
+    } finally {
+      setScreeningBusy(false);
+    }
+  }
+
+  async function exportScreeningCsv() {
+    if (!project || !papers.length || referenceBusy) return;
+    setReferenceBusy(true);
+    setError("");
+    try {
+      await downloadFile(
+        `/api/projects/${project.project_id}/papers/screening/export`,
+        "screening.csv",
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not export screening decisions.");
+    } finally {
+      setReferenceBusy(false);
     }
   }
 
@@ -1481,11 +1571,99 @@ function App() {
                         <span>{screeningCounts.exclude} excluded</span>
                       </div>
                     </section>
-                    {papers.length ? papers.map((paper) => (
+                    {papers.length > 0 && (
+                      <div className="screening-workbench">
+                        <div className="screening-controls screening-workbench-controls">
+                          <label>
+                            Filter by decision
+                            <select
+                              value={screeningFilter}
+                              onChange={(event) => setScreeningFilter(event.target.value as ScreeningStatusFilter)}
+                            >
+                              <option value="all">All decisions</option>
+                              <option value="unread">Unread</option>
+                              <option value="undecided">Undecided</option>
+                              <option value="include">Included</option>
+                              <option value="exclude">Excluded</option>
+                            </select>
+                          </label>
+                          <label>
+                            Search saved papers
+                            <input
+                              value={screeningQuery}
+                              onChange={(event) => setScreeningQuery(event.target.value)}
+                              placeholder="Title, author, abstract, DOI…"
+                            />
+                          </label>
+                          <label>
+                            Sort by
+                            <select
+                              value={screeningSort}
+                              onChange={(event) => setScreeningSort(event.target.value as ScreeningSort)}
+                            >
+                              <option value="saved">Recently saved</option>
+                              <option value="title">Title</option>
+                              <option value="year_desc">Newest publication year</option>
+                              <option value="year_asc">Oldest publication year</option>
+                            </select>
+                          </label>
+                          <button
+                            className="button secondary small-button"
+                            onClick={toggleVisiblePaperSelection}
+                            disabled={!visibleScreeningPapers.length}
+                          >
+                            {allVisibleScreeningPapersSelected ? "Deselect visible" : "Select visible"}
+                          </button>
+                          <button
+                            className="button secondary small-button"
+                            onClick={() => void exportScreeningCsv()}
+                            disabled={referenceBusy || !papers.length}
+                          >
+                            <Download size={14} /> Export screening CSV
+                          </button>
+                        </div>
+                        {selectedScreeningCount > 0 && (
+                          <div className="bulk-screening-actions">
+                            <span>{selectedScreeningCount} selected</span>
+                            <label>
+                              Set decision to
+                              <select
+                                value={bulkScreeningStatus}
+                                onChange={(event) =>
+                                  setBulkScreeningStatus(event.target.value as Paper["screening_status"])
+                                }
+                              >
+                                <option value="unread">Unread</option>
+                                <option value="undecided">Undecided</option>
+                                <option value="include">Include</option>
+                                <option value="exclude">Exclude</option>
+                              </select>
+                            </label>
+                            <button
+                              className="button primary small-button"
+                              onClick={() => void bulkUpdatePaperScreening()}
+                              disabled={screeningBusy}
+                            >
+                              {screeningBusy ? "Applying…" : "Apply to selected"}
+                            </button>
+                            <button
+                              className="button secondary small-button"
+                              onClick={() => setSelectedPaperIds(new Set())}
+                              disabled={screeningBusy}
+                            >
+                              Clear selection
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {papers.length ? visibleScreeningPapers.map((paper) => (
                       <Fragment key={paper.paper_id}>
                         <PaperCard
                           paper={paper}
                           saved
+                          selected={selectedPaperIds.has(paper.paper_id)}
+                          onSelectionChange={(selected) => togglePaperSelection(paper.paper_id, selected)}
                           onScreeningChange={(status, note) => void updatePaperScreening(paper, status, note)}
                           onRemove={() => void unsavePaper(paper)}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
@@ -1501,6 +1679,9 @@ function App() {
                         )}
                       </Fragment>
                     )) : <p className="muted compact">Your saved papers will appear here.</p>}
+                    {papers.length > 0 && visibleScreeningPapers.length === 0 && (
+                      <p className="muted compact">No saved papers match these screening filters.</p>
+                    )}
                   </div>
                 </section>
               )}
@@ -2210,6 +2391,8 @@ function PaperCard({
   onRemove,
   onAnnotate,
   onScreeningChange,
+  selected = false,
+  onSelectionChange,
   onImportFullText,
   importingFullText,
 }: {
@@ -2219,6 +2402,8 @@ function PaperCard({
   onRemove?: () => void;
   onAnnotate?: () => void;
   onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
+  selected?: boolean;
+  onSelectionChange?: (selected: boolean) => void;
   onImportFullText?: () => void;
   importingFullText?: boolean;
 }) {
@@ -2232,6 +2417,16 @@ function PaperCard({
 
   return (
     <article className="paper-card">
+      {onSelectionChange && (
+        <label className="paper-select">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(event) => onSelectionChange(event.target.checked)}
+            aria-label={`Select ${paper.title} for bulk screening`}
+          />
+        </label>
+      )}
       <div className="paper-icon"><Library size={17} /></div>
       <div className="paper-main">
         <h3>{paper.title}</h3>

@@ -1,4 +1,6 @@
 import uuid
+import csv
+import io
 
 import pytest
 from fastapi import HTTPException
@@ -19,8 +21,14 @@ from app.models import (
     UserActivity,
 )
 from app.routers import papers as papers_router
-from app.routers.papers import list_saved_papers, save_paper, update_paper_screening
-from app.schemas import PaperScreeningUpdate
+from app.routers.papers import (
+    bulk_update_paper_screening,
+    export_screening_csv,
+    list_saved_papers,
+    save_paper,
+    update_paper_screening,
+)
+from app.schemas import PaperScreeningBulkUpdate, PaperScreeningUpdate
 from sqlalchemy.exc import IntegrityError
 
 
@@ -190,3 +198,74 @@ def test_screening_update_rejects_unknown_decisions_and_long_notes():
     assert PaperScreeningUpdate(screening_status="undecided").screening_status == "undecided"
     with pytest.raises(ValidationError):
         PaperScreeningUpdate(screening_status="include", screening_note="x" * 501)
+
+
+def test_bulk_screening_updates_saved_papers_and_preserves_notes_by_default(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    second_paper = Paper(
+        external_paper_id="paper-2",
+        api_provider="openalex",
+        title="A second screening study",
+    )
+    literature_db.add(second_paper)
+    literature_db.flush()
+    db.add(ProjectPaper(project_id=project.project_id, paper_id=second_paper.paper_id))
+    relation = db.get(ProjectPaper, (project.project_id, paper.paper_id))
+    relation.screening_note = "Keep this reason"
+    db.commit()
+    literature_db.commit()
+
+    result = bulk_update_paper_screening(
+        project.project_id,
+        PaperScreeningBulkUpdate(
+            paper_ids=[paper.paper_id, second_paper.paper_id],
+            screening_status="include",
+        ),
+        db,
+        user,
+    )
+
+    assert result.updated_count == 2
+    assert relation.screening_status == "include"
+    assert relation.screening_note == "Keep this reason"
+    assert db.get(ProjectPaper, (project.project_id, second_paper.paper_id)).screening_status == "include"
+
+
+def test_bulk_screening_rejects_mixed_saved_and_unsaved_papers_without_partial_update(screening_databases):
+    db, _, user, project, paper = screening_databases
+    missing_paper_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as error:
+        bulk_update_paper_screening(
+            project.project_id,
+            PaperScreeningBulkUpdate(
+                paper_ids=[paper.paper_id, missing_paper_id],
+                screening_status="exclude",
+            ),
+            db,
+            user,
+        )
+
+    assert error.value.status_code == 404
+    assert db.get(ProjectPaper, (project.project_id, paper.paper_id)).screening_status == "unread"
+
+
+def test_screening_csv_exports_decisions_and_neutralizes_spreadsheet_formulas(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    paper.title = "=HYPERLINK(\"https://example.test\")"
+    db.get(ProjectPaper, (project.project_id, paper.paper_id)).screening_note = "  - formula"
+    literature_db.commit()
+    db.commit()
+
+    response = export_screening_csv(project.project_id, db, literature_db, user)
+    rows = list(csv.DictReader(io.StringIO(response.body.decode("utf-8"))))
+
+    assert response.headers["content-disposition"] == 'attachment; filename="screening.csv"'
+    assert rows[0]["title"].startswith("'=")
+    assert rows[0]["screening_status"] == "unread"
+    assert rows[0]["screening_note"] == "'  - formula"
+
+
+def test_bulk_screening_requires_at_least_one_paper():
+    with pytest.raises(ValidationError):
+        PaperScreeningBulkUpdate(paper_ids=[], screening_status="include")

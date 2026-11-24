@@ -501,6 +501,21 @@ class PaperScreeningResponse(BaseModel):
     screening_note: str
 
 
+class PaperScreeningBulkUpdate(BaseModel):
+    paper_ids: list[uuid.UUID] = Field(min_length=1)
+    screening_status: Literal["unread", "undecided", "include", "exclude"]
+    screening_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("screening_note")
+    @classmethod
+    def normalize_screening_note(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class PaperScreeningBulkResponse(BaseModel):
+    updated_count: int
+
+
 class PaperSearchResponse(BaseModel):
     query_id: uuid.UUID
     provider: str

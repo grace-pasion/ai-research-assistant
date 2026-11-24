@@ -92,7 +92,7 @@ The API enables PostgreSQL's `vector` extension and creates its tables—includi
 2. The API calls the selected provider for a wider candidate set, normalizes returned bibliographic records, and, when an OpenAI key is configured, ranks candidates using both embedding similarity and weighted query-term overlap against each paper's title/abstract. Less-common query terms receive more weight to help keep specific models or methods near the top. Without that key, the provider's ranking is preserved.
 3. The API stores paper/author metadata and search history; the UI presents the available metadata, abstract, DOI, citation count, and an external paper link when provided.
 4. The user can save a result to the current project or remove a saved paper later.
-5. In the project's saved-paper list, the user can mark each paper unread, undecided, include, or exclude, add an optional reason/note, and track reviewed, unread, and undecided totals. Undecided papers count as reviewed but remain separate from included and excluded papers. Screening decisions are scoped to the project and persist in the `project_papers` relationship.
+5. In the project's saved-paper list, the user can mark each paper unread, undecided, include, or exclude, add an optional reason/note, filter by decision or search metadata, and sort by title or publication year. The user can select visible or individual papers and apply one bulk decision; bulk updates preserve existing notes. The progress panel reports counts for all four screening outcomes, with undecided counted as reviewed. Screening decisions are scoped to the project and persist in the `project_papers` relationship. **Export screening CSV** downloads saved-paper metadata, abstracts, decisions, and notes for the project.
 6. For a saved paper, **Extract full text** looks up an OpenAlex location marked open access and downloads its PDF when available. The API stores it as a project document linked through `document_papers`, then runs the existing extraction/chunking/embedding pipeline. If no open-access PDF is available, the user can upload a copy they have access to. Imported text is queryable through the existing document search and assistant retrieval flows.
 
 ### Import and export bibliographies
@@ -262,9 +262,11 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/papers/search?q=...&provider=...` | Search OpenAlex or Crossref; semantically re-rank results when OpenAI is configured. |
 | `POST` | `/api/projects/{project_id}/papers/import` | Import RIS or BibTeX references with DOI-based duplicate detection. |
 | `GET` | `/api/projects/{project_id}/papers/export?format=...` | Download saved project references as RIS or BibTeX. |
+| `GET` | `/api/projects/{project_id}/papers/screening/export` | Download saved-paper metadata and screening decisions as CSV. |
 | `POST`, `DELETE` | `/api/projects/{project_id}/papers/{paper_id}/save` | Save or remove a paper from a project. |
 | `POST` | `/api/projects/{project_id}/papers/{paper_id}/full-text` | Import an available open-access PDF as a project document for extraction and querying. |
 | `PATCH` | `/api/projects/{project_id}/papers/{paper_id}/screening` | Update a saved paper's screening status and optional reason/note. |
+| `POST` | `/api/projects/{project_id}/papers/screening/bulk` | Apply a screening status to multiple papers already saved in the project. |
 | `GET`, `POST` | `/api/projects/{project_id}/documents/{document_id}/annotations` | List or add notes/highlights for an owned document. |
 | `GET`, `POST` | `/api/projects/{project_id}/papers/{paper_id}/annotations` | List or add notes/highlights for a paper saved in the project. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}/documents/{document_id}/annotations/{annotation_id}` | Edit or delete a document annotation. |
