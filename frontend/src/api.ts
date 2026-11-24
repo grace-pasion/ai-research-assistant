@@ -1,5 +1,23 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const ADMIN_TOKEN_KEY = "fieldnotes_admin_token";
+const GET_RETRY_DELAYS_MS = [1_000, 3_000, 7_000] as const;
+
+async function fetchWithNetworkRetry(url: string, options: RequestInit): Promise<Response> {
+  const canRetry = (options.method ?? "GET").toUpperCase() === "GET";
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (!(error instanceof TypeError) || !canRetry || options.signal?.aborted) throw error;
+      const delay = GET_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        throw new Error("Unable to reach the research API. Check your connection and try again.");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 export function getToken(): string | null {
   return localStorage.getItem("research_assistant_token");
@@ -29,7 +47,7 @@ export async function api<T>(
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     try {
@@ -52,7 +70,7 @@ export async function downloadFile(path: string, filename: string): Promise<void
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_URL}${path}`, { headers });
+  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { headers });
   if (!response.ok) {
     let message = `Download failed (${response.status})`;
     try {
@@ -81,7 +99,7 @@ export async function fetchPdfObjectUrl(
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     let message = `Could not load PDF (${response.status})`;
     try {
@@ -102,7 +120,7 @@ export async function fetchFileBlob(
 ): Promise<Blob> {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_URL}${path}`, { headers });
+  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { headers });
   if (!response.ok) {
     let message = `Could not load file (${response.status})`;
     try {

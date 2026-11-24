@@ -3,6 +3,7 @@ import { api, fetchFileBlob, fetchPdfObjectUrl } from "./api";
 
 describe("API client", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -43,6 +44,49 @@ describe("API client", () => {
     await expect(api("/api/projects/missing", {}, "smoke-test-token")).rejects.toThrow(
       "Research project not found",
     );
+  });
+
+  it("retries a transient network failure on GET and succeeds when the API wakes", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ project_id: "project-1" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = api<{ project_id: string }[]>("/api/projects", {}, "smoke-test-token");
+    await vi.runAllTimersAsync();
+
+    await expect(request).resolves.toEqual([{ project_id: "project-1" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a useful error when GET retries are exhausted", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = api("/api/projects", {}, "smoke-test-token");
+    const assertion = expect(request).rejects.toThrow(
+      "Unable to reach the research API. Check your connection and try again.",
+    );
+    await vi.runAllTimersAsync();
+
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not retry network failures for write requests", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api("/api/projects", { method: "POST", body: "{}" }, "smoke-test-token"))
+      .rejects.toThrow("Failed to fetch");
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("supports authenticated PDF compilation requests with a JSON body", async () => {

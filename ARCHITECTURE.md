@@ -10,6 +10,8 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 The persistent desktop sidebar switches between personal/team workspaces and their projects; project content is organized in labeled section tabs for Documents, Literature, Notes, Main document, and Ask & explore. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
 
+The browser API client retries network-level failures for idempotent GET requests with bounded delays to tolerate API wake-up after inactivity. It does not retry writes or HTTP error responses; if a read still cannot reach the API, the client displays a connection error.
+
 ## Architecture and hosting
 
 | Layer | Technology/service | Responsibility |

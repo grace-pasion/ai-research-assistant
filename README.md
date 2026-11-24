@@ -85,6 +85,8 @@ GitHub Pages hosts only the static React frontend; it does not run the FastAPI b
 
 The workflow uses the repository Actions variable `VITE_API_URL` when set; otherwise, it falls back to `https://fieldnotes-api-l1bc.onrender.com`. It tests and builds the frontend before publishing. Set the variable to override the fallback when using a different API host.
 
+The browser retries transient network failures for safe GET requests up to three times to accommodate a sleeping Render Free API. It does not retry writes, and it reports an actionable connection error if the API remains unreachable.
+
 ### 1. Create Supabase database and private file bucket
 
 1. Create a Supabase project on its Free plan. Keep the database password private.
