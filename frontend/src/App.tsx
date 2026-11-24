@@ -6,7 +6,6 @@ import {
   Bell,
   Bot,
   Check,
-  ChevronDown,
   Download,
   Eye,
   EyeOff,
@@ -16,6 +15,7 @@ import {
   Library,
   LoaderCircle,
   LogOut,
+  Menu,
   MessageSquareText,
   Plus,
   Pencil,
@@ -172,6 +172,7 @@ function App() {
   const [showTeamWorkspaces, setShowTeamWorkspaces] = useState(false);
   const [showTeamChannels, setShowTeamChannels] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [provider, setProvider] = useState("openalex");
@@ -190,6 +191,15 @@ function App() {
   } | null>(null);
   const canEditProject = project?.access_role === "owner" || project?.access_role === "edit";
   const canCommentOnProject = canEditProject || project?.access_role === "comment";
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavigationOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavigationOpen]);
 
   useEffect(() => {
     setSelectedPaperIds(new Set());
@@ -1511,25 +1521,46 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside id="app-navigation" className={`sidebar ${mobileNavigationOpen ? "mobile-open" : ""}`}>
         <a className="brand" href="#" aria-label="Fieldnotes home">
           <span className="brand-mark"><BookOpen size={19} /></span>
           <span>fieldnotes<span className="brand-dot">.</span></span>
         </a>
+        <button
+          type="button"
+          className="icon-button mobile-nav-close"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavigationOpen(false)}
+        >
+          <X size={18} />
+        </button>
         <div className="sidebar-label">WORKSPACE</div>
-        <button className="new-project-button" onClick={() => setShowNewProject(true)}>
+        <button className="new-project-button" onClick={() => {
+          setShowNewProject(true);
+          setMobileNavigationOpen(false);
+        }}>
           <FolderPlus size={16} /> New {selectedTeamWorkspaceId ? "team project" : "project"} <Plus size={15} className="push-right" />
         </button>
         <div className="sidebar-team-heading">
-          <span className="sidebar-label">TEAM WORKSPACES</span>
-          <button className="icon-button" title="Manage team workspaces" onClick={() => setShowTeamWorkspaces(true)}>
-            <Plus size={15} />
+          <span className="sidebar-label">WORKSPACES</span>
+          <button
+            className="workspace-manage-button"
+            title="Manage workspaces"
+            onClick={() => {
+              setShowTeamWorkspaces(true);
+              setMobileNavigationOpen(false);
+            }}
+          >
+            <Settings size={13} /> Manage
           </button>
         </div>
         <nav className="team-workspace-list" aria-label="Team workspaces">
           <button
             className={`team-workspace-link ${selectedTeamWorkspaceId === null ? "selected" : ""}`}
-            onClick={() => switchTeamWorkspace(null)}
+            onClick={() => {
+              switchTeamWorkspace(null);
+              setMobileNavigationOpen(false);
+            }}
             type="button"
           >
             <Users size={14} /><span>Personal &amp; shared</span>
@@ -1538,13 +1569,20 @@ function App() {
             <button
               className={`team-workspace-link ${selectedTeamWorkspaceId === workspace.team_workspace_id ? "selected" : ""}`}
               key={workspace.team_workspace_id}
-              onClick={() => switchTeamWorkspace(workspace.team_workspace_id)}
+              onClick={() => {
+                switchTeamWorkspace(workspace.team_workspace_id);
+                setMobileNavigationOpen(false);
+              }}
               type="button"
             >
               <Users size={14} /><span>{workspace.name}</span>
             </button>
           ))}
         </nav>
+        <div className="sidebar-project-heading">
+          <span className="sidebar-label">PROJECTS</span>
+          <span className="project-count">{visibleProjects.length}</span>
+        </div>
         <nav className="project-list" aria-label="Research projects">
           {visibleProjects.map((item) => (
             <button
@@ -1560,6 +1598,7 @@ function App() {
                 setDraft(null);
                 setView("documents");
                 setNotice("");
+                setMobileNavigationOpen(false);
               }}
             >
               <span className="project-bullet" />
@@ -1577,6 +1616,7 @@ function App() {
             onClick={() => {
               setShowAccountSettings(true);
               void refreshUsage();
+              setMobileNavigationOpen(false);
             }}
           >
             <span className="avatar">
@@ -1590,17 +1630,38 @@ function App() {
             </span>
             <Settings size={15} aria-hidden="true" />
           </button>
-          <button className="icon-button logout" title="Sign out" onClick={signOut}>
-            <LogOut size={16} />
+          <button className="icon-button logout" title="Sign out" aria-label="Sign out" onClick={signOut}>
+            <LogOut size={16} /><span>Sign out</span>
           </button>
         </div>
       </aside>
 
+      {mobileNavigationOpen && (
+        <button
+          type="button"
+          className="mobile-nav-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavigationOpen(false)}
+        />
+      )}
+
       <main className="main-area">
         <header className="topbar">
-          <div className="breadcrumb">
+          <div className="topbar-leading">
+            <button
+              type="button"
+              className="icon-button mobile-nav-toggle"
+              aria-label={mobileNavigationOpen ? "Close navigation" : "Open navigation"}
+              aria-expanded={mobileNavigationOpen}
+              aria-controls="app-navigation"
+              onClick={() => setMobileNavigationOpen((open) => !open)}
+            >
+              {mobileNavigationOpen ? <X size={19} /> : <Menu size={19} />}
+            </button>
+            <div className="breadcrumb">
             <span>Workspace</span><span className="crumb-separator">/</span>
             <span className="crumb-current">{project?.project_name ?? "No project selected"}</span>
+            </div>
           </div>
           <div className="topbar-right">
             <span className="private-badge">
@@ -1610,36 +1671,56 @@ function App() {
                   ? <><Users size={14} /> Shared project</>
                   : <><ShieldCheck size={14} /> Private workspace</>}
             </span>
-            <button className="icon-button inbox-button" title="Inbox and messages" onClick={() => setShowInbox(true)}>
+            <button
+              className="icon-button topbar-action inbox-button"
+              title="Inbox and messages"
+              aria-label="Inbox and messages"
+              onClick={() => setShowInbox(true)}
+            >
               <Bell size={17} />
+              <span className="topbar-action-label">Inbox</span>
               {unreadCount > 0 && <span className="unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
             </button>
             {channelWorkspaceId && (
               <button
-                className="icon-button"
+                className="icon-button topbar-action"
                 title="Team channels"
+                aria-label="Team channels"
                 onClick={() => setShowTeamChannels(true)}
               >
                 <MessageSquareText size={16} />
+                <span className="topbar-action-label">Channels</span>
               </button>
             )}
             <button
-              className="icon-button"
+              className="icon-button topbar-action"
               title="Team workspaces"
+              aria-label="Team workspaces"
               onClick={() => setShowTeamWorkspaces(true)}
             >
               <Users size={16} />
+              <span className="topbar-action-label">Teams</span>
             </button>
             {project && (
               <>
                 {user && project.user_id === user.user_id && (
-                  <button className="icon-button" title="Share project" onClick={() => setShowShareProject(true)}>
-                    <Share2 size={16} />
+                  <button
+                    className="icon-button topbar-action"
+                    title="Share project"
+                    aria-label="Share project"
+                    onClick={() => setShowShareProject(true)}
+                  >
+                    <Share2 size={16} /><span className="topbar-action-label">Share</span>
                   </button>
                 )}
                 {user && project.user_id === user.user_id && (
-                  <button className="icon-button danger-hover" title="Delete project" onClick={deleteProject}>
-                    <Trash2 size={16} />
+                  <button
+                    className="icon-button topbar-action danger-hover"
+                    title="Delete project"
+                    aria-label="Delete project"
+                    onClick={deleteProject}
+                  >
+                    <Trash2 size={16} /><span className="topbar-action-label">Delete</span>
                   </button>
                 )}
               </>
@@ -3196,7 +3277,7 @@ function Notice({ kind, text, onClose }: { kind: "error" | "success"; text: stri
 function TabButton({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: ReactNode; children: ReactNode }) {
   return (
     <button role="tab" aria-selected={active} className={`tab-button ${active ? "active" : ""}`} onClick={onClick}>
-      {icon}{children}<ChevronDown size={13} className="tab-caret" />
+      {icon}{children}
     </button>
   );
 }

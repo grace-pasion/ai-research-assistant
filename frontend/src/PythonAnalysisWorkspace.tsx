@@ -4,6 +4,7 @@ import {
   FileCode2,
   FileImage,
   FileSpreadsheet,
+  Info,
   LoaderCircle,
   Play,
   Plus,
@@ -474,6 +475,12 @@ export function PythonAnalysisWorkspace({
             ))}
           </div>
         </div>
+      )}
+      {!canEdit && (
+        <p className="python-read-only-notice">
+          <Info size={15} />
+          <span><strong>Read-only access.</strong> Ask the project owner for Editor access to add or change Python files.</span>
+        </p>
       )}
       {!loading && (
         <div className="python-source-toolbar">

@@ -6,6 +6,10 @@ This document describes the application as implemented. It is the reference for 
 
 Fieldnotes is a browser-based research workspace. The browser serves the React application and sends authenticated HTTPS requests to a FastAPI service. The API owns authentication, project access checks, collaboration, document processing, academic-search integration, retrieval, and AI calls. Research data and literature metadata are stored in PostgreSQL; original uploads are stored in a private file store.
 
+### Browser navigation and responsive layout
+
+The persistent desktop sidebar switches between personal/team workspaces and their projects; project content is organized in labeled section tabs for Documents, Literature, Notes, Main document, and Ask & explore. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
+
 ## Architecture and hosting
 
 | Layer | Technology/service | Responsibility |
