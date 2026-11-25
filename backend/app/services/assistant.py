@@ -345,16 +345,22 @@ def _openai_client() -> OpenAI:
 
 
 def _retrieve_chunks(
-    db: Session, project_id: uuid.UUID, question: str, limit: int = 6
+    db: Session, project_id: uuid.UUID, question: str, limit: int = 6,
+    document_ids: set[uuid.UUID] | None = None,
 ) -> list[tuple[DocumentChunk, Document]]:
+    if document_ids is not None and not document_ids:
+        return []
+    filters = [
+        Document.project_id == project_id,
+        Document.processing_status == "ready",
+        DocumentChunk.embedding.is_not(None),
+    ]
+    if document_ids is not None:
+        filters.append(Document.document_id.in_(document_ids))
     eligible_chunks = (
         select(DocumentChunk.chunk_id)
         .join(Document, Document.document_id == DocumentChunk.document_id)
-        .where(
-            Document.project_id == project_id,
-            Document.processing_status == "ready",
-            DocumentChunk.embedding.is_not(None),
-        )
+        .where(*filters)
         .limit(1)
     )
     if db.scalar(eligible_chunks) is None:
@@ -372,11 +378,7 @@ def _retrieve_chunks(
         db.execute(
             select(DocumentChunk, Document)
             .join(Document, Document.document_id == DocumentChunk.document_id)
-            .where(
-                Document.project_id == project_id,
-                Document.processing_status == "ready",
-                DocumentChunk.embedding.is_not(None),
-            )
+            .where(*filters)
             .order_by(distance)
             .limit(limit)
         ).all()
@@ -407,17 +409,21 @@ def _retrieve_papers(
     question: str,
     mode: str,
     limit: int = 6,
+    paper_ids: set[uuid.UUID] | None = None,
 ) -> list[dict[str, Any]]:
-    saved = research_db.scalars(
-        select(ProjectPaper)
-        .where(ProjectPaper.project_id == project_id)
-        .order_by(ProjectPaper.added_at.desc())
-    ).all()
-    paper_ids = [item.paper_id for item in saved]
-    if not paper_ids:
+    if paper_ids is not None and not paper_ids:
         return []
-    papers = literature_db.scalars(select(Paper).where(Paper.paper_id.in_(paper_ids))).all()
-    saved_order = {paper_id: index for index, paper_id in enumerate(paper_ids)}
+    query = select(ProjectPaper).where(ProjectPaper.project_id == project_id)
+    if paper_ids is not None:
+        query = query.where(ProjectPaper.paper_id.in_(paper_ids))
+    saved = research_db.scalars(
+        query.order_by(ProjectPaper.added_at.desc())
+    ).all()
+    saved_ids = [item.paper_id for item in saved]
+    if not saved_ids:
+        return []
+    papers = literature_db.scalars(select(Paper).where(Paper.paper_id.in_(saved_ids))).all()
+    saved_order = {paper_id: index for index, paper_id in enumerate(saved_ids)}
     scored_papers = [
         (
             _paper_relevance(question, paper.title, paper.abstract),
@@ -430,7 +436,7 @@ def _retrieve_papers(
     relevant_papers = [
         item[2]
         for item in ranked_papers
-        if item[0] > 0 or mode == "compare"
+        if item[0] > 0 or mode == "compare" or paper_ids is not None
     ][:limit]
     result = []
     for paper in relevant_papers:
@@ -509,11 +515,19 @@ def draft_answer(
     question: str,
     mode: str,
     conversation_id: uuid.UUID | None = None,
+    *,
+    document_ids: set[uuid.UUID] | None = None,
+    paper_ids: set[uuid.UUID] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     client = _openai_client()
-    chunks = _retrieve_chunks(research_db, project_id, question)
-    papers = _retrieve_papers(research_db, literature_db, project_id, question, mode)
-    discovered_papers = _discover_external_papers(literature_db, question)
+    if document_ids is None and paper_ids is None:
+        chunks = _retrieve_chunks(research_db, project_id, question)
+        papers = _retrieve_papers(research_db, literature_db, project_id, question, mode)
+        discovered_papers = _discover_external_papers(literature_db, question)
+    else:
+        chunks = _retrieve_chunks(research_db, project_id, question, document_ids=document_ids)
+        papers = _retrieve_papers(research_db, literature_db, project_id, question, mode, paper_ids=paper_ids)
+        discovered_papers = []
     saved_paper_ids = {item["paper"].paper_id for item in papers}
     papers.extend(
         {"paper": paper, "author_ids": []}

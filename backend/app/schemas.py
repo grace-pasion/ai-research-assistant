@@ -654,10 +654,22 @@ class PaperImportResponse(BaseModel):
     results: list[PaperImportResult]
 
 
+class AssistantSourceSelection(BaseModel):
+    document_ids: list[uuid.UUID] = Field(max_length=200)
+    paper_ids: list[uuid.UUID] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def require_sources(self):
+        if not self.document_ids and not self.paper_ids:
+            raise ValueError("Select at least one project source.")
+        return self
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=5000)
     mode: Literal["question", "compare", "directions"] = "question"
     conversation_id: uuid.UUID | None = None
+    source_selection: AssistantSourceSelection | None = None
 
 
 class SourceResponse(BaseModel):

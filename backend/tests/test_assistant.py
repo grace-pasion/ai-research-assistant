@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 import app.services.assistant as assistant
 from app.routers import assistant as assistant_router
+from app.schemas import AskRequest
 from app.services.assistant import (
     _discover_external_papers,
     _paper_relevance,
@@ -109,6 +110,108 @@ def test_concurrent_approval_conflict_returns_the_existing_approval(monkeypatch)
 
     assert result is expected
     assert rollbacks == [True]
+
+
+def test_draft_retrieval_receives_only_selected_project_sources(monkeypatch):
+    project_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    paper_id = uuid.uuid4()
+    user = SimpleNamespace(user_id=uuid.uuid4())
+    draft_answer = lambda *args, **kwargs: ("Draft", [])
+    received = {}
+
+    class FakeResult:
+        def __init__(self, values):
+            self.values = values
+
+        def all(self):
+            return self.values
+
+    class FakeDatabase:
+        def __init__(self):
+            self.results = [FakeResult([document_id]), FakeResult([paper_id])]
+
+        def scalars(self, _query):
+            return self.results.pop(0)
+
+        def commit(self):
+            pass
+
+    class FakeSerializer:
+        def dumps(self, _payload):
+            return "signed-token"
+
+    def capture_draft(*args, **kwargs):
+        received["args"] = args
+        received["kwargs"] = kwargs
+        return draft_answer(*args, **kwargs)
+
+    monkeypatch.setattr(assistant_router, "require_project_access", lambda *_args: None)
+    monkeypatch.setattr(assistant_router, "consume_daily_prompt", lambda *_args: None)
+    monkeypatch.setattr(assistant_router, "record_activity", lambda *_args: None)
+    monkeypatch.setattr(assistant_router, "draft_answer", capture_draft)
+    monkeypatch.setattr(assistant_router, "_approval_serializer", FakeSerializer)
+    payload = AskRequest(
+        question="Summarize this study",
+        source_selection={
+            "document_ids": [str(document_id)],
+            "paper_ids": [str(paper_id)],
+        },
+    )
+
+    response = assistant_router.create_draft(
+        project_id,
+        payload,
+        SimpleNamespace(),
+        FakeDatabase(),
+        SimpleNamespace(),
+        user,
+    )
+
+    assert response.answer == "Draft"
+    assert received["args"][2] == project_id
+    assert received["kwargs"] == {
+        "document_ids": {document_id},
+        "paper_ids": {paper_id},
+    }
+
+
+def test_draft_rejects_sources_outside_the_project_before_retrieval(monkeypatch):
+    project_id = uuid.uuid4()
+    selected_id = uuid.uuid4()
+    draft_answer = SimpleNamespace(called=False)
+
+    class FakeResult:
+        def all(self):
+            return []
+
+    class FakeDatabase:
+        def scalars(self, _query):
+            return FakeResult()
+
+    def reject_if_called(*_args, **_kwargs):
+        draft_answer.called = True
+        raise AssertionError("Retrieval must not run for an unavailable source.")
+
+    monkeypatch.setattr(assistant_router, "require_project_access", lambda *_args: None)
+    monkeypatch.setattr(assistant_router, "draft_answer", reject_if_called)
+    payload = AskRequest(
+        question="Summarize this study",
+        source_selection={"document_ids": [str(selected_id)], "paper_ids": []},
+    )
+
+    with pytest.raises(HTTPException) as error:
+        assistant_router.create_draft(
+            project_id,
+            payload,
+            SimpleNamespace(),
+            FakeDatabase(),
+            SimpleNamespace(),
+            SimpleNamespace(user_id=uuid.uuid4()),
+        )
+
+    assert error.value.status_code == 422
+    assert not draft_answer.called
 
 
 def test_paper_relevance_prefers_title_matches_and_ignores_unrelated_papers():

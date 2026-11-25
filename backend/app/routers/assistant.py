@@ -21,6 +21,7 @@ from app.models import (
     MessagePaperSource,
     Paper,
     PaperAuthor,
+    ProjectPaper,
     User,
 )
 from app.schemas import (
@@ -359,17 +360,40 @@ def create_draft(
     require_project_access(db, project_id, user.user_id)
     if payload.conversation_id is not None:
         _conversation_for_user(db, payload.conversation_id, user.user_id, project_id)
+    selection = payload.source_selection
+    if selection is not None:
+        document_ids = set(selection.document_ids)
+        paper_ids = set(selection.paper_ids)
+        available_documents = set(db.scalars(
+            select(Document.document_id).where(
+                Document.project_id == project_id,
+                Document.processing_status == "ready",
+                Document.document_id.in_(document_ids),
+            )
+        ).all())
+        available_papers = set(db.scalars(
+            select(ProjectPaper.paper_id).where(
+                ProjectPaper.project_id == project_id,
+                ProjectPaper.paper_id.in_(paper_ids),
+            )
+        ).all())
+        if document_ids != available_documents or paper_ids != available_papers:
+            raise HTTPException(
+                status_code=422,
+                detail="A selected source is unavailable in this project. Refresh and select sources again.",
+            )
     consume_daily_prompt(db, request)
     record_activity(db, user.user_id, "assistant.draft_requested", {"mode": payload.mode})
     db.commit()
-    answer, sources = draft_answer(
-        db,
-        literature_db,
-        project_id,
-        payload.question.strip(),
-        payload.mode,
-        payload.conversation_id,
-    )
+    args = (db, literature_db, project_id, payload.question.strip(), payload.mode, payload.conversation_id)
+    if selection is None:
+        answer, sources = draft_answer(*args)
+    else:
+        answer, sources = draft_answer(
+            *args,
+            document_ids=set(selection.document_ids),
+            paper_ids=set(selection.paper_ids),
+        )
     approval_payload = {
         "user_id": str(user.user_id),
         "project_id": str(project_id),

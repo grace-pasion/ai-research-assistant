@@ -482,6 +482,17 @@ h1, h2, h3, p { margin-top: 0; }
 .source-page { color: #8e7947; display: block; font-size: 8px; margin-top: 4px; }
 .source-open-button { background: transparent; border: 0; color: #547462; cursor: pointer; font-size: 9px; margin: 7px 0 0; padding: 0; }
 .source-open-button:hover, .citation-ref:hover { text-decoration: underline; }
+.source-card-content { min-width: 0; }
+.source-review-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.source-review-actions button { background: transparent; border: 0; color: #547462; font-size: 9px; padding: 0; text-align: left; }
+.source-review-actions button[aria-pressed="true"] { color: #9d453e; font-weight: 700; }
+.assistant-source-picker { color: #547462; font-size: 10px; margin-bottom: 10px; }
+.assistant-source-picker summary { cursor: pointer; font-weight: 600; }
+.assistant-source-picker label { align-items: flex-start; display: flex; gap: 6px; margin-top: 7px; }
+.assistant-source-picker input { margin: 0; }
+.assistant-source-options { max-height: 180px; overflow-y: auto; padding-left: 18px; }
+.assistant-source-options p { color: #78817b; }
+.citation-passage { background: #f7e7a7; outline: 2px solid #e2c96f; scroll-margin: 35vh; }
 .citation-ref { background: #edf3ee; border: 0; border-radius: 3px; color: #3d7054; cursor: pointer; font: inherit; margin: 0 1px; padding: 0 3px; }
 .source-link { color: #74877a; margin-left: auto; }
 .review-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; }

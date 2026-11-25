@@ -31,6 +31,8 @@ import {
 } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
+import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
+import { findCitationRange } from "./citationEvidence";
 import {
   InboxDialog,
   ShareDialog,
@@ -156,6 +158,8 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [draftQuestion, setDraftQuestion] = useState("");
+  const [assistantSources, setAssistantSources] = useState<AssistantSourceSelection | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -319,6 +323,9 @@ function App() {
     setSavedPaperSearches([]);
     setConversations([]);
     setAiUsage(null);
+    setAssistantSources(null);
+    setDraft(null);
+    setConversation(null);
   }, [project?.project_id, token]);
 
   useEffect(() => {
@@ -520,12 +527,30 @@ function App() {
     setView("assistant");
   }
 
-  function openSource(source: Source) {
+  function openSource(source: Source, cardId: string) {
     if (source.kind === "document" && source.document_id) {
+      if (!documents.some((document) => document.document_id === source.document_id)) {
+        setError("This cited document is no longer available in the project.");
+        return;
+      }
       openDocumentEvidence(source.document_id, source.page_number, source.excerpt);
-    } else if (source.paper_url) {
-      window.open(source.paper_url, "_blank", "noopener,noreferrer");
+    } else {
+      const card = document.getElementById(cardId);
+      card?.scrollIntoView({ block: "center", behavior: "smooth" });
+      card?.focus({ preventScroll: true });
     }
+  }
+
+  function reviseWithoutSource(source: Source, originalQuestion: string) {
+    if (!originalQuestion) {
+      setError("The original question is unavailable; enter a new question to revise this answer.");
+      return;
+    }
+    setAssistantSources(withoutAssistantSource(allAssistantSources(documents, papers), source));
+    setQuestion(originalQuestion);
+    setDraft(null);
+    setError("");
+    setNotice("The cited source was excluded. Select different evidence and generate a new draft.");
   }
 
   function togglePaperSelection(paperId: string, selected: boolean) {
@@ -1360,6 +1385,11 @@ function App() {
   async function askQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!project || question.trim().length < 3 || aiUsage?.assistant_prompts_remaining === 0) return;
+    if (assistantSources && !assistantSources.document_ids.length && !assistantSources.paper_ids.length) {
+      setError("Select at least one source for this question.");
+      return;
+    }
+    const submittedQuestion = question.trim();
     setBusy(true);
     setError("");
     setNotice("");
@@ -1368,12 +1398,14 @@ function App() {
       const generated = await request<Draft>(`/api/projects/${project.project_id}/assistant/draft`, {
         method: "POST",
         body: jsonBody({
-          question: question.trim(),
+          question: submittedQuestion,
           mode: askMode,
           conversation_id: conversation?.conversation_id ?? null,
+          source_selection: assistantSources,
         }),
       });
       setDraft(generated);
+      setDraftQuestion(submittedQuestion);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not generate an answer.");
     } finally {
@@ -2026,6 +2058,7 @@ function App() {
                         annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
                         sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
                         sourceStatus={openedDocument.processing_status}
+                        citationExcerpt={openedDocument.file_type === "pdf" ? null : citationExcerpt}
                         canComment={project.access_role !== "read"}
                         currentUserId={user?.user_id ?? null}
                         isProjectOwner={project.access_role === "owner"}
@@ -2634,34 +2667,20 @@ function App() {
                       </select>
                     </div>
                     <div className="chat-messages">
-                      {conversation?.messages?.map((message) => (
+                      {conversation?.messages?.map((message, messageIndex) => (
                         <div className={`message ${message.role}`} key={message.message_id}>
                           <div className="message-label">{message.role === "assistant" ? "FIELDNOTES" : "YOU"}</div>
-                          <AnswerContent content={message.content} sources={message.sources} onSourceClick={openSource} />
+                          <AnswerContent content={message.content} sources={message.sources} onSourceClick={(source) => openSource(source, `source-${message.message_id}-${message.sources.indexOf(source)}`)} />
                           {message.role === "assistant" && (
                             <>
                               {!!message.sources.length && (
-                                <div className="source-list saved-sources">
-                                  <span className="source-list-label">CITED SOURCES</span>
-                                  {message.sources.map((source, index) => (
-                                    <article className="source-card" key={`${source.kind}-${source.source_id}`}>
-                                      <span className="source-index">S{index + 1}</span>
-                                      <div>
-                                        <strong>{source.title}</strong>
-                                        {source.page_number && <span className="source-page">PDF · page {source.page_number}</span>}
-                                        <p>{source.excerpt}</p>
-                                        {source.kind === "document" && source.document_id && (
-                                          <button className="source-open-button" onClick={() => openSource(source)}>
-                                            {source.page_number ? `Open page ${source.page_number}` : "Open document"}
-                                          </button>
-                                        )}
-                                      </div>
-                                      {source.kind === "paper" && source.paper_url && (
-                                        <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
-                                      )}
-                                    </article>
-                                  ))}
-                                </div>
+                                <AssistantSourceCards
+                                  idPrefix={`source-${message.message_id}`}
+                                  label="CITED SOURCES"
+                                  sources={message.sources}
+                                  onOpen={openSource}
+                                  onRevise={(source) => reviseWithoutSource(source, conversation.messages?.slice(0, messageIndex).reverse().find((item) => item.role === "user")?.content ?? "")}
+                                />
                               )}
                               <div className="message-footer">
                                 <span className="approved-label"><ShieldCheck size={13} /> Human-reviewed</span>
@@ -2685,29 +2704,16 @@ function App() {
                       {draft && (
                         <div className="draft-review">
                           <div className="review-topline"><span className="pending-dot" /> REVIEW REQUIRED <span>Not saved yet</span></div>
-                          <AnswerContent content={draft.answer} sources={draft.sources} onSourceClick={openSource} />
+                          <AnswerContent content={draft.answer} sources={draft.sources} onSourceClick={(source) => openSource(source, `source-draft-${draft.sources.indexOf(source)}`)} />
                           {!!draft.sources.length && (
-                            <div className="source-list">
-                              <span className="source-list-label">SOURCES TO REVIEW</span>
-                              {draft.sources.map((source, index) => (
-                                <article className="source-card" key={`${source.kind}-${source.source_id}`}>
-                                  <span className="source-index">S{index + 1}</span>
-                                  <div>
-                                    <strong>{source.title}</strong>
-                                    {source.page_number && <span className="source-page">PDF · page {source.page_number}</span>}
-                                    <p>{source.excerpt}</p>
-                                    {source.kind === "document" && source.document_id && (
-                                      <button className="source-open-button" onClick={() => openSource(source)}>
-                                        {source.page_number ? `Open page ${source.page_number}` : "Open document"}
-                                      </button>
-                                    )}
-                                  </div>
-                                  {source.kind === "paper" && source.paper_url && (
-                                    <a className="source-link" href={source.paper_url} target="_blank" rel="noreferrer" aria-label="Open cited paper"><ArrowUpRight size={15} /></a>
-                                  )}
-                                </article>
-                              ))}
-                            </div>
+                            <AssistantSourceCards
+                              key={draft.approval_token}
+                              idPrefix="source-draft"
+                              label="SOURCES TO REVIEW"
+                              sources={draft.sources}
+                              onOpen={openSource}
+                              onRevise={(source) => reviseWithoutSource(source, draftQuestion)}
+                            />
                           )}
                           <div className="review-actions">
                             <button className="button secondary" onClick={() => setDraft(null)} disabled={busy}><X size={16} /> Discard</button>
@@ -2730,6 +2736,37 @@ function App() {
                       )}
                     </div>
                     <form className="composer" onSubmit={(event) => void askQuestion(event)}>
+                      <details className="assistant-source-picker">
+                        <summary>{assistantSources ? `Selected sources (${assistantSources.document_ids.length + assistantSources.paper_ids.length})` : "Sources: automatic"}</summary>
+                        <label>
+                          <input type="checkbox" checked={assistantSources !== null} onChange={(event) => setAssistantSources(event.target.checked ? allAssistantSources(documents, papers) : null)} />
+                          Choose project sources for this question
+                        </label>
+                        {assistantSources && (
+                          <div className="assistant-source-options">
+                            <p>Only checked sources will be used. External paper discovery is off.</p>
+                            {documents.filter((document) => document.processing_status === "ready").map((document) => (
+                              <label key={document.document_id}>
+                                <input type="checkbox" checked={assistantSources.document_ids.includes(document.document_id)} onChange={(event) => {
+                                  const ids = assistantSources.document_ids.filter((id) => id !== document.document_id);
+                                  setAssistantSources({ ...assistantSources, document_ids: event.target.checked ? [...ids, document.document_id] : ids });
+                                }} />
+                                Document: {document.filename}
+                              </label>
+                            ))}
+                            {papers.map((paper) => (
+                              <label key={paper.paper_id}>
+                                <input type="checkbox" checked={assistantSources.paper_ids.includes(paper.paper_id)} onChange={(event) => {
+                                  const ids = assistantSources.paper_ids.filter((id) => id !== paper.paper_id);
+                                  setAssistantSources({ ...assistantSources, paper_ids: event.target.checked ? [...ids, paper.paper_id] : ids });
+                                }} />
+                                Paper: {paper.title}
+                              </label>
+                            ))}
+                            {!documents.some((document) => document.processing_status === "ready") && !papers.length && <p>No ready documents or saved papers are available.</p>}
+                          </div>
+                        )}
+                      </details>
                       <textarea
                         value={question}
                         onChange={(event) => setQuestion(event.target.value)}
@@ -3135,6 +3172,57 @@ function isEvidenceComparison(content: string): boolean {
   return /^\|\s*Source\s*\|\s*Research question\s*\|\s*Methods\s*\|\s*Sampling\s*\|\s*Findings\s*\|\s*Limitations\s*\|\s*Citations\s*\|$/m.test(content);
 }
 
+function AssistantSourceCards({
+  idPrefix,
+  label,
+  sources,
+  onOpen,
+  onRevise,
+}: {
+  idPrefix: string;
+  label: string;
+  sources: Source[];
+  onOpen: (source: Source, cardId: string) => void;
+  onRevise: (source: Source) => void;
+}) {
+  const [flagged, setFlagged] = useState<Set<number>>(() => new Set());
+  return (
+    <div className="source-list">
+      <span className="source-list-label">{label} · Flags are temporary</span>
+      {sources.map((source, index) => {
+        const cardId = `${idPrefix}-${index}`;
+        return (
+          <article className="source-card" key={`${source.kind}-${source.source_id}-${index}`} id={cardId} tabIndex={-1}>
+            <span className="source-index">S{index + 1}</span>
+            <div className="source-card-content">
+              <strong>{source.title}</strong>
+              {source.page_number && <span className="source-page">PDF · page {source.page_number}</span>}
+              <p>{source.excerpt}</p>
+              {source.kind === "document" && source.document_id && (
+                <button type="button" className="source-open-button" onClick={() => onOpen(source, cardId)}>
+                  {source.page_number ? `Open page ${source.page_number}` : "Open passage"}
+                </button>
+              )}
+              {source.kind === "paper" && source.paper_url && (
+                <a className="source-open-button" href={source.paper_url} target="_blank" rel="noreferrer">Open paper <ArrowUpRight size={12} /></a>
+              )}
+              <div className="source-review-actions">
+                <button type="button" aria-pressed={flagged.has(index)} onClick={() => setFlagged((current) => {
+                  const next = new Set(current);
+                  if (next.has(index)) next.delete(index);
+                  else next.add(index);
+                  return next;
+                })}>{flagged.has(index) ? "Flagged weak" : "Flag weak"}</button>
+                <button type="button" onClick={() => onRevise(source)}>Revise without this source</button>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function AnswerContent({
   content,
   sources,
@@ -3435,6 +3523,7 @@ function AnnotationEditor({
   sourcePath,
   sourceText,
   sourceStatus,
+  citationExcerpt,
   canComment,
   currentUserId,
   isProjectOwner,
@@ -3443,6 +3532,7 @@ function AnnotationEditor({
   sourcePath?: string;
   sourceText?: string;
   sourceStatus?: string;
+  citationExcerpt?: string | null;
   canComment: boolean;
   currentUserId: string | null;
   isProjectOwner: boolean;
@@ -3457,6 +3547,7 @@ function AnnotationEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const sourceRef = useRef<HTMLDivElement>(null);
+  const citationHighlightRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -3482,6 +3573,13 @@ function AnnotationEditor({
       active = false;
     };
   }, [annotationsPath, sourcePath, sourceStatus, sourceText]);
+
+  const citationRange = findCitationRange(text, citationExcerpt ?? null);
+
+  useEffect(() => {
+    if (loading || !citationRange) return;
+    citationHighlightRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [citationRange?.start, citationRange?.end, loading]);
 
   useEffect(() => {
     if (busy || editingId) return;
@@ -3587,17 +3685,46 @@ function AnnotationEditor({
       sourceCharacters.slice(item.start_offset, item.end_offset).join("") === item.quote,
     )
     .sort((left, right) => (left.start_offset ?? 0) - (right.start_offset ?? 0));
-  const sourceParts: ReactNode[] = [];
-  let cursor = 0;
+  const highlightRanges: { start: number; end: number; annotationId: string }[] = [];
+  let highlightCursor = 0;
   validHighlights.forEach((item) => {
     const start = item.start_offset ?? 0;
     const end = item.end_offset ?? start;
-    if (start < cursor || end > sourceCharacters.length) return;
-    if (start > cursor) sourceParts.push(sourceCharacters.slice(cursor, start).join(""));
-    sourceParts.push(<mark key={item.annotation_id}>{sourceCharacters.slice(start, end).join("")}</mark>);
-    cursor = end;
+    if (start < highlightCursor || end > sourceCharacters.length) return;
+    highlightRanges.push({ start, end, annotationId: item.annotation_id });
+    highlightCursor = end;
   });
-  if (cursor < sourceCharacters.length) sourceParts.push(sourceCharacters.slice(cursor).join(""));
+  const sourceParts: ReactNode[] = [];
+  const boundaries = new Set([0, sourceCharacters.length]);
+  highlightRanges.forEach(({ start, end }) => {
+    boundaries.add(start);
+    boundaries.add(end);
+  });
+  if (citationRange) {
+    boundaries.add(citationRange.start);
+    boundaries.add(citationRange.end);
+  }
+  const orderedBoundaries = [...boundaries].sort((left, right) => left - right);
+  orderedBoundaries.slice(0, -1).forEach((start, index) => {
+    const end = orderedBoundaries[index + 1];
+    if (start === end) return;
+    const annotation = highlightRanges.find((range) => range.start <= start && end <= range.end);
+    const isCitation = Boolean(citationRange && citationRange.start <= start && end <= citationRange.end);
+    const content = sourceCharacters.slice(start, end).join("");
+    if (!annotation && !isCitation) {
+      sourceParts.push(content);
+      return;
+    }
+    sourceParts.push(
+      <mark
+        key={`${annotation?.annotationId ?? "citation"}-${start}`}
+        className={isCitation ? "citation-passage" : undefined}
+        ref={isCitation ? citationHighlightRef : undefined}
+      >
+        {content}
+      </mark>,
+    );
+  });
 
   return (
     <section className="annotation-editor" aria-label="Source annotations">

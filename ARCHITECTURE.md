@@ -234,7 +234,9 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Compare sources in a structured matrix of each study's research question, methods, sampling, findings, limitations, and linked citations. Matrix cells with no verified support are flagged as missing evidence.
 - Export an approved comparison as an editable cited DOCX research brief with a source-attributed findings synthesis, evidence matrix, and bibliography.
 - Receive drafts with source citations/excerpts from the project's ready documents, saved papers, and any papers retrieved by an explicit chat search. Retrieved-paper citations link to the paper but do not save it to the project.
-- Click an answer's `[S#]` citation to open its matching source. PDF source cards display the supporting passage and page number and open the original PDF at that page; non-PDF document cards show the passage and open the document reader, while paper citations link to the paper.
+- Choose individual ready project documents and saved papers for a question, or leave source selection automatic. Manual selection is validated against the project and disables external paper discovery for that request.
+- Click an answer's `[S#]` citation to open its matching source. PDF source cards display the supporting passage and page number and open the original PDF at that page; non-PDF document citations open the reader at the highlighted matching passage, while paper citations link to the paper.
+- Temporarily flag a weak citation or request a new draft without that source, using the other selected project evidence. Flags are client-side review aids and are not persisted.
 - Query extracted full text from uploaded documents and imported open-access papers through document-chunk retrieval.
 - Continue an approved conversation and review its stored messages and citations.
 - Discard an unapproved draft or explicitly approve it before the conversation is saved.
@@ -327,7 +329,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/assistant/conversations` | List the current user's approved conversations for a project. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}` | Read the current user's approved conversation and its sources. |
 | `GET` | `/api/projects/{project_id}/assistant/conversations/{conversation_id}/brief?message_id=...` | Download the current user's approved comparison response as an editable cited DOCX research brief. |
-| `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; explicit literature-finding prompts also retrieve papers from OpenAlex. |
+| `POST` | `/api/projects/{project_id}/assistant/draft` | Generate an unsaved, rate-limited assistant draft; optional `source_selection` document/paper IDs are checked against the project, and explicit literature-finding prompts retrieve papers from OpenAlex only when no manual selection is supplied. |
 | `POST` | `/api/projects/{project_id}/assistant/approve` | Validate a review token and save the approved conversation. |
 
 Interactive API documentation is available at `/docs` on the API host.
