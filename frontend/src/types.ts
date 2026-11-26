@@ -77,6 +77,8 @@ export type DocumentRecord = {
   file_size: number;
   processing_status: "processing" | "ready" | "needs_api_key" | "failed" | "quota_exceeded";
   processing_error: string | null;
+  tags: string[];
+  metadata: Record<string, string>;
   uploaded_at: string;
 };
 
@@ -140,6 +142,8 @@ export type Paper = {
   saved: boolean;
   screening_status: "unread" | "undecided" | "include" | "exclude";
   screening_note: string;
+  tags: string[];
+  metadata: Record<string, string>;
 };
 
 export type SystematicReview = {

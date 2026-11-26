@@ -40,6 +40,8 @@ from app.schemas import (
     PaperScreeningBulkUpdate,
     PaperScreeningCounts,
     PaperScreeningUpdate,
+    LibraryMetadataResponse,
+    LibraryMetadataUpdate,
     SystematicReviewResponse,
     SystematicReviewUpdate,
     SavedPaperSearchAlertsCheckResponse,
@@ -80,6 +82,8 @@ def _paper_response(
     saved: bool = False,
     screening_status: str = "unread",
     screening_note: str = "",
+    tags: list[str] | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> PaperResponse:
     relationships = literature_db.execute(
         select(Author.author_id, Author.author_name)
@@ -102,6 +106,8 @@ def _paper_response(
         saved=saved,
         screening_status=screening_status,
         screening_note=screening_note,
+        tags=tags or [],
+        metadata=metadata or {},
     )
 
 
@@ -131,6 +137,8 @@ def list_saved_papers(
             saved=True,
             screening_status=screening[paper_id].screening_status,
             screening_note=screening[paper_id].screening_note,
+            tags=screening[paper_id].tags,
+            metadata=screening[paper_id].custom_metadata,
         )
         for paper_id in paper_ids
         if paper_id in papers_by_id
@@ -950,6 +958,25 @@ def update_paper_screening(
         screening_status=relation.screening_status,
         screening_note=relation.screening_note,
     )
+
+
+@router.patch("/{paper_id}/metadata", response_model=LibraryMetadataResponse)
+def update_paper_metadata(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    payload: LibraryMetadataUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    relation = db.get(ProjectPaper, (project_id, paper_id))
+    if relation is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+    relation.tags = payload.tags
+    relation.custom_metadata = payload.metadata
+    record_activity(db, user.user_id, "paper.metadata.updated")
+    db.commit()
+    return LibraryMetadataResponse(tags=relation.tags, metadata=relation.custom_metadata)
 
 
 @router.post("/screening/bulk", response_model=PaperScreeningBulkResponse)

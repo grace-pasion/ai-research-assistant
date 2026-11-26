@@ -119,6 +119,19 @@ def test_screening_defaults_to_unread_and_note_can_be_cleared(screening_database
     assert updated.screening_note == ""
 
 
+def test_saved_paper_list_returns_project_tags_and_custom_metadata(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    relation = db.get(ProjectPaper, (project.project_id, paper.paper_id))
+    relation.tags = ["methodology"]
+    relation.custom_metadata = {"Study design": "Cohort"}
+    db.commit()
+
+    listed = list_saved_papers(project.project_id, db, literature_db, user)
+
+    assert listed[0].tags == ["methodology"]
+    assert listed[0].metadata == {"Study design": "Cohort"}
+
+
 def test_concurrent_save_of_same_paper_is_idempotent(screening_databases, monkeypatch):
     db, _literature_db, user, project, paper = screening_databases
     relation = db.get(ProjectPaper, (project.project_id, paper.paper_id))

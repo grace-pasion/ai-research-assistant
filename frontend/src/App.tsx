@@ -52,6 +52,10 @@ import {
   type AnnotationSort,
   type AnnotationSourceFilter,
 } from "./projectAnnotations";
+import {
+  filterByLibraryMetadata,
+  type LibraryMetadataFilters,
+} from "./libraryMetadata";
 import type {
   AIUsageResponse,
   Annotation,
@@ -135,6 +139,16 @@ function App() {
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(() => new Set());
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
+  const [documentMetadataFilters, setDocumentMetadataFilters] = useState<LibraryMetadataFilters>({
+    tag: "",
+    metadataKey: "",
+    metadataValue: "",
+  });
+  const [paperMetadataFilters, setPaperMetadataFilters] = useState<LibraryMetadataFilters>({
+    tag: "",
+    metadataKey: "",
+    metadataValue: "",
+  });
   const [papers, setPapers] = useState<Paper[]>([]);
   const [systematicReview, setSystematicReview] = useState<SystematicReview | null>(null);
   const [reviewQuestion, setReviewQuestion] = useState("");
@@ -444,13 +458,20 @@ function App() {
     exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
   }), [papers]);
   const reviewedPaperCount = screeningCounts.undecided + screeningCounts.include + screeningCounts.exclude;
+  const visibleDocuments = useMemo(
+    () => filterByLibraryMetadata(documents, documentMetadataFilters),
+    [documents, documentMetadataFilters],
+  );
   const reviewDirty = systematicReview !== null && (
     reviewQuestion !== systematicReview.review_question
     || reviewProtocol !== systematicReview.protocol
   );
   const visibleScreeningPapers = useMemo(
-    () => filterAndSortScreeningPapers(papers, screeningFilter, screeningQuery, screeningSort),
-    [papers, screeningFilter, screeningQuery, screeningSort],
+    () => filterByLibraryMetadata(
+      filterAndSortScreeningPapers(papers, screeningFilter, screeningQuery, screeningSort),
+      paperMetadataFilters,
+    ),
+    [papers, screeningFilter, screeningQuery, screeningSort, paperMetadataFilters],
   );
   const selectedScreeningCount = papers.filter((paper) => selectedPaperIds.has(paper.paper_id)).length;
   const visibleProjectAnnotations = useMemo(
@@ -1069,6 +1090,28 @@ function App() {
     }
   }
 
+  async function updateDocumentMetadata(
+    documentId: string,
+    tags: string[],
+    metadata: Record<string, string>,
+  ) {
+    if (!project) return;
+    setError("");
+    try {
+      const updated = await request<DocumentRecord>(
+        `/api/documents/${documentId}/metadata`,
+        { method: "PATCH", body: jsonBody({ tags, metadata }) },
+      );
+      setDocuments((current) => current.map((document) =>
+        document.document_id === documentId ? updated : document,
+      ));
+      setNotice("Document tags and metadata saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save document metadata.");
+      throw cause;
+    }
+  }
+
   async function downloadDocument(document: DocumentRecord) {
     setError("");
     try {
@@ -1365,6 +1408,28 @@ function App() {
       setNotice("Screening decision saved.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this screening decision.");
+    }
+  }
+
+  async function updatePaperMetadata(
+    paper: Paper,
+    tags: string[],
+    metadata: Record<string, string>,
+  ) {
+    if (!project) return;
+    setError("");
+    try {
+      const updated = await request<Pick<Paper, "tags" | "metadata">>(
+        `/api/projects/${project.project_id}/papers/${paper.paper_id}/metadata`,
+        { method: "PATCH", body: jsonBody({ tags, metadata }) },
+      );
+      setPapers((current) => current.map((item) =>
+        item.paper_id === paper.paper_id ? { ...item, ...updated } : item,
+      ));
+      setNotice("Paper tags and metadata saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save paper metadata.");
+      throw cause;
     }
   }
 
@@ -2112,6 +2177,13 @@ function App() {
                           <button className="button secondary small-button" disabled={documentQuery.trim().length < 2}>Search documents</button>
                         </form>
                       )}
+                      {!!documents.length && (
+                        <LibraryMetadataFilters
+                          kind="documents"
+                          filters={documentMetadataFilters}
+                          onChange={setDocumentMetadataFilters}
+                        />
+                      )}
                       {documentMatches && (
                         <div className="document-search-results">
                           <div className="result-label"><span>Matches for “{documentQuery}”</span><button className="text-button" onClick={() => setDocumentMatches(null)} type="button">Clear</button></div>
@@ -2133,7 +2205,7 @@ function App() {
                         <EmptyState icon={<FileText size={22} />} title="No documents yet" text="Add a PDF, Word document, plain text, or Markdown file to begin." />
                       ) : (
                         <div className="document-list">
-                          {documents.map((document) => (
+                          {visibleDocuments.map((document) => (
                             <article className="document-row" key={document.document_id}>
                               <div className="file-icon"><FileText size={18} /></div>
                               <div className="document-info">
@@ -2146,6 +2218,13 @@ function App() {
                                 </button>
                                 <span>{formatBytes(document.file_size)} · {new Date(document.uploaded_at).toLocaleDateString()}</span>
                                 {document.processing_error && <small className="inline-error">{document.processing_error}</small>}
+                                <LibraryMetadataEditor
+                                  tags={document.tags}
+                                  metadata={document.metadata}
+                                  canEdit={canEditProject}
+                                  onSave={(tags, metadata) =>
+                                    updateDocumentMetadata(document.document_id, tags, metadata)}
+                                />
                               </div>
                               <StatusPill status={document.processing_status} />
                               <button className="icon-button" title="Download original" onClick={() => void downloadDocument(document)}>
@@ -2163,6 +2242,11 @@ function App() {
                               )}
                             </article>
                           ))}
+                          {visibleDocuments.length === 0 && (
+                            <p className="muted compact library-metadata-empty">
+                              No documents match these tag and metadata filters.
+                            </p>
+                          )}
                         </div>
                       )}
                       {processing && <p className="processing-note"><LoaderCircle className="spin" size={15} /> Extracting text and preparing documents…</p>}
@@ -2538,6 +2622,11 @@ function App() {
                               placeholder="Title, author, abstract, DOI…"
                             />
                           </label>
+                          <LibraryMetadataFilters
+                            kind="papers"
+                            filters={paperMetadataFilters}
+                            onChange={setPaperMetadataFilters}
+                          />
                           <label>
                             Sort by
                             <select
@@ -2614,6 +2703,9 @@ function App() {
                             : undefined}
                           onScreeningChange={canEditProject
                             ? (status, note) => void updatePaperScreening(paper, status, note)
+                            : undefined}
+                          onMetadataChange={canEditProject
+                            ? (tags, metadata) => updatePaperMetadata(paper, tags, metadata)
                             : undefined}
                           onRemove={canEditProject ? () => void unsavePaper(paper) : undefined}
                           onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
@@ -3403,6 +3495,7 @@ function PaperCard({
   onAnnotate,
   onSummarize,
   onScreeningChange,
+  onMetadataChange,
   selected = false,
   onSelectionChange,
   onImportFullText,
@@ -3417,6 +3510,7 @@ function PaperCard({
   onAnnotate?: () => void;
   onSummarize?: () => void;
   onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
+  onMetadataChange?: (tags: string[], metadata: Record<string, string>) => Promise<void>;
   selected?: boolean;
   onSelectionChange?: (selected: boolean) => void;
   onImportFullText?: () => void;
@@ -3489,6 +3583,14 @@ function PaperCard({
             </button>
           </div>
         )}
+        {saved && (
+          <LibraryMetadataEditor
+            tags={paper.tags}
+            metadata={paper.metadata}
+            canEdit={canEditProject}
+            onSave={onMetadataChange}
+          />
+        )}
       </div>
       <div className="paper-actions">
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
@@ -3515,6 +3617,162 @@ function PaperCard({
         )}
       </div>
     </article>
+  );
+}
+
+function LibraryMetadataFilters({
+  kind,
+  filters,
+  onChange,
+}: {
+  kind: "documents" | "papers";
+  filters: LibraryMetadataFilters;
+  onChange: (filters: LibraryMetadataFilters) => void;
+}) {
+  const update = (field: keyof LibraryMetadataFilters, value: string) => {
+    onChange({ ...filters, [field]: value });
+  };
+  return (
+    <div className="library-metadata-filters" aria-label={`${kind} tag and metadata filters`}>
+      <label>
+        Filter {kind} by tag
+        <input
+          value={filters.tag}
+          onChange={(event) => update("tag", event.target.value)}
+          placeholder="e.g. methods"
+        />
+      </label>
+      <label>
+        Metadata field
+        <input
+          value={filters.metadataKey}
+          onChange={(event) => update("metadataKey", event.target.value)}
+          placeholder="e.g. study design"
+        />
+      </label>
+      <label>
+        Metadata value
+        <input
+          value={filters.metadataValue}
+          onChange={(event) => update("metadataValue", event.target.value)}
+          placeholder="Filter by value"
+        />
+      </label>
+    </div>
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === "string");
+}
+
+function LibraryMetadataEditor({
+  tags,
+  metadata,
+  canEdit,
+  onSave,
+}: {
+  tags: string[];
+  metadata: Record<string, string>;
+  canEdit: boolean;
+  onSave?: (tags: string[], metadata: Record<string, string>) => Promise<void>;
+}) {
+  const [tagText, setTagText] = useState(tags.join("\n"));
+  const [metadataText, setMetadataText] = useState(JSON.stringify(metadata, null, 2));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (dirty) return;
+    setTagText(tags.join("\n"));
+    setMetadataText(JSON.stringify(metadata, null, 2));
+  }, [dirty, metadata, tags]);
+
+  async function saveMetadata() {
+    if (!onSave) return;
+    setError("");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(metadataText);
+    } catch {
+      setError("Metadata must be a valid JSON object of string values.");
+      return;
+    }
+    if (!isStringRecord(parsed)) {
+      setError("Metadata must be a JSON object with string values.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(
+        tagText.split(/\r?\n/).map((tag) => tag.trim()).filter(Boolean),
+        parsed,
+      );
+      setDirty(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save tags and metadata.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="library-metadata">
+      <div className="library-metadata-summary">
+        {tags.map((tag) => <span className="library-tag" key={tag}>{tag}</span>)}
+        {Object.entries(metadata).map(([key, value]) => (
+          <span className="library-meta-entry" key={key}><strong>{key}:</strong> {value}</span>
+        ))}
+        {!tags.length && !Object.keys(metadata).length && (
+          <span className="muted">No tags or metadata</span>
+        )}
+      </div>
+      {canEdit && (
+        <details className="library-metadata-editor">
+          <summary>Edit tags and metadata</summary>
+          <label>
+            Tags (one per line)
+            <textarea
+              value={tagText}
+              onChange={(event) => {
+                setTagText(event.target.value);
+                setDirty(true);
+              }}
+              maxLength={2_000}
+              rows={2}
+              placeholder={"methods\npriority"}
+            />
+          </label>
+          <label>
+            Custom metadata (JSON object with string values)
+            <textarea
+              value={metadataText}
+              onChange={(event) => {
+                setMetadataText(event.target.value);
+                setDirty(true);
+              }}
+              rows={3}
+              maxLength={20_000}
+              placeholder={'{\n  "study design": "randomized trial"\n}'}
+              spellCheck={false}
+            />
+          </label>
+          {error && <span className="inline-error" role="alert">{error}</span>}
+          <button
+            className="button secondary small-button"
+            type="button"
+            onClick={() => void saveMetadata()}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save tags and metadata"}
+          </button>
+        </details>
+      )}
+    </div>
   );
 }
 

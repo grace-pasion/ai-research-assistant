@@ -160,6 +160,22 @@ h1, h2, h3, p { margin-top: 0; }
 .document-list { border: 1px solid #e8ece8; border-radius: 9px; overflow: hidden; }
 .document-row { align-items: center; background: #fff; border-bottom: 1px solid #edf0ed; display: flex; gap: 13px; min-height: 72px; padding: 12px 15px; }
 .document-row:last-child { border-bottom: 0; }
+.library-metadata { display: grid; gap: 5px; margin-top: 5px; min-width: 0; }
+.library-metadata-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 4px; }
+.library-tag { background: #edf4ee; border-radius: 4px; color: #547462; font-size: 8px; padding: 3px 6px; }
+.library-meta-entry { color: #77837a; font-size: 9px; max-width: 100%; overflow-wrap: anywhere; }
+.library-meta-entry strong { color: #56665b; }
+.library-metadata-editor { color: #77837a; font-size: 9px; }
+.library-metadata-editor summary { color: #547462; cursor: pointer; font-weight: 600; width: fit-content; }
+.library-metadata-editor label { display: grid; gap: 4px; margin-top: 7px; }
+.library-metadata-editor input, .library-metadata-editor textarea,
+.library-metadata-filters input { background: #fff; border: 1px solid #e3e9e3; border-radius: 5px; color: #4c5a50; font: inherit; font-size: 10px; min-height: 29px; padding: 6px 8px; }
+.library-metadata-editor textarea { font-family: var(--mono); resize: vertical; }
+.library-metadata-editor .button { margin-top: 7px; }
+.library-metadata-filters { align-items: flex-end; display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
+.library-metadata-filters label { color: #77837a; display: flex; flex-direction: column; font-size: 9px; gap: 4px; }
+.library-metadata-filters input { min-width: 120px; }
+.library-metadata-empty { margin: 0; padding: 18px; text-align: center; }
 .annotation-editor { background: #fff; border: 1px solid #e5ebe5; border-radius: 9px; margin: 14px 0 20px; padding: 16px; }
 .annotation-heading { align-items: flex-start; display: flex; justify-content: space-between; margin-bottom: 12px; }
 .annotation-heading h3 { color: #344139; font: 650 14px var(--serif); margin: 0 0 4px; }

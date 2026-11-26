@@ -74,6 +74,28 @@ def ensure_project_paper_screening_columns(engine) -> None:
             )
 
 
+def ensure_library_metadata_columns(engine) -> None:
+    document_columns = {column["name"] for column in inspect(engine).get_columns("documents")}
+    paper_columns = {column["name"] for column in inspect(engine).get_columns("project_papers")}
+    with engine.begin() as connection:
+        if "tags" not in document_columns:
+            connection.execute(
+                text("ALTER TABLE documents ADD COLUMN tags JSON NOT NULL DEFAULT '[]'")
+            )
+        if "metadata" not in document_columns:
+            connection.execute(
+                text("ALTER TABLE documents ADD COLUMN metadata JSON NOT NULL DEFAULT '{}'")
+            )
+        if "tags" not in paper_columns:
+            connection.execute(
+                text("ALTER TABLE project_papers ADD COLUMN tags JSON NOT NULL DEFAULT '[]'")
+            )
+        if "metadata" not in paper_columns:
+            connection.execute(
+                text("ALTER TABLE project_papers ADD COLUMN metadata JSON NOT NULL DEFAULT '{}'")
+            )
+
+
 def ensure_notification_details_column(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("notifications")}
     if "details" not in columns:

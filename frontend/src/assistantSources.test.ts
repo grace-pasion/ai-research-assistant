@@ -13,6 +13,8 @@ const document = (
   file_size: 1,
   processing_status,
   processing_error: null,
+  tags: [],
+  metadata: {},
   uploaded_at: "2026-01-01T00:00:00Z",
 });
 
@@ -31,6 +33,8 @@ const paper = (paper_id: string): Paper => ({
   saved: true,
   screening_status: "unread",
   screening_note: "",
+  tags: [],
+  metadata: {},
 });
 
 describe("assistant source selection", () => {

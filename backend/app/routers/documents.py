@@ -17,6 +17,7 @@ from app.schemas import (
     DocumentReaderResponse,
     DocumentResponse,
     DocumentSearchResult,
+    LibraryMetadataUpdate,
 )
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
@@ -85,6 +86,28 @@ def list_documents(
             .order_by(Document.uploaded_at.desc())
         ).all()
     )
+
+
+@router.patch(
+    "/api/documents/{document_id}/metadata",
+    response_model=DocumentResponse,
+)
+def update_document_metadata(
+    document_id: uuid.UUID,
+    payload: LibraryMetadataUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    require_project_access(db, document.project_id, user.user_id, "edit")
+    document.tags = payload.tags
+    document.custom_metadata = payload.metadata
+    record_activity(db, user.user_id, "document.metadata.updated")
+    db.commit()
+    db.refresh(document)
+    return document
 
 
 @router.get("/api/documents/{document_id}/download")
@@ -220,6 +243,8 @@ async def _prepare_document_upload(
         storage_path=storage_path,
         file_size=len(data),
         processing_status="processing",
+        tags=[],
+        custom_metadata={},
     )
     db.add(document)
     record_activity(

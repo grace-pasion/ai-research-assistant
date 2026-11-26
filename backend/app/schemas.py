@@ -425,7 +425,53 @@ class DocumentResponse(APIModel):
     file_size: int
     processing_status: str
     processing_error: str | None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict, validation_alias="custom_metadata")
     uploaded_at: datetime
+
+
+class LibraryMetadataUpdate(BaseModel):
+    tags: list[str] = Field(max_length=30)
+    metadata: dict[str, str] = Field(max_length=30)
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_library_tags(cls, value: list[str]) -> list[str]:
+        normalized = []
+        seen = set()
+        for tag in value:
+            tag = tag.strip()
+            if not tag:
+                raise ValueError("Tags cannot be blank.")
+            if len(tag) > 64:
+                raise ValueError("Tags must be 64 characters or fewer.")
+            if tag.casefold() not in seen:
+                normalized.append(tag)
+                seen.add(tag.casefold())
+        return normalized
+
+    @field_validator("metadata")
+    @classmethod
+    def normalize_library_metadata(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized = {}
+        seen = set()
+        for key, metadata_value in value.items():
+            key = key.strip()
+            metadata_value = metadata_value.strip()
+            if not key:
+                raise ValueError("Metadata field names cannot be blank.")
+            if len(key) > 64 or len(metadata_value) > 500:
+                raise ValueError("Metadata field names are limited to 64 characters and values to 500.")
+            if key.casefold() in seen:
+                raise ValueError("Metadata field names must be unique, ignoring case.")
+            normalized[key] = metadata_value
+            seen.add(key.casefold())
+        return normalized
+
+
+class LibraryMetadataResponse(BaseModel):
+    tags: list[str]
+    metadata: dict[str, str]
 
 
 class BulkDocumentUploadResult(BaseModel):
@@ -529,10 +575,12 @@ class PaperResponse(BaseModel):
     paper_url: str | None
     venue: str | None
     citation_count: int | None
-    authors: list[PaperAuthorResponse] = []
+    authors: list[PaperAuthorResponse] = Field(default_factory=list)
     saved: bool = False
     screening_status: Literal["unread", "undecided", "include", "exclude"] = "unread"
     screening_note: str = ""
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class PaperScreeningUpdate(BaseModel):

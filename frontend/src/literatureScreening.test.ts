@@ -23,6 +23,8 @@ function paper(
     saved: true,
     screening_status: status,
     screening_note: "",
+    tags: [],
+    metadata: {},
   };
 }
 
