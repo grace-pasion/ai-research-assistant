@@ -7,6 +7,7 @@ import {
   FileCode2,
   FileOutput,
   FileText,
+  History,
   Library,
   LoaderCircle,
   Save,
@@ -30,6 +31,7 @@ import {
 } from "./latexCitations";
 import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { fetchPdfObjectUrl } from "./api";
+import { findLatexSourceLocation, sourceOffsetForLine } from "./latexDiagnostics";
 import {
   ensureLatexPackage,
   pythonOutputInsertion,
@@ -48,6 +50,14 @@ type WorkspaceFiles = {
 };
 
 type WorkspaceRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
+
+type WorkspaceVersion = {
+  version_id: string;
+  filename: EditorFile;
+  version_number: number;
+  created_at: string;
+  author_name: string | null;
+};
 
 type Props = {
   project: Project;
@@ -132,6 +142,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [workspaceError, setWorkspaceError] = useState("");
   const [sourceError, setSourceError] = useState("");
   const [compileError, setCompileError] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [excerpts, setExcerpts] = useState<Record<string, string>>({});
@@ -142,9 +157,74 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const workspaceRef = useRef(workspace);
   const savedContentRef = useRef("");
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const autosaveTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const pdfUrlRef = useRef<string | null>(null);
   const canEdit = project.access_role === "owner" || project.access_role === "edit";
+
+  async function loadHistory(filename: EditorFile) {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const versions = await request<WorkspaceVersion[]>(
+        `/api/projects/${project.project_id}/latex/history`,
+      );
+      setHistoryVersions(versions.filter((version) => version.filename === filename));
+    } catch (cause) {
+      setHistoryError(cause instanceof Error ? cause.message : "Could not load file history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function restoreVersion(version: WorkspaceVersion) {
+    if (!window.confirm(
+      `Restore ${version.filename} to version ${version.version_number}? This replaces the shared file and discards any unsaved edits.`,
+    )) return;
+    setRestoringVersion(version.version_id);
+    setHistoryError("");
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    try {
+      await saveQueueRef.current;
+      const restored = await request<WorkspaceFiles>(
+        `/api/projects/${project.project_id}/latex/history/${version.version_id}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expected_updated_at: workspaceRef.current.updated_at }),
+        },
+      );
+      workspaceRef.current = restored;
+      savedContentRef.current = JSON.stringify(restored);
+      setWorkspace(restored);
+      setSaveStatus("saved");
+      setCompileError("");
+      await loadHistory(version.filename);
+    } catch (cause) {
+      setHistoryError(cause instanceof Error ? cause.message : "Could not restore this version.");
+    } finally {
+      setRestoringVersion(null);
+    }
+  }
+
+  function openCompileLocation() {
+    const location = findLatexSourceLocation(compileError);
+    if (!location) return;
+    const source = location.filename === "main.tex"
+      ? workspaceRef.current.main_tex
+      : workspaceRef.current.references_bib;
+    const offset = sourceOffsetForLine(source, location.line);
+    setPythonWorkspaceActive(false);
+    setActiveFile(location.filename);
+    setPaneMode("source");
+    cursorPositionRef.current = offset;
+    window.setTimeout(() => {
+      editorRef.current?.focus();
+      editorRef.current?.setSelectionRange(offset, offset);
+    }, 0);
+  }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -160,6 +240,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     setPythonWorkspaceActive(false);
     setPythonFiles([]);
     setSelectedPythonFile("main.py");
+    setHistoryOpen(false);
+    setHistoryVersions([]);
+    setHistoryLoading(false);
+    setHistoryError("");
+    setRestoringVersion(null);
   }, [project.project_id]);
 
   useEffect(() => {
@@ -218,10 +303,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }, [project.project_id, request]);
 
   useEffect(() => {
-    if (!loaded || !canEdit || saveStatus !== "unsaved") return;
+    if (!loaded || !canEdit || saveStatus !== "unsaved" || restoringVersion !== null) return;
     const timer = window.setTimeout(() => void persist(workspace), 700);
-    return () => window.clearTimeout(timer);
-  }, [canEdit, loaded, persist, saveStatus, workspace]);
+    autosaveTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (autosaveTimerRef.current === timer) autosaveTimerRef.current = null;
+    };
+  }, [canEdit, loaded, persist, restoringVersion, saveStatus, workspace]);
 
   useEffect(() => {
     if (!loaded || saveStatus !== "saved") return;
@@ -274,7 +363,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const currentValue = activeFile === "main.tex" ? workspace.main_tex : workspace.references_bib;
 
   function updateFile(value: string) {
-    if (!canEdit) return;
+    if (!canEdit || restoringVersion !== null) return;
     const updated = {
       ...workspaceRef.current,
       [activeFile === "main.tex" ? "main_tex" : "references_bib"]: value,
@@ -285,7 +374,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function insertIntoMain(insertion: string) {
-    if (!canEdit) return;
+    if (!canEdit || restoringVersion !== null) return;
     const textarea = editorRef.current;
     const source = workspaceRef.current.main_tex;
     const preferredPosition = !pythonWorkspaceActive
@@ -300,6 +389,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     const updated = { ...workspaceRef.current, main_tex: inserted.source };
     workspaceRef.current = updated;
     setWorkspace(updated);
+    setHistoryOpen(false);
     setPythonWorkspaceActive(false);
     setActiveFile("main.tex");
     setSaveStatus("unsaved");
@@ -339,7 +429,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function citePaper(paper: Paper, includeAbstract = false) {
-    if (!canEdit) return;
+    if (!canEdit || restoringVersion !== null) return;
     const key = citationKey(paper);
     const existing = workspaceRef.current.references_bib;
     const entry = bibtexEntry(paper);
@@ -375,13 +465,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function openPythonWorkspace(filename = selectedPythonFile) {
+    setHistoryOpen(false);
     setPythonWorkspaceVisited(true);
     setPythonWorkspaceActive(true);
     setSelectedPythonFile(filename);
   }
 
   function insertDocumentExcerpt(document: DocumentRecord) {
-    if (!canEdit) return;
+    if (!canEdit || restoringVersion !== null) return;
     const excerpt = excerpts[document.document_id]?.trim();
     if (!excerpt) return;
     insertIntoMain(
@@ -390,7 +481,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   }
 
   function changeCitationStyle(style: CitationStyle) {
-    if (!canEdit) return;
+    if (!canEdit || restoringVersion !== null) return;
     const source = workspaceRef.current.main_tex;
     const command = `\\bibliographystyle{${style}}`;
     let updatedSource: string;
@@ -442,6 +533,8 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     }
   }
 
+  const compileLocation = findLatexSourceLocation(compileError);
+
   return (
     <section className="latex-workspace section-content" aria-label="LaTeX main document workspace">
       <header className="latex-header">
@@ -468,13 +561,25 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
               >
                 <Download size={14} /> Download {activeFile}
               </button>
+              <button
+                type="button"
+                className="button secondary small-button"
+                onClick={() => {
+                  setHistoryOpen((open) => !open);
+                  if (!historyOpen) void loadHistory(activeFile);
+                }}
+                disabled={loading || !loaded}
+                aria-expanded={historyOpen}
+              >
+                <History size={14} /> History
+              </button>
             </>
           )}
           <button
             type="button"
             className="button primary small-button"
             onClick={() => void compilePdf()}
-            disabled={loading || !loaded || compiling || saveStatus === "saving"}
+            disabled={loading || !loaded || compiling || saveStatus === "saving" || restoringVersion !== null}
           >
             {compiling ? <LoaderCircle size={14} className="spin" /> : <FileOutput size={14} />}
             {compiling ? "Compiling…" : "Compile PDF"}
@@ -484,7 +589,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
             type="button"
             className="button primary small-button"
             onClick={() => void persist(workspace)}
-            disabled={loading || !loaded || saveStatus === "saving" || saveStatus === "saved"}
+            disabled={loading || !loaded || saveStatus === "saving" || saveStatus === "saved" || restoringVersion !== null}
           >
             <Save size={14} /> Save now
           </button>
@@ -492,7 +597,16 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
         </div>
       </header>
       {workspaceError && <p className="inline-error latex-error" role="alert">{workspaceError}</p>}
-      {compileError && <p className="inline-error latex-error" role="alert">{compileError}</p>}
+      {compileError && (
+        <div className="inline-error latex-error latex-diagnostic" role="alert">
+          <pre>{compileError}</pre>
+          {compileLocation && (
+            <button type="button" className="button secondary small-button" onClick={openCompileLocation}>
+              Open {compileLocation.filename} line {compileLocation.line}
+            </button>
+          )}
+        </div>
+      )}
       {!canEdit && <p className="latex-preview-note">You can read and compile this draft but cannot change shared project content.</p>}
       {workspaceError.includes("changed in another session") && (
         <button type="button" className="button secondary small-button latex-reload" onClick={() => void reloadWorkspace()}>
@@ -516,10 +630,10 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <aside className="latex-sources">
             <div className="latex-files">
               <span className="latex-label">PROJECT FILES</span>
-              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
+              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
                 <FileCode2 size={15} /> main.tex
               </button>
-              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
+              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
                 <BookOpen size={15} /> references.bib
               </button>
             </div>
@@ -556,11 +670,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   <strong>{paper.title}</strong>
                   <span>{paper.authors[0]?.author_name ?? "Unknown author"} · {paper.publication_year ?? "n.d."}</span>
                   <div className="latex-source-actions">
-                    <button type="button" onClick={() => citePaper(paper)} title={`Add ${citationKey(paper)} to references.bib and cite it`} disabled={!canEdit}>
+                    <button type="button" onClick={() => citePaper(paper)} title={`Add ${citationKey(paper)} to references.bib and cite it`} disabled={!canEdit || restoringVersion !== null}>
                       <Code2 size={12} /> Cite
                     </button>
                     {paper.abstract && (
-                      <button type="button" onClick={() => citePaper(paper, true)} title="Insert the abstract with its citation" disabled={!canEdit}>
+                      <button type="button" onClick={() => citePaper(paper, true)} title="Insert the abstract with its citation" disabled={!canEdit || restoringVersion !== null}>
                         <Upload size={12} /> Abstract
                       </button>
                     )}
@@ -591,13 +705,13 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                           value={excerpts[document.document_id]}
                           maxLength={4000}
                           rows={5}
-                          readOnly={!canEdit}
+                          readOnly={!canEdit || restoringVersion !== null}
                           onChange={(event) => setExcerpts((current) => ({
                             ...current,
                             [document.document_id]: event.target.value,
                           }))}
                         />
-                        <button type="button" className="latex-insert-excerpt" onClick={() => insertDocumentExcerpt(document)} disabled={!canEdit}>
+                        <button type="button" className="latex-insert-excerpt" onClick={() => insertDocumentExcerpt(document)} disabled={!canEdit || restoringVersion !== null}>
                           Insert excerpt
                         </button>
                       </>
@@ -627,6 +741,41 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   </button>
                 </div>
               </div>
+              {historyOpen && (
+                <section className="workspace-history" aria-label={`${activeFile} version history`}>
+                  <div className="workspace-history-heading">
+                    <strong>{activeFile} history</strong>
+                    <button
+                      type="button"
+                      className="button secondary small-button"
+                      onClick={() => void loadHistory(activeFile)}
+                      disabled={historyLoading}
+                    >
+                      {historyLoading ? "Refreshing…" : "Refresh"}
+                    </button>
+                  </div>
+                  <p>Up to 20 changed versions are kept per file. Restoring a version creates a new revision.</p>
+                  {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+                  {historyLoading ? (
+                    <p className="latex-empty">Loading history…</p>
+                  ) : historyVersions.length ? historyVersions.map((version) => (
+                    <div className="workspace-history-item" key={version.version_id}>
+                      <span>
+                        <strong>Version {version.version_number}</strong>
+                        <small>{new Date(version.created_at).toLocaleString()} · {version.author_name ?? "Earlier version"}</small>
+                      </span>
+                      <button
+                        type="button"
+                        className="button secondary small-button"
+                        onClick={() => void restoreVersion(version)}
+                        disabled={!canEdit || restoringVersion !== null}
+                      >
+                        {restoringVersion === version.version_id ? "Restoring…" : "Restore"}
+                      </button>
+                    </div>
+                  )) : <p className="latex-empty">No saved versions for this file yet.</p>}
+                </section>
+              )}
               <div className="latex-citation-tools">
                 <label htmlFor="latex-citation-style">Bibliography style</label>
                 <select
@@ -659,7 +808,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                       autoComplete="off"
                       autoCorrect="off"
                       spellCheck={false}
-                      readOnly={!canEdit}
+                      readOnly={!canEdit || restoringVersion !== null}
                       value={currentValue}
                       onChange={(event) => {
                         cursorPositionRef.current = event.currentTarget.selectionStart;

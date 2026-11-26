@@ -169,6 +169,23 @@ export type Paper = {
   metadata: Record<string, string>;
 };
 
+export type ProjectCollectionItem = {
+  item_id: string;
+  source_type: "document" | "paper";
+  source_id: string;
+  source_title: string | null;
+  added_at: string;
+};
+
+export type ProjectCollection = {
+  collection_id: string;
+  project_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  items: ProjectCollectionItem[];
+};
+
 export type ScreeningExclusionReason =
   | "wrong_population"
   | "wrong_intervention"
@@ -305,6 +322,31 @@ export type ProjectInvitation = {
   invitee_email: string;
 };
 
+export type ProjectCollaborator = {
+  user_id: string;
+  username: string;
+  name: string;
+  role: "owner" | "read" | "comment" | "edit";
+};
+
+export type ProjectTask = {
+  task_id: string;
+  project_id: string;
+  source_type: "document" | "paper";
+  source_id: string;
+  source_title: string;
+  annotation_id: string | null;
+  title: string;
+  status: "open" | "in_progress" | "done";
+  created_by: string;
+  created_by_name: string;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  assignee_username: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type DirectMessage = {
   message_id: string;
   sender_id: string;
@@ -323,8 +365,24 @@ export type MessageThread = {
 
 export type Notification = {
   notification_id: string;
-  kind: "project_invitation" | "invitation_response" | "message" | "saved_search_alert";
-  details: { query?: string; provider?: string; new_result_count?: number };
+  kind:
+    | "project_invitation"
+    | "invitation_response"
+    | "message"
+    | "saved_search_alert"
+    | "annotation_mention"
+    | "task_assigned";
+  details: {
+    query?: string;
+    provider?: string;
+    new_result_count?: number;
+    annotation_id?: string;
+    task_id?: string;
+    task_title?: string;
+    source_type?: string;
+    source_id?: string;
+    source_title?: string;
+  };
   actor_id: string;
   actor_name: string;
   actor_username: string | null;

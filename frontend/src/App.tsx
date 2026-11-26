@@ -29,11 +29,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
 import { findCitationRange } from "./citationEvidence";
+import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
+import { ProjectCollections } from "./ProjectCollections";
 import {
   InboxDialog,
   ShareDialog,
@@ -75,6 +77,8 @@ import type {
   PaperScreeningDecision,
   ProjectAnnotation,
   Project,
+  ProjectCollaborator,
+  ProjectTask,
   ScreeningExclusionReason,
   SavedPaperSearch,
   SavedPaperSearchRun,
@@ -86,7 +90,7 @@ import type {
   User,
 } from "./types";
 
-type View = "documents" | "papers" | "notes" | "latex" | "assistant" | "search";
+type View = "documents" | "papers" | "notes" | "collections" | "latex" | "assistant" | "search";
 type LoginResponse = { access_token: string; user: User };
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
@@ -143,6 +147,13 @@ function App() {
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
   const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
   const [projectAnnotations, setProjectAnnotations] = useState<ProjectAnnotation[]>([]);
+  const [projectCollaborators, setProjectCollaborators] = useState<ProjectCollaborator[]>([]);
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [taskSourceSelection, setTaskSourceSelection] = useState("");
+  const [taskAnnotationSelection, setTaskAnnotationSelection] = useState("");
+  const [taskAssigneeSelection, setTaskAssigneeSelection] = useState("");
+  const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
+  const [taskSaving, setTaskSaving] = useState(false);
   const [annotationQuery, setAnnotationQuery] = useState("");
   const [annotationSourceFilter, setAnnotationSourceFilter] = useState<AnnotationSourceFilter>("all");
   const [annotationSort, setAnnotationSort] = useState<AnnotationSort>("newest");
@@ -349,6 +360,11 @@ function App() {
     setProjectExportBusy(false);
     setProjectExportError("");
     setProjectAnnotations([]);
+    setProjectCollaborators([]);
+    setProjectTasks([]);
+    setTaskSourceSelection("");
+    setTaskAnnotationSelection("");
+    setTaskAssigneeSelection("");
     setSavedPaperSearches([]);
     setConversations([]);
     setAiUsage(null);
@@ -360,17 +376,24 @@ function App() {
   useEffect(() => {
     if (!project || !token || view !== "notes") return;
     let active = true;
-    const loadAnnotations = () => {
-      request<ProjectAnnotation[]>(`/api/projects/${project.project_id}/annotations`)
-        .then((loaded) => {
-          if (active) setProjectAnnotations(loaded);
+    const loadNotesWorkspace = () => {
+      Promise.all([
+        request<ProjectAnnotation[]>(`/api/projects/${project.project_id}/annotations`),
+        request<ProjectTask[]>(`/api/projects/${project.project_id}/tasks`),
+        request<ProjectCollaborator[]>(`/api/projects/${project.project_id}/collaborators`),
+      ])
+        .then(([loadedAnnotations, loadedTasks, loadedCollaborators]) => {
+          if (!active) return;
+          setProjectAnnotations(loadedAnnotations);
+          setProjectTasks(loadedTasks);
+          setProjectCollaborators(loadedCollaborators);
         })
         .catch((cause: unknown) => {
-          if (active) setError(cause instanceof Error ? cause.message : "Could not load project notes.");
+          if (active) setError(cause instanceof Error ? cause.message : "Could not load project notes and tasks.");
         });
     };
-    loadAnnotations();
-    const timer = window.setInterval(loadAnnotations, 30_000);
+    loadNotesWorkspace();
+    const timer = window.setInterval(loadNotesWorkspace, 30_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -506,6 +529,43 @@ function App() {
     ),
     [annotationQuery, annotationSourceFilter, annotationSort, pinnedAnnotationsOnly, projectAnnotations],
   );
+  const projectTaskSources = useMemo(() => [
+    ...documents.map((document) => ({
+      source_type: "document" as const,
+      source_id: document.document_id,
+      source_title: document.filename,
+    })),
+    ...papers.map((paper) => ({
+      source_type: "paper" as const,
+      source_id: paper.paper_id,
+      source_title: paper.title,
+    })),
+  ], [documents, papers]);
+  const resolvedTaskSourceSelection = projectTaskSources.some(
+    (source) => `${source.source_type}.${source.source_id}` === taskSourceSelection,
+  )
+    ? taskSourceSelection
+    : projectTaskSources[0]
+      ? `${projectTaskSources[0].source_type}.${projectTaskSources[0].source_id}`
+      : "";
+  const selectedTaskSource = projectTaskSources.find(
+    (source) => `${source.source_type}.${source.source_id}` === resolvedTaskSourceSelection,
+  );
+  const taskAnnotationOptions = selectedTaskSource
+    ? projectAnnotations.filter((annotation) =>
+      annotation.source_type === selectedTaskSource.source_type
+      && (annotation.source_type === "document"
+        ? annotation.document_id === selectedTaskSource.source_id
+        : annotation.paper_id === selectedTaskSource.source_id),
+    )
+    : [];
+  const resolvedTaskAssigneeSelection = projectCollaborators.some(
+    (collaborator) => collaborator.user_id === taskAssigneeSelection,
+  )
+    ? taskAssigneeSelection
+    : projectCollaborators.find((collaborator) => collaborator.user_id === user?.user_id)?.user_id
+      ?? projectCollaborators[0]?.user_id
+      ?? "";
   const selectedProjectAnnotationCount = projectAnnotations
     .filter((annotation) => selectedAnnotationIds.has(annotation.annotation_id)).length;
   const allVisibleAnnotationsSelected = visibleProjectAnnotations.length > 0
@@ -575,6 +635,18 @@ function App() {
       : annotation.paper_id ?? "", annotation.source_title);
   }
 
+  function openProjectNotesFromInbox(projectId: string) {
+    const target = projects.find((item) => item.project_id === projectId);
+    if (!target) {
+      setError("This project is no longer available.");
+      return;
+    }
+    setProject(target);
+    setSelectedTeamWorkspaceId(target.team_workspace_id);
+    setView("notes");
+    setShowInbox(false);
+  }
+
   async function updateProjectAnnotation(
     annotation: ProjectAnnotation,
     update: ProjectAnnotationUpdate,
@@ -603,6 +675,72 @@ function App() {
         next.delete(annotation.annotation_id);
         return next;
       });
+    }
+  }
+
+  async function createProjectTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project || !selectedTaskSource || taskSaving) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setTaskSaving(true);
+    setError("");
+    try {
+      const created = await request<ProjectTask>(`/api/projects/${project.project_id}/tasks`, {
+        method: "POST",
+        body: jsonBody({
+          source_type: selectedTaskSource.source_type,
+          source_id: selectedTaskSource.source_id,
+          annotation_id: data.get("annotation_id") || null,
+          title: data.get("title"),
+          assignee_id: data.get("assignee_id"),
+        }),
+      });
+      setProjectTasks((current) => [created, ...current]);
+      setTaskAnnotationSelection("");
+      form.reset();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the task.");
+    } finally {
+      setTaskSaving(false);
+    }
+  }
+
+  async function updateProjectTask(
+    task: ProjectTask,
+    update: { status?: ProjectTask["status"]; assignee_id?: string | null },
+  ) {
+    if (!project) return;
+    setTaskBusyId(task.task_id);
+    setError("");
+    try {
+      const updated = await request<ProjectTask>(
+        `/api/projects/${project.project_id}/tasks/${task.task_id}`,
+        { method: "PATCH", body: jsonBody(update) },
+      );
+      setProjectTasks((current) => current.map((item) =>
+        item.task_id === updated.task_id ? updated : item,
+      ));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update the task.");
+    } finally {
+      setTaskBusyId(null);
+    }
+  }
+
+  async function deleteProjectTask(task: ProjectTask) {
+    if (!project) return;
+    setTaskBusyId(task.task_id);
+    setError("");
+    try {
+      await request<void>(`/api/projects/${project.project_id}/tasks/${task.task_id}`, {
+        method: "DELETE",
+      });
+      setProjectTasks((current) => current.filter((item) => item.task_id !== task.task_id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the task.");
+    } finally {
+      setTaskBusyId(null);
     }
   }
 
@@ -2165,6 +2303,7 @@ function App() {
               onClose={() => setShowInbox(false)}
               onProjectsUpdated={refreshProjects}
               onUnreadCount={refreshUnreadCount}
+              onOpenProject={openProjectNotesFromInbox}
             />
           )}
           {showTeamWorkspaces && (
@@ -2261,6 +2400,7 @@ function App() {
               <div className="tab-bar" role="tablist" aria-label="Project sections">
                 <TabButton active={view === "documents"} onClick={() => setView("documents")} icon={<FileText size={16} />}>Documents</TabButton>
                 <TabButton active={view === "papers"} onClick={() => setView("papers")} icon={<Library size={16} />}>Literature</TabButton>
+                <TabButton active={view === "collections"} onClick={() => setView("collections")} icon={<FolderPlus size={16} />}>Collections</TabButton>
                 <TabButton active={view === "notes"} onClick={() => setView("notes")} icon={<BookOpen size={16} />}>Notes</TabButton>
                 <TabButton active={view === "latex"} onClick={() => setView("latex")} icon={<FileCode2 size={16} />}>Main document</TabButton>
                 <TabButton active={view === "assistant"} onClick={() => setView("assistant")} icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
@@ -2308,6 +2448,7 @@ function App() {
                       )}
                       <AnnotationEditor
                         key={openedDocument.document_id}
+                        projectId={project.project_id}
                         annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
                         sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
                         sourceStatus={openedDocument.processing_status}
@@ -2448,7 +2589,7 @@ function App() {
                   <div className="section-heading">
                     <div>
                       <h2>Project notes and highlights</h2>
-                      <p>Tag and pin notes, connect related sources, and select notes to add as context to a source comparison.</p>
+                      <p>Tag and pin notes, connect related sources, assign source tasks, and mention collaborators with @username.</p>
                     </div>
                     <button
                       className="button primary"
@@ -2458,6 +2599,155 @@ function App() {
                       <MessageSquareText size={15} /> Use selected in comparison ({selectedProjectAnnotationCount})
                     </button>
                   </div>
+                  <section className="project-task-panel" aria-labelledby="project-task-heading">
+                    <div className="project-task-heading">
+                      <div>
+                        <h3 id="project-task-heading">Team tasks</h3>
+                        <p>Assign a paper or document review, optionally linking it to a note.</p>
+                      </div>
+                    </div>
+                    {canCommentOnProject && projectTaskSources.length > 0 && (
+                      <form className="project-task-form" onSubmit={(event) => void createProjectTask(event)}>
+                        <select
+                          name="source"
+                          aria-label="Task paper or document"
+                          value={resolvedTaskSourceSelection}
+                          onChange={(event) => {
+                            setTaskSourceSelection(event.target.value);
+                            setTaskAnnotationSelection("");
+                          }}
+                          required
+                        >
+                          {projectTaskSources.map((source) => (
+                            <option
+                              key={`${source.source_type}.${source.source_id}`}
+                              value={`${source.source_type}.${source.source_id}`}
+                            >
+                              {source.source_type === "document" ? "Document" : "Paper"}: {source.source_title}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          name="annotation_id"
+                          aria-label="Link task to a note (optional)"
+                          value={taskAnnotationSelection}
+                          onChange={(event) => setTaskAnnotationSelection(event.target.value)}
+                        >
+                          <option value="">No linked note</option>
+                          {taskAnnotationOptions.map((annotation) => (
+                            <option key={annotation.annotation_id} value={annotation.annotation_id}>
+                              {annotation.quote || annotation.note || "Highlight"} · {annotation.source_title}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          name="title"
+                          aria-label="Task title"
+                          placeholder="e.g. Review this paper"
+                          maxLength={240}
+                          required
+                        />
+                        <select
+                          name="assignee_id"
+                          aria-label="Assign task to"
+                          required
+                          value={resolvedTaskAssigneeSelection}
+                          onChange={(event) => setTaskAssigneeSelection(event.target.value)}
+                        >
+                          <option value="" disabled>Assign to…</option>
+                          {projectCollaborators.map((collaborator) => (
+                            <option key={collaborator.user_id} value={collaborator.user_id}>
+                              {collaborator.name} (@{collaborator.username})
+                            </option>
+                          ))}
+                        </select>
+                        <button className="button primary small-button" disabled={taskSaving}>
+                          {taskSaving ? "Assigning…" : "Assign task"}
+                        </button>
+                      </form>
+                    )}
+                    {!canCommentOnProject && <p className="muted compact">Comment access is required to create project tasks.</p>}
+                    {!projectTaskSources.length && <p className="muted compact">Add a project document or saved paper to create a task.</p>}
+                    {projectTasks.length > 0 ? (
+                      <div className="project-task-list">
+                        {projectTasks.map((task) => {
+                          const isOwner = project.access_role === "owner";
+                          const isCreator = task.created_by === user?.user_id;
+                          const isAssignee = task.assignee_id === user?.user_id;
+                          const canUpdateStatus = isOwner || isCreator || isAssignee;
+                          const canReassign = isOwner || isCreator;
+                          const taskBusy = taskBusyId === task.task_id;
+                          const linkedAnnotation = task.annotation_id
+                            ? projectAnnotations.find((annotation) => annotation.annotation_id === task.annotation_id)
+                            : null;
+                          return (
+                            <article className="project-task-item" key={task.task_id}>
+                              <div className="project-task-copy">
+                                <strong>{task.title}</strong>
+                                <button
+                                  type="button"
+                                  className="project-task-source"
+                                  onClick={() => openProjectSource(task.source_type, task.source_id, task.source_title)}
+                                >
+                                  {task.source_type === "document" ? "Document" : "Paper"}: {task.source_title}
+                                </button>
+                                {linkedAnnotation && (
+                                  <small>Note: {linkedAnnotation.quote || linkedAnnotation.note}</small>
+                                )}
+                                <small>
+                                  Assigned to {task.assignee_name ?? "nobody"} · Created by {task.created_by_name}
+                                </small>
+                              </div>
+                              <select
+                                aria-label={`Status for task ${task.title}`}
+                                value={task.status}
+                                disabled={!canUpdateStatus || taskBusy}
+                                onChange={(event) => void updateProjectTask(
+                                  task,
+                                  { status: event.target.value as ProjectTask["status"] },
+                                )}
+                              >
+                                <option value="open">Open</option>
+                                <option value="in_progress">In progress</option>
+                                <option value="done">Done</option>
+                              </select>
+                              {canReassign && (
+                                <select
+                                  aria-label={`Assignee for task ${task.title}`}
+                                  value={task.assignee_id ?? ""}
+                                  disabled={taskBusy}
+                                  onChange={(event) => void updateProjectTask(
+                                    task,
+                                    { assignee_id: event.target.value || null },
+                                  )}
+                                >
+                                  <option value="">Unassigned</option>
+                                  {projectCollaborators.map((collaborator) => (
+                                    <option key={collaborator.user_id} value={collaborator.user_id}>
+                                      {collaborator.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {canReassign && (
+                                <button
+                                  type="button"
+                                  className="text-button danger-text"
+                                  disabled={taskBusy}
+                                  onClick={() => void deleteProjectTask(task)}
+                                  aria-label={`Delete task ${task.title}`}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="muted compact">No team tasks yet.</p>
+                    )}
+                  </section>
                   <div className="annotation-library-controls">
                     <input
                       type="search"
@@ -3106,6 +3396,7 @@ function App() {
                         {annotationPaperId === paper.paper_id && (
                           <AnnotationEditor
                             key={`annotations-${paper.paper_id}`}
+                            projectId={project.project_id}
                             annotationsPath={`/api/projects/${project.project_id}/papers/${paper.paper_id}/annotations`}
                             sourceText={paper.abstract?.replace(/<[^>]*>/g, "") ?? ""}
                             canComment={project.access_role !== "read"}
@@ -3120,6 +3411,17 @@ function App() {
                     )}
                   </div>
                 </section>
+              )}
+
+              {view === "collections" && (
+                <ProjectCollections
+                  projectId={project.project_id}
+                  documents={documents}
+                  papers={papers}
+                  canEdit={Boolean(canEditProject)}
+                  request={request}
+                  onOpenSource={openProjectSource}
+                />
               )}
 
               {view === "assistant" && (
@@ -4350,7 +4652,80 @@ function LibraryMetadataEditor({
   );
 }
 
+function MentionableTextarea({
+  value,
+  onChange,
+  collaborators,
+  currentUserId,
+  ...textareaProps
+}: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
+  value: string;
+  onChange: (value: string) => void;
+  collaborators: ProjectCollaborator[];
+  currentUserId: string | null;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mentionQuery, setMentionQuery] = useState<ReturnType<typeof getMentionQuery>>(null);
+  const suggestions = mentionQuery
+    ? collaborators
+      .filter((collaborator) =>
+        collaborator.user_id !== currentUserId
+        && collaborator.username.toLocaleLowerCase().startsWith(mentionQuery.query.toLocaleLowerCase()),
+      )
+      .slice(0, 6)
+    : [];
+
+  function updateQuery(textarea: HTMLTextAreaElement) {
+    setMentionQuery(getMentionQuery(textarea.value, textarea.selectionStart));
+  }
+
+  function chooseMention(username: string) {
+    if (!mentionQuery) return;
+    const result = insertMention(value, mentionQuery.end, username);
+    onChange(result.value);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(result.cursor, result.cursor);
+    });
+  }
+
+  return (
+    <div className="mentionable-textarea">
+      <textarea
+        {...textareaProps}
+        ref={textareaRef}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          updateQuery(event.currentTarget);
+        }}
+        onSelect={(event) => updateQuery(event.currentTarget)}
+        onKeyUp={(event) => updateQuery(event.currentTarget)}
+        onBlur={() => setMentionQuery(null)}
+      />
+      {suggestions.length > 0 && (
+        <div className="mention-suggestions" role="listbox" aria-label="Project collaborator suggestions">
+          {suggestions.map((collaborator) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected="false"
+              key={collaborator.user_id}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseMention(collaborator.username)}
+            >
+              <strong>@{collaborator.username}</strong><span>{collaborator.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AnnotationEditor({
+  projectId,
   annotationsPath,
   sourcePath,
   sourceText,
@@ -4360,6 +4735,7 @@ function AnnotationEditor({
   currentUserId,
   isProjectOwner,
 }: {
+  projectId: string;
   annotationsPath: string;
   sourcePath?: string;
   sourceText?: string;
@@ -4375,11 +4751,26 @@ function AnnotationEditor({
   const [selection, setSelection] = useState<{ quote: string; start_offset: number; end_offset: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
+  const [collaborators, setCollaborators] = useState<ProjectCollaborator[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const sourceRef = useRef<HTMLDivElement>(null);
   const citationHighlightRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    api<ProjectCollaborator[]>(`/api/projects/${projectId}/collaborators`)
+      .then((loaded) => {
+        if (active) setCollaborators(loaded);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load project collaborators.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
 
   useEffect(() => {
     let active = true;
@@ -4582,13 +4973,15 @@ function AnnotationEditor({
           )}
           {canComment && <form className="annotation-form" onSubmit={(event) => void saveAnnotation(event)}>
             <label htmlFor={`annotation-note-${annotationsPath}`}>Note</label>
-            <textarea
+            <MentionableTextarea
               id={`annotation-note-${annotationsPath}`}
               value={note}
-              onChange={(event) => setNote(event.target.value)}
+              onChange={setNote}
               placeholder="What stands out about this passage?"
               maxLength={5000}
               rows={3}
+              collaborators={collaborators}
+              currentUserId={currentUserId}
             />
             <button className="button primary small-button" disabled={busy || (!note.trim() && !selection)}>
               {busy ? "Saving…" : "Add comment"}
@@ -4602,7 +4995,15 @@ function AnnotationEditor({
                   <small className="annotation-author">{item.author_name ?? "Original project note"}</small>
                   {editingId === item.annotation_id ? (
                     <div className="annotation-edit">
-                      <textarea value={editNote} onChange={(event) => setEditNote(event.target.value)} maxLength={5000} rows={2} />
+                      <MentionableTextarea
+                        value={editNote}
+                        onChange={setEditNote}
+                        maxLength={5000}
+                        rows={2}
+                        collaborators={collaborators}
+                        currentUserId={currentUserId}
+                        aria-label="Edit annotation note"
+                      />
                       <button className="button secondary small-button" type="button" disabled={busy} onClick={() => void updateAnnotation(item)}>Save note</button>
                       <button className="text-button" type="button" onClick={() => setEditingId(null)}>Cancel</button>
                     </div>

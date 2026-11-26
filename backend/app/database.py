@@ -127,6 +127,24 @@ def ensure_python_workspace_files_column(engine) -> None:
             )
 
 
+def ensure_python_artifact_provenance_columns(engine) -> None:
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("python_workspace_artifacts")
+    }
+    with engine.begin() as connection:
+        if "script_filename" not in columns:
+            connection.execute(
+                text("ALTER TABLE python_workspace_artifacts ADD COLUMN script_filename VARCHAR(128)")
+            )
+        if "input_filenames" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE python_workspace_artifacts ADD COLUMN input_filenames "
+                    "JSON NOT NULL DEFAULT '[]'"
+                )
+            )
+
+
 def ensure_project_team_workspace_column(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("research_projects")}
     if "team_workspace_id" not in columns:

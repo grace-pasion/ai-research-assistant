@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -262,6 +263,32 @@ class LatexWorkspace(ResearchBase):
     )
 
 
+class ProjectFileVersion(ResearchBase):
+    __tablename__ = "project_file_versions"
+    __table_args__ = (
+        CheckConstraint("workspace_type IN ('latex', 'python')"),
+        UniqueConstraint(
+            "project_id",
+            "workspace_type",
+            "filename",
+            "version_number",
+        ),
+    )
+
+    version_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE")
+    )
+    workspace_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    filename: Mapped[str] = mapped_column(String(128), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PythonWorkspace(ResearchBase):
     __tablename__ = "python_workspaces"
 
@@ -290,6 +317,10 @@ class PythonWorkspaceArtifact(ResearchBase):
     content_type: Mapped[str] = mapped_column(String(80), nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    script_filename: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_filenames: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -368,6 +399,45 @@ class Annotation(ResearchBase):
     @property
     def author_name(self) -> str | None:
         return self.author.name if self.author is not None else None
+
+
+class ProjectTask(ResearchBase):
+    __tablename__ = "project_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id IS NOT NULL AND paper_id IS NULL) OR "
+            "(document_id IS NULL AND paper_id IS NOT NULL)",
+            name="ck_project_tasks_single_source",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'in_progress', 'done')",
+            name="ck_project_tasks_status",
+        ),
+    )
+
+    task_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    annotation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("annotations.annotation_id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class DocumentChunk(ResearchBase):
@@ -511,6 +581,66 @@ class ProjectPaper(ResearchBase):
     custom_metadata: Mapped[dict[str, str]] = mapped_column(
         "metadata", JSON, nullable=False, default=dict, server_default="{}"
     )
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectCollection(ResearchBase):
+    __tablename__ = "project_collections"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "normalized_name",
+            name="uq_project_collections_project_name",
+        ),
+    )
+
+    collection_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProjectCollectionItem(ResearchBase):
+    __tablename__ = "project_collection_items"
+    __table_args__ = (
+        CheckConstraint(
+            "(source_type = 'document' AND document_id IS NOT NULL AND paper_id IS NULL) OR "
+            "(source_type = 'paper' AND paper_id IS NOT NULL AND document_id IS NULL)",
+            name="ck_project_collection_items_single_source",
+        ),
+        Index(
+            "uq_collection_document_item",
+            "collection_id",
+            "document_id",
+            unique=True,
+            sqlite_where=text("document_id IS NOT NULL"),
+            postgresql_where=text("document_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_collection_paper_item",
+            "collection_id",
+            "paper_id",
+            unique=True,
+            sqlite_where=text("paper_id IS NOT NULL"),
+            postgresql_where=text("paper_id IS NOT NULL"),
+        ),
+    )
+
+    item_id: Mapped[uuid.UUID] = uuid_column()
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("project_collections.collection_id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=True
+    )
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

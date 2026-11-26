@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db, get_literature_db
-from app.models import Annotation, Document, Paper, ProjectPaper, ResearchProject, User
+from app.models import Annotation, Document, Notification, Paper, ProjectPaper, ResearchProject, User
 from app.schemas import (
     AnnotationSourceLink,
     AnnotationCreate,
@@ -16,6 +16,10 @@ from app.schemas import (
     ProjectAnnotationResponse,
 )
 from app.security import get_current_user, require_project_access
+from app.services.project_collaboration import (
+    extract_mentioned_usernames,
+    list_project_collaborators,
+)
 
 router = APIRouter(tags=["annotations"])
 
@@ -102,6 +106,65 @@ def _require_annotation_author(
     project = db.get(ResearchProject, annotation.project_id)
     if project is None or project.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Only the comment author or project owner can edit it.")
+
+
+def _notify_new_mentions(
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    annotation: Annotation,
+    note: str,
+    previous_note: str,
+    source_type: str,
+    source_id: uuid.UUID,
+    source_title: str,
+    actor: User,
+) -> None:
+    if not extract_mentioned_usernames(note):
+        return
+    project = db.get(ResearchProject, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Research project not found.")
+    collaborators = list_project_collaborators(db, project)
+    users_by_username = {
+        collaborator.username.casefold(): collaborator
+        for collaborator, _ in collaborators
+        if collaborator.username
+    }
+    known_usernames = set(users_by_username)
+    mentioned = extract_mentioned_usernames(note, known_usernames)
+    if not mentioned:
+        return
+    newly_mentioned = mentioned - extract_mentioned_usernames(
+        previous_note,
+        known_usernames,
+    )
+    unknown = newly_mentioned - users_by_username.keys()
+    if unknown:
+        names = ", ".join(f"@{username}" for username in sorted(unknown))
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=f"These mentions are not project collaborators: {names}.",
+        )
+    for username in sorted(newly_mentioned):
+        recipient = users_by_username[username]
+        if recipient.user_id == actor.user_id:
+            continue
+        db.add(
+            Notification(
+                recipient_id=recipient.user_id,
+                actor_id=actor.user_id,
+                kind="annotation_mention",
+                project_id=project_id,
+                details={
+                    "annotation_id": str(annotation.annotation_id),
+                    "source_type": source_type,
+                    "source_id": str(source_id),
+                    "source_title": source_title,
+                },
+            )
+        )
 
 
 def _validate_related_sources(
@@ -245,6 +308,18 @@ def create_document_annotation(
         end_offset=payload.end_offset,
     )
     db.add(annotation)
+    db.flush()
+    _notify_new_mentions(
+        db,
+        project_id=project_id,
+        annotation=annotation,
+        note=annotation.note,
+        previous_note="",
+        source_type="document",
+        source_id=document_id,
+        source_title=document.filename,
+        actor=user,
+    )
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -292,6 +367,18 @@ def create_paper_annotation(
         end_offset=payload.end_offset,
     )
     db.add(annotation)
+    db.flush()
+    _notify_new_mentions(
+        db,
+        project_id=project_id,
+        annotation=annotation,
+        note=annotation.note,
+        previous_note="",
+        source_type="paper",
+        source_id=paper_id,
+        source_title=paper.title,
+        actor=user,
+    )
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -311,11 +398,12 @@ def update_document_annotation(
     literature_db: Session = Depends(get_literature_db),
 ):
     require_project_access(db, project_id, user.user_id, "comment")
-    _require_document(db, project_id, document_id)
+    document = _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
     _require_annotation_author(db, annotation, user)
     if payload.note is not None and not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
+    previous_note = annotation.note
     if payload.note is not None:
         annotation.note = payload.note
     if payload.tags is not None:
@@ -325,6 +413,18 @@ def update_document_annotation(
     if payload.related_sources is not None:
         annotation.related_sources = _validate_related_sources(
             db, literature_db, project_id, annotation, payload.related_sources
+        )
+    if payload.note is not None:
+        _notify_new_mentions(
+            db,
+            project_id=project_id,
+            annotation=annotation,
+            note=annotation.note,
+            previous_note=previous_note,
+            source_type="document",
+            source_id=document_id,
+            source_title=document.filename,
+            actor=user,
         )
     db.commit()
     db.refresh(annotation)
@@ -345,11 +445,12 @@ def update_paper_annotation(
     user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, user.user_id, "comment")
-    _require_saved_paper(db, literature_db, project_id, paper_id)
+    paper = _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
     _require_annotation_author(db, annotation, user)
     if payload.note is not None and not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
+    previous_note = annotation.note
     if payload.note is not None:
         annotation.note = payload.note
     if payload.tags is not None:
@@ -359,6 +460,18 @@ def update_paper_annotation(
     if payload.related_sources is not None:
         annotation.related_sources = _validate_related_sources(
             db, literature_db, project_id, annotation, payload.related_sources
+        )
+    if payload.note is not None:
+        _notify_new_mentions(
+            db,
+            project_id=project_id,
+            annotation=annotation,
+            note=annotation.note,
+            previous_note=previous_note,
+            source_type="paper",
+            source_id=paper_id,
+            source_title=paper.title,
+            actor=user,
         )
     db.commit()
     db.refresh(annotation)

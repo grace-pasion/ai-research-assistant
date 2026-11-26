@@ -11,7 +11,7 @@ from app.database import (
     get_db,
     get_literature_db,
 )
-from app.models import Annotation, Document, Paper, ProjectInvitation, ProjectPaper, ResearchProject, TeamWorkspace, User
+from app.models import Annotation, Document, Notification, Paper, ProjectInvitation, ProjectPaper, ResearchProject, TeamWorkspace, User
 from app.routers import annotations, documents
 from app.schemas import AnnotationCreate, AnnotationUpdate
 from app.security import get_current_user
@@ -21,11 +21,20 @@ from app.security import get_current_user
 def annotation_databases(tmp_path):
     research_engine = create_engine(f"sqlite:///{tmp_path / 'research.sqlite'}")
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
-    for model in (User, TeamWorkspace, ResearchProject, ProjectInvitation, Document, ProjectPaper, Annotation):
+    for model in (
+        User,
+        TeamWorkspace,
+        ResearchProject,
+        ProjectInvitation,
+        Document,
+        ProjectPaper,
+        Annotation,
+        Notification,
+    ):
         model.__table__.create(research_engine)
     Paper.__table__.create(literature_engine)
     with Session(research_engine) as research_db, Session(literature_engine) as literature_db:
-        user = User(email="reader@example.com", name="Reader", password_hash="hashed")
+        user = User(email="reader@example.com", username="reader", name="Reader", password_hash="hashed")
         research_db.add(user)
         research_db.flush()
         project = ResearchProject(user_id=user.user_id, project_name="Field notes")
@@ -209,6 +218,90 @@ def test_project_annotations_require_project_access(annotation_databases):
             project.project_id, db=db, literature_db=literature_db, user=other_user
         )
     assert error.value.status_code == 404
+
+
+def test_annotation_mentions_notify_only_new_project_collaborators(annotation_databases):
+    db, _, owner, project, document, _ = annotation_databases
+    collaborator = User(
+        email="collaborator@example.com",
+        username="collaborator",
+        name="Project collaborator",
+        password_hash="hashed",
+    )
+    db.add(collaborator)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=collaborator.user_id,
+            role="comment",
+            status="accepted",
+        )
+    )
+    db.commit()
+
+    created = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="Please review this, @collaborator."),
+        db,
+        owner,
+    )
+    notifications = db.scalars(select(Notification)).all()
+    assert len(notifications) == 1
+    assert notifications[0].recipient_id == collaborator.user_id
+    assert notifications[0].kind == "annotation_mention"
+    assert notifications[0].details["annotation_id"] == str(created.annotation_id)
+
+    annotations.update_document_annotation(
+        project.project_id,
+        document.document_id,
+        created.annotation_id,
+        AnnotationUpdate(note="Thanks, @COLLABORATOR."),
+        db,
+        owner,
+    )
+    assert len(db.scalars(select(Notification)).all()) == 1
+
+    annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="I will review this, @reader."),
+        db,
+        owner,
+    )
+    assert len(db.scalars(select(Notification)).all()) == 1
+
+    invitation = db.scalar(
+        select(ProjectInvitation).where(ProjectInvitation.invitee_id == collaborator.user_id)
+    )
+    assert invitation is not None
+    invitation.status = "declined"
+    db.commit()
+    annotations.update_document_annotation(
+        project.project_id,
+        document.document_id,
+        created.annotation_id,
+        AnnotationUpdate(note="Revisiting this, @collaborator."),
+        db,
+        owner,
+    )
+    assert len(db.scalars(select(Notification)).all()) == 1
+
+
+def test_annotation_mentions_reject_non_collaborators(annotation_databases):
+    db, _, owner, project, document, _ = annotation_databases
+    with pytest.raises(HTTPException) as error:
+        annotations.create_document_annotation(
+            project.project_id,
+            document.document_id,
+            AnnotationCreate(note="Please review this, @outsider."),
+            db,
+            owner,
+        )
+    assert error.value.status_code == 422
+    assert db.scalar(select(Annotation)) is None
 
 
 def test_annotation_updates_save_normalized_tags_pin_and_related_sources(annotation_databases):

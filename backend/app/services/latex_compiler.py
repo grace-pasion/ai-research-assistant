@@ -30,6 +30,11 @@ CITATION_COMMANDS = {
     "citeyearpar",
     "nocite",
 }
+SOURCE_LOCATION = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\r\n:]*[/\\](?:main\.tex|references\.bib)"
+    r"|(?:main\.tex|references\.bib)):(?P<line>\d+):",
+    re.IGNORECASE,
+)
 
 
 class LatexCompilerUnavailable(RuntimeError):
@@ -84,6 +89,44 @@ def citation_key_issues(main_tex: str, references_bib: str) -> dict[str, list[st
     }
 
 
+def _citation_key_locations(source: str, keys: list[str], *, bibliography: bool = False) -> dict[str, int]:
+    wanted = set(keys)
+    if not wanted:
+        return {}
+    source = _without_comments(source)
+    pattern = (
+        r"(?im)^\s*@([a-z]+)\s*\{\s*([^,\s]+)\s*,"
+        if bibliography
+        else r"\\("
+        + "|".join(sorted(CITATION_COMMANDS, key=len, reverse=True))
+        + r")\*?(?:\s*\[[^\]]*\]){0,2}\s*\{([^{}]*)\}"
+    )
+    locations: dict[str, int] = {}
+    for match in re.finditer(pattern, source):
+        if bibliography and match.group(1).casefold() in {"comment", "preamble", "string"}:
+            continue
+        raw_keys = [match.group(2)] if bibliography else match.group(2).split(",")
+        for raw_key in raw_keys:
+            key = raw_key.strip()
+            if key not in wanted:
+                continue
+            start = match.start(2) + match.group(2).find(raw_key)
+            locations[key] = source.count("\n", 0, start) + 1
+    return locations
+
+
+def _format_compiler_output(details: str) -> str:
+    return SOURCE_LOCATION.sub(
+        lambda match: (
+            match.group("path").replace("\\", "/").rsplit("/", 1)[-1]
+            + ":"
+            + match.group("line")
+            + ":"
+        ),
+        details,
+    )
+
+
 def _command(binary: str, args: list[str]) -> list[str]:
     runuser = shutil.which("runuser")
     prlimit = shutil.which("prlimit")
@@ -136,6 +179,7 @@ def _run(
             log.seek(max(0, log.tell() - 4000))
             details = log.read().decode("utf-8", errors="replace").strip()
             details = details or "The TeX compiler did not provide an error message."
+            details = _format_compiler_output(details)
             raise LatexCompilationError(f"PDF compilation failed:\n{details}")
     return result
 
@@ -168,10 +212,20 @@ def compile_latex(
 ) -> bytes:
     issues = citation_key_issues(main_tex, references_bib)
     if issues["missing_keys"]:
-        keys = ", ".join(issues["missing_keys"])
+        locations = _citation_key_locations(main_tex, issues["missing_keys"])
+        keys = ", ".join(
+            f"{key} (main.tex:{locations[key]})" if key in locations else key
+            for key in issues["missing_keys"]
+        )
         raise LatexCompilationError(f"Missing BibTeX entries for citation keys: {keys}")
     if issues["duplicate_keys"]:
-        keys = ", ".join(issues["duplicate_keys"])
+        locations = _citation_key_locations(
+            references_bib, issues["duplicate_keys"], bibliography=True
+        )
+        keys = ", ".join(
+            f"{key} (references.bib:{locations[key]})" if key in locations else key
+            for key in issues["duplicate_keys"]
+        )
         raise LatexCompilationError(f"Duplicate BibTeX citation keys: {keys}")
     validated_assets = _validate_assets(assets)
 

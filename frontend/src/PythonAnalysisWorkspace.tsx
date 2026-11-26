@@ -4,6 +4,7 @@ import {
   FileCode2,
   FileImage,
   FileSpreadsheet,
+  History,
   Info,
   LoaderCircle,
   Play,
@@ -32,6 +33,16 @@ type PythonArtifact = {
   content_type: string;
   byte_size: number;
   updated_at: string;
+  script_filename: string | null;
+  input_filenames: string[];
+};
+
+type WorkspaceVersion = {
+  version_id: string;
+  filename: string;
+  version_number: number;
+  created_at: string;
+  author_name: string | null;
 };
 
 type PythonWorkspaceData = {
@@ -99,6 +110,12 @@ export function PythonAnalysisWorkspace({
   const [inputFiles, setInputFiles] = useState<File[]>([]);
   const [creatingFile, setCreatingFile] = useState(false);
   const [newFilename, setNewFilename] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
+  const [historyFilename, setHistoryFilename] = useState(selectedFilename);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const savedFilesRef = useRef("");
   const updatedAtRef = useRef<string | null>(null);
@@ -189,6 +206,7 @@ export function PythonAnalysisWorkspace({
     const current = workspaceRef.current;
     const files = current.files ?? [];
     if (!canEdit || JSON.stringify(files) === savedFilesRef.current) return true;
+    if (restoringVersion !== null) return false;
     const validation = validatePythonSourceFiles(files);
     if (validation) {
       setStatus("error");
@@ -217,7 +235,50 @@ export function PythonAnalysisWorkspace({
     }
   }
 
+  async function loadHistory(preferredFilename = selectedFilename) {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const versions = await request<WorkspaceVersion[]>(`${path}/history`);
+      setHistoryVersions(versions);
+      const filenames = Array.from(new Set(versions.map((version) => version.filename))).sort();
+      setHistoryFilename(
+        filenames.includes(preferredFilename) ? preferredFilename : filenames[0] ?? preferredFilename,
+      );
+    } catch (cause) {
+      setHistoryError(cause instanceof Error ? cause.message : "Could not load Python file history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function restoreVersion(version: WorkspaceVersion) {
+    if (!window.confirm(
+      `Restore ${version.filename} to version ${version.version_number}? This replaces the shared file and discards any unsaved edits.`,
+    )) return;
+    setRestoringVersion(version.version_id);
+    setHistoryError("");
+    try {
+      const restored = await request<PythonWorkspaceData>(
+        `${path}/history/${version.version_id}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expected_updated_at: updatedAtRef.current }),
+        },
+      );
+      acceptWorkspace(restored);
+      onSelectedFileChange(version.filename);
+      setStatus("saved");
+      await loadHistory(version.filename);
+    } catch (cause) {
+      setHistoryError(cause instanceof Error ? cause.message : "Could not restore this Python version.");
+    } finally {
+      setRestoringVersion(null);
+    }
+  }
+
   function updateCode(filename: string, code: string) {
+    if (restoringVersion !== null) return;
     const files = (workspaceRef.current.files ?? []).map((file) => (
       file.filename === filename ? { ...file, code } : file
     ));
@@ -228,6 +289,7 @@ export function PythonAnalysisWorkspace({
   }
 
   function updateSourceFiles(files: PythonSourceFile[]) {
+    if (restoringVersion !== null) return false;
     const validation = validatePythonSourceFiles(files);
     if (validation) {
       setError(validation);
@@ -243,6 +305,7 @@ export function PythonAnalysisWorkspace({
 
   function createSourceFile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (restoringVersion !== null) return;
     const entered = newFilename.trim();
     const filename = entered.toLowerCase().endsWith(".py") ? entered : `${entered}.py`;
     const files = [...(workspaceRef.current.files ?? []), { filename, code: "" }];
@@ -254,6 +317,7 @@ export function PythonAnalysisWorkspace({
   }
 
   function deleteSelectedFile() {
+    if (restoringVersion !== null) return;
     if (selectedFilename.toLowerCase() === "main.py") return;
     const files = (workspaceRef.current.files ?? []).filter((file) => file.filename !== selectedFilename);
     if (!updateSourceFiles(files)) return;
@@ -273,13 +337,14 @@ export function PythonAnalysisWorkspace({
   }
 
   function changeInputFiles(files: File[]) {
+    if (restoringVersion !== null) return;
     const validation = validatePythonInputs(files);
     setInputError(validation ?? "");
     setInputFiles(validation ? [] : files);
   }
 
   async function runCode() {
-    if (!canEdit || running || loading || !loaded) return;
+    if (!canEdit || running || loading || !loaded || restoringVersion !== null) return;
     setError("");
     setInputError("");
     setPreviewError("");
@@ -352,6 +417,8 @@ export function PythonAnalysisWorkspace({
     try {
       if (reply.outputs.length) {
         const form = new FormData();
+        form.append("script_filename", selectedFilename);
+        form.append("input_filenames", JSON.stringify(inputFiles.map((file) => file.name)));
         for (const output of reply.outputs) {
           form.append("files", new Blob([output.content]), output.name);
         }
@@ -447,12 +514,74 @@ export function PythonAnalysisWorkspace({
           <span className={`python-save-status ${status}`} role="status">
             {status === "unsaved" ? "Unsaved files" : status === "error" ? "Save failed" : "Files saved"}
           </span>
+          <button
+            type="button"
+            className="button secondary small-button"
+            onClick={() => {
+              const nextOpen = !historyOpen;
+              setHistoryOpen(nextOpen);
+              if (nextOpen) void loadHistory(selectedFilename);
+            }}
+            disabled={!loaded || loading}
+            aria-expanded={historyOpen}
+          >
+            <History size={13} /> History
+          </button>
           <button type="button" className="button secondary small-button" onClick={onExit}>
             <ArrowLeft size={13} /> Back to LaTeX
           </button>
         </div>
       </header>
       {error && <p className="inline-error latex-error" role="alert">{error}</p>}
+      {historyOpen && (
+        <section className="workspace-history python-workspace-history" aria-label="Python version history">
+          <div className="workspace-history-heading">
+            <strong>Python file history</strong>
+            <button
+              type="button"
+              className="button secondary small-button"
+              onClick={() => void loadHistory(historyFilename)}
+              disabled={historyLoading}
+            >
+              {historyLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          <p>Up to 20 changed versions are kept per file. Restoring a version creates a new revision.</p>
+          {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+          {historyVersions.length > 0 && (
+            <label className="python-history-file">
+              File
+              <select
+                value={historyFilename}
+                onChange={(event) => setHistoryFilename(event.target.value)}
+              >
+                {Array.from(new Set(historyVersions.map((version) => version.filename))).sort()
+                  .map((filename) => <option value={filename} key={filename}>{filename}</option>)}
+              </select>
+            </label>
+          )}
+          {historyLoading ? (
+            <p className="latex-empty">Loading history…</p>
+          ) : historyVersions.length ? historyVersions
+            .filter((version) => version.filename === historyFilename)
+            .map((version) => (
+              <div className="workspace-history-item" key={version.version_id}>
+                <span>
+                  <strong>Version {version.version_number}</strong>
+                  <small>{new Date(version.created_at).toLocaleString()} · {version.author_name ?? "Earlier version"}</small>
+                </span>
+                <button
+                  type="button"
+                  className="button secondary small-button"
+                  onClick={() => void restoreVersion(version)}
+                  disabled={!canEdit || saving || running || restoringVersion !== null}
+                >
+                  {restoringVersion === version.version_id ? "Restoring…" : "Restore"}
+                </button>
+              </div>
+            )) : <p className="latex-empty">No saved Python versions yet.</p>}
+        </section>
+      )}
       {error.includes("changed in another session") && (
         <button type="button" className="button secondary small-button" onClick={() => void reloadWorkspace()}>
           <RotateCw size={13} /> Reload latest files
@@ -502,6 +631,7 @@ export function PythonAnalysisWorkspace({
                     !loaded
                     || saving
                     || running
+                    || restoringVersion !== null
                     || (workspace.files?.length ?? 0) >= MAX_PYTHON_SOURCE_FILE_COUNT
                   }
                 >
@@ -511,7 +641,7 @@ export function PythonAnalysisWorkspace({
                   type="button"
                   className="button secondary small-button python-delete-source"
                   onClick={deleteSelectedFile}
-                  disabled={!loaded || saving || running || selectedFilename.toLowerCase() === "main.py"}
+                  disabled={!loaded || saving || running || restoringVersion !== null || selectedFilename.toLowerCase() === "main.py"}
                   aria-label={`Delete ${selectedFilename}`}
                   title={selectedFilename.toLowerCase() === "main.py" ? "main.py is required" : "Delete this file"}
                 >
@@ -532,9 +662,9 @@ export function PythonAnalysisWorkspace({
             onChange={(event) => setNewFilename(event.currentTarget.value)}
             placeholder="analysis.py"
             maxLength={128}
-            disabled={!loaded || saving || running}
+            disabled={!loaded || saving || running || restoringVersion !== null}
           />
-          <button type="submit" className="button primary small-button" disabled={!loaded || saving || running}>
+          <button type="submit" className="button primary small-button" disabled={!loaded || saving || running || restoringVersion !== null}>
             Create file
           </button>
           <button type="button" className="button secondary small-button" onClick={() => setCreatingFile(false)}>
@@ -553,8 +683,8 @@ export function PythonAnalysisWorkspace({
             theme={oneDark}
             extensions={PYTHON_EXTENSIONS}
             indentWithTab
-            editable={canEdit && loaded && !saving && !running}
-            readOnly={!canEdit || !loaded || saving || running}
+            editable={canEdit && loaded && !saving && !running && restoringVersion === null}
+            readOnly={!canEdit || !loaded || saving || running || restoringVersion !== null}
             value={selectedSource?.code ?? ""}
             onChange={(code) => {
               if (code.length <= MAX_CODE_LENGTH) updateCode(selectedFilename, code);
@@ -568,7 +698,7 @@ export function PythonAnalysisWorkspace({
                 type="file"
                 accept=".csv,.tsv,text/csv,text/tab-separated-values"
                 multiple
-                disabled={!canEdit || saving || running}
+                disabled={!canEdit || saving || running || restoringVersion !== null}
                 onChange={(event) => changeInputFiles(Array.from(event.currentTarget.files ?? []))}
               />
             </label>
@@ -581,7 +711,7 @@ export function PythonAnalysisWorkspace({
                   type="button"
                   className="button secondary small-button"
                   onClick={() => void saveCode()}
-                  disabled={!loaded || saving || running || status !== "unsaved"}
+                  disabled={!loaded || saving || running || restoringVersion !== null || status !== "unsaved"}
                 >
                   {saving ? <LoaderCircle size={13} className="spin" /> : <Save size={13} />}
                   {saving ? "Saving…" : "Save files"}
@@ -590,7 +720,7 @@ export function PythonAnalysisWorkspace({
                   type="button"
                   className="button primary small-button"
                   onClick={() => void runCode()}
-                  disabled={!loaded || saving || running}
+                  disabled={!loaded || saving || running || restoringVersion !== null}
                 >
                   {running ? <LoaderCircle size={13} className="spin" /> : <Play size={13} />}
                   {running ? "Running…" : "Run Python"}
@@ -634,6 +764,11 @@ export function PythonAnalysisWorkspace({
                   {artifact.content_type === "image/png" ? <FileImage size={14} /> : <FileSpreadsheet size={14} />}
                   <span className="python-artifact-name">{artifact.filename}</span>
                   <small>{(artifact.byte_size / 1024).toFixed(1)} KB</small>
+                  <small className="python-artifact-provenance">
+                    Script: {artifact.script_filename ?? "Unknown"} · Selected inputs: {artifact.input_filenames.length
+                      ? artifact.input_filenames.join(", ")
+                      : "None"}
+                  </small>
                   <button type="button" onClick={() => void previewArtifact(artifact)}>Preview</button>
                   <button
                     type="button"

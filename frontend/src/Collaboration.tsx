@@ -171,11 +171,13 @@ export function InboxDialog({
   onClose,
   onProjectsUpdated,
   onUnreadCount,
+  onOpenProject,
 }: {
   request: Request;
   onClose: () => void;
   onProjectsUpdated: () => Promise<void>;
   onUnreadCount: () => Promise<void>;
+  onOpenProject: (projectId: string) => void;
 }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [threads, setThreads] = useState<MessageThread[]>([]);
@@ -290,6 +292,16 @@ export function InboxDialog({
     setActiveTab("messages");
   }
 
+  function openProjectNotes(notification: Notification) {
+    void markRead(notification)
+      .then(() => {
+        if (notification.project_id) onOpenProject(notification.project_id);
+      })
+      .catch((cause: unknown) =>
+        setError(cause instanceof Error ? cause.message : "Could not open project notes."),
+      );
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !content.trim()) return;
@@ -375,7 +387,21 @@ export function InboxDialog({
                       </button>
                     </>
                   ) : (
-                    notification.kind === "saved_search_alert" ? (
+                    notification.kind === "annotation_mention" ? (
+                      <>
+                        <strong>{notification.actor_name}</strong> mentioned you in a note about{" "}
+                        <strong>{notification.details.source_title ?? "a project source"}</strong> in{" "}
+                        <strong>{notification.project_name}</strong>.
+                        <button className="text-button" onClick={() => openProjectNotes(notification)}>Open project notes</button>
+                      </>
+                    ) : notification.kind === "task_assigned" ? (
+                      <>
+                        <strong>{notification.actor_name}</strong> assigned you a task:{" "}
+                        <strong>{notification.details.task_title ?? "Review a project source"}</strong> in{" "}
+                        <strong>{notification.project_name}</strong>.
+                        <button className="text-button" onClick={() => openProjectNotes(notification)}>Open project tasks</button>
+                      </>
+                    ) : notification.kind === "saved_search_alert" ? (
                       <>
                         <strong>New research matches</strong>: {notification.details.new_result_count ?? 0} new
                         {" "}{notification.details.provider ?? "academic search"} result

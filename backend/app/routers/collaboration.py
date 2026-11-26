@@ -21,12 +21,14 @@ from app.schemas import (
     InvitationResponseRequest,
     MessageThreadResponse,
     NotificationResponse,
+    ProjectCollaboratorResponse,
     ProjectInvitationCreate,
     ProjectInvitationResponse,
     ProjectInvitationRoleUpdate,
 )
-from app.security import get_current_user, require_project_owner
+from app.security import get_current_user, require_project_access, require_project_owner
 from app.services.audit import record_activity
+from app.services.project_collaboration import list_project_collaborators
 
 router = APIRouter(tags=["collaboration"])
 
@@ -45,6 +47,27 @@ def _invitation_response(invitation: ProjectInvitation, invitee: User) -> dict:
         "invitee_username": invitee.username or "",
         "invitee_email": invitee.email,
     }
+
+
+@router.get(
+    "/api/projects/{project_id}/collaborators",
+    response_model=list[ProjectCollaboratorResponse],
+)
+def list_collaborators(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = require_project_access(db, project_id, user.user_id)
+    return [
+        {
+            "user_id": collaborator.user_id,
+            "username": collaborator.username or "",
+            "name": collaborator.name,
+            "role": role,
+        }
+        for collaborator, role in list_project_collaborators(db, project)
+    ]
 
 
 @router.post(

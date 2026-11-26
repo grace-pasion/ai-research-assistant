@@ -18,6 +18,7 @@ from app.models import (
     Document,
     LatexWorkspace,
     Notification,
+    ProjectFileVersion,
     ProjectInvitation,
     ResearchProject,
     TeamWorkspace,
@@ -60,6 +61,7 @@ def collaboration_db(tmp_path):
         Document,
         DirectMessage,
         LatexWorkspace,
+        ProjectFileVersion,
         Notification,
         UserActivity,
     ):
@@ -120,6 +122,11 @@ def test_project_invitation_grants_access_only_after_acceptance(collaboration_db
     assert accepted["status"] == "accepted"
     assert require_project_access(db, project.project_id, invitee.user_id).project_id == project.project_id
     assert [item.project_id for item in list_projects(db, invitee)] == [project.project_id]
+    collaborators = collaboration.list_collaborators(project.project_id, db, invitee)
+    assert {item["username"]: item["role"] for item in collaborators} == {
+        "owner": "owner",
+        "invitee": "edit",
+    }
     with pytest.raises(HTTPException) as outsider_access:
         require_project_access(db, project.project_id, outsider.user_id)
     assert outsider_access.value.status_code == 404

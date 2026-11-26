@@ -10,6 +10,8 @@ from app.services import latex_compiler
 from app.services.latex_compiler import (
     LatexCompilationError,
     LatexCompilerUnavailable,
+    _citation_key_locations,
+    _format_compiler_output,
     citation_key_issues,
     compile_latex,
 )
@@ -32,7 +34,25 @@ def test_citation_key_issues_distinguish_escaped_percent_signs_from_comments():
 
 def test_compiler_checks_citations_before_requiring_texlive():
     with pytest.raises(LatexCompilationError, match="missing2024"):
-        compile_latex(r"\cite{missing2024}", "")
+        compile_latex("\\section{Results}\n\\cite{missing2024}", "")
+
+
+def test_citation_errors_include_editable_source_file_and_line():
+    with pytest.raises(LatexCompilationError, match=r"main\.tex:2"):
+        compile_latex("\\section{Results}\n\\cite{missing2024}", "")
+    with pytest.raises(LatexCompilationError, match=r"references\.bib:2"):
+        compile_latex(
+            "\\cite{known}",
+            "@article{known, title={First}}\n@book{known, title={Duplicate}}",
+        )
+
+
+def test_compiler_output_replaces_temporary_paths_with_source_filenames():
+    formatted = _format_compiler_output(
+        "/tmp/fieldnotes/source/main.tex:17: Undefined control sequence."
+    )
+    assert formatted == "main.tex:17: Undefined control sequence."
+    assert _citation_key_locations("\\cite{first, missing}\n", ["missing"]) == {"missing": 1}
 
 
 def test_compiler_runs_bibtex_and_pdflatex_without_shell_escape(monkeypatch):

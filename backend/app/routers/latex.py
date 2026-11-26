@@ -3,13 +3,18 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy import select, update
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import LatexWorkspace, PythonWorkspaceArtifact, User
-from app.schemas import LatexWorkspaceResponse, LatexWorkspaceUpdate
+from app.models import LatexWorkspace, ProjectFileVersion, PythonWorkspaceArtifact, User
+from app.schemas import (
+    LatexWorkspaceResponse,
+    LatexWorkspaceUpdate,
+    WorkspaceRestoreRequest,
+    WorkspaceVersionMetadata,
+)
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
 from app.services.latex_compiler import (
@@ -17,6 +22,7 @@ from app.services.latex_compiler import (
     LatexCompilerUnavailable,
     compile_latex,
 )
+from app.services.workspace_history import list_file_versions, record_file_version
 
 router = APIRouter(prefix="/api/projects/{project_id}/latex", tags=["LaTeX workspace"])
 
@@ -50,6 +56,14 @@ def _get_workspace(db: Session, project_id: uuid.UUID) -> LatexWorkspace | None:
     )
 
 
+def _updated_at_condition(db: Session, value: datetime):
+    if db.get_bind().dialect.name == "sqlite":
+        stored = func.replace(cast(LatexWorkspace.updated_at, String), ".000000", "")
+        expected = func.replace(cast(value, String), ".000000", "")
+        return stored == expected
+    return LatexWorkspace.updated_at == value
+
+
 @router.get("", response_model=LatexWorkspaceResponse)
 def get_latex_workspace(
     project_id: uuid.UUID,
@@ -60,6 +74,138 @@ def get_latex_workspace(
     workspace = _get_workspace(db, project_id)
     if workspace is None:
         return LatexWorkspaceResponse(main_tex=DEFAULT_MAIN_TEX, references_bib="", updated_at=None)
+    return LatexWorkspaceResponse(
+        main_tex=workspace.main_tex,
+        references_bib=workspace.references_bib,
+        updated_at=workspace.updated_at,
+    )
+
+
+@router.get("/history", response_model=list[WorkspaceVersionMetadata])
+def get_latex_workspace_history(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    return [
+        WorkspaceVersionMetadata(
+            version_id=version.version_id,
+            filename=version.filename,
+            version_number=version.version_number,
+            created_at=version.created_at,
+            author_name=author_name,
+        )
+        for version, author_name in list_file_versions(db, project_id, "latex")
+    ]
+
+
+@router.post("/history/{version_id}/restore", response_model=LatexWorkspaceResponse)
+def restore_latex_workspace_version(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    payload: WorkspaceRestoreRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    workspace = _get_workspace(db, project_id)
+    expected = payload.expected_updated_at
+    current_updated_at = workspace.updated_at if workspace else None
+    if expected is not None and expected.tzinfo is None:
+        expected = expected.replace(tzinfo=timezone.utc)
+    if current_updated_at is not None and current_updated_at.tzinfo is None:
+        current_updated_at = current_updated_at.replace(tzinfo=timezone.utc)
+    if expected != current_updated_at:
+        raise HTTPException(
+            status_code=409,
+            detail="This workspace changed in another session. Reload the latest version before restoring.",
+        )
+
+    version = db.get(ProjectFileVersion, version_id)
+    if (
+        version is None
+        or version.project_id != project_id
+        or version.workspace_type != "latex"
+        or version.filename not in {"main.tex", "references.bib"}
+    ):
+        raise HTTPException(status_code=404, detail="LaTeX file version not found.")
+
+    current_main = workspace.main_tex if workspace else DEFAULT_MAIN_TEX
+    current_references = workspace.references_bib if workspace else ""
+    current_content = current_main if version.filename == "main.tex" else current_references
+    if current_content == version.content:
+        return LatexWorkspaceResponse(
+            main_tex=current_main,
+            references_bib=current_references,
+            updated_at=current_updated_at,
+        )
+
+    if workspace is None:
+        workspace = LatexWorkspace(
+            project_id=project_id,
+            main_tex=current_main,
+            references_bib=current_references,
+        )
+        db.add(workspace)
+    elif current_updated_at is not None:
+        result = db.execute(
+            update(LatexWorkspace)
+            .where(
+                LatexWorkspace.project_id == project_id,
+                _updated_at_condition(db, workspace.updated_at),
+            )
+            .values(
+                **{
+                    "main_tex" if version.filename == "main.tex" else "references_bib": version.content,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            )
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This workspace changed in another session. Reload the latest version before restoring.",
+            )
+    if current_updated_at is None:
+        if version.filename == "main.tex":
+            workspace.main_tex = version.content
+        else:
+            workspace.references_bib = version.content
+        workspace.updated_at = datetime.now(timezone.utc)
+    try:
+        record_file_version(
+            db,
+            project_id,
+            "latex",
+            version.filename,
+            current_content,
+            user.user_id,
+        )
+        record_file_version(
+            db,
+            project_id,
+            "latex",
+            version.filename,
+            version.content,
+            user.user_id,
+            force=True,
+        )
+        record_activity(
+            db,
+            user.user_id,
+            "latex_workspace.version_restored",
+            {"filename": version.filename, "version_number": version.version_number},
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This workspace changed in another session. Reload the latest version before restoring.",
+        ) from None
+    db.refresh(workspace)
     return LatexWorkspaceResponse(
         main_tex=workspace.main_tex,
         references_bib=workspace.references_bib,
@@ -120,6 +266,8 @@ def save_latex_workspace(
                 status_code=409,
                 detail="This workspace changed in another session. Reload the latest version before saving.",
             )
+    original_main = workspace.main_tex if workspace else DEFAULT_MAIN_TEX
+    original_references = workspace.references_bib if workspace else ""
     if workspace is None:
         workspace = LatexWorkspace(
             project_id=project_id,
@@ -132,7 +280,7 @@ def save_latex_workspace(
             update(LatexWorkspace)
             .where(
                 LatexWorkspace.project_id == project_id,
-                LatexWorkspace.updated_at == workspace.updated_at,
+                _updated_at_condition(db, workspace.updated_at),
             )
             .values(
                 main_tex=payload.main_tex,
@@ -150,8 +298,15 @@ def save_latex_workspace(
         workspace.main_tex = payload.main_tex
         workspace.references_bib = payload.references_bib
         workspace.updated_at = datetime.now(timezone.utc)
-    record_activity(db, user.user_id, "latex_workspace.saved")
     try:
+        db.flush()
+        record_file_version(db, project_id, "latex", "main.tex", original_main, None)
+        record_file_version(db, project_id, "latex", "references.bib", original_references, None)
+        record_file_version(db, project_id, "latex", "main.tex", payload.main_tex, user.user_id)
+        record_file_version(
+            db, project_id, "latex", "references.bib", payload.references_bib, user.user_id
+        )
+        record_activity(db, user.user_id, "latex_workspace.saved")
         db.commit()
     except IntegrityError:
         db.rollback()

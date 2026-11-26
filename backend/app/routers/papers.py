@@ -11,7 +11,7 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,8 @@ from app.models import (
     Paper,
     PaperAuthor,
     PaperScreeningDecision,
+    ProjectCollection,
+    ProjectCollectionItem,
     ProjectPaper,
     ResearchProject,
     SavedPaperSearch,
@@ -888,6 +890,15 @@ def unsave_paper(
     require_project_access(db, project_id, user.user_id, "edit")
     relation = db.get(ProjectPaper, (project_id, paper_id))
     if relation is not None:
+        collection_ids = select(ProjectCollection.collection_id).where(
+            ProjectCollection.project_id == project_id
+        )
+        db.execute(
+            delete(ProjectCollectionItem).where(
+                ProjectCollectionItem.collection_id.in_(collection_ids),
+                ProjectCollectionItem.paper_id == paper_id,
+            )
+        )
         db.delete(relation)
         record_activity(db, user.user_id, "paper.removed")
         db.commit()

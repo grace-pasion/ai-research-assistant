@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import (
     LatexWorkspace,
     ProjectInvitation,
+    ProjectFileVersion,
     PythonWorkspaceArtifact,
     ResearchProject,
     TeamWorkspace,
@@ -22,9 +23,11 @@ from app.routers.latex import (
     DEFAULT_MAIN_TEX,
     compile_latex_workspace,
     get_latex_workspace,
+    get_latex_workspace_history,
+    restore_latex_workspace_version,
     save_latex_workspace,
 )
-from app.schemas import LatexWorkspaceUpdate
+from app.schemas import LatexWorkspaceUpdate, WorkspaceRestoreRequest
 from app.security import get_current_user
 
 
@@ -37,6 +40,7 @@ def latex_database(tmp_path):
         ResearchProject,
         ProjectInvitation,
         LatexWorkspace,
+        ProjectFileVersion,
         PythonWorkspaceArtifact,
         UserActivity,
     ):
@@ -144,6 +148,87 @@ def test_latex_workspace_rejects_oversized_source():
         LatexWorkspaceUpdate(main_tex="x" * 1_000_001, references_bib="")
     with pytest.raises(ValidationError):
         LatexWorkspaceUpdate(main_tex="", references_bib="x" * 500_001)
+
+
+def test_latex_history_deduplicates_saves_and_restore_creates_a_new_version(latex_database):
+    db, owner, project = latex_database
+    initial = get_latex_workspace(project.project_id, db, owner)
+    first = save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex="First draft",
+            references_bib="@article{first, title={First}}",
+            expected_updated_at=initial.updated_at,
+        ),
+        db,
+        owner,
+    )
+    saved = save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex="Second draft",
+            references_bib="@article{first, title={First}}",
+            expected_updated_at=first.updated_at,
+        ),
+        db,
+        owner,
+    )
+
+    history = get_latex_workspace_history(project.project_id, db, owner)
+    main_versions = [version for version in history if version.filename == "main.tex"]
+    assert [version.version_number for version in main_versions] == [3, 2, 1]
+    reference_versions = [
+        version for version in history if version.filename == "references.bib"
+    ]
+    assert [version.version_number for version in reference_versions] == [2, 1]
+
+    restored = restore_latex_workspace_version(
+        project.project_id,
+        main_versions[-1].version_id,
+        WorkspaceRestoreRequest(expected_updated_at=saved.updated_at),
+        db,
+        owner,
+    )
+    assert restored.main_tex == DEFAULT_MAIN_TEX
+    assert restored.references_bib == "@article{first, title={First}}"
+    restored_history = [
+        version for version in get_latex_workspace_history(project.project_id, db, owner)
+        if version.filename == "main.tex"
+    ]
+    assert [version.version_number for version in restored_history] == [4, 3, 2, 1]
+
+    with pytest.raises(HTTPException) as stale:
+        restore_latex_workspace_version(
+            project.project_id,
+            main_versions[0].version_id,
+            WorkspaceRestoreRequest(expected_updated_at=saved.updated_at),
+            db,
+            owner,
+        )
+    assert stale.value.status_code == 409
+
+
+def test_latex_history_retains_only_the_latest_twenty_versions(latex_database):
+    db, owner, project = latex_database
+    workspace = get_latex_workspace(project.project_id, db, owner)
+    for index in range(24):
+        workspace = save_latex_workspace(
+            project.project_id,
+            LatexWorkspaceUpdate(
+                main_tex=f"Draft {index}",
+                references_bib="",
+                expected_updated_at=workspace.updated_at,
+            ),
+            db,
+            owner,
+        )
+    versions = [
+        version for version in get_latex_workspace_history(project.project_id, db, owner)
+        if version.filename == "main.tex"
+    ]
+    assert len(versions) == 20
+    assert versions[0].version_number == 25
+    assert versions[-1].version_number == 6
 
 
 def test_compile_returns_pdf_for_readers_and_checks_project_access(latex_database, monkeypatch):

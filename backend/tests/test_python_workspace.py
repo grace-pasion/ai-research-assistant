@@ -1,4 +1,5 @@
 import base64
+import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -7,10 +8,15 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
-from app.database import ensure_python_workspace_files_column, get_db
+from app.database import (
+    ensure_python_artifact_provenance_columns,
+    ensure_python_workspace_files_column,
+    get_db,
+)
 from app.models import (
     LatexWorkspace,
     ProjectInvitation,
+    ProjectFileVersion,
     PythonWorkspace,
     PythonWorkspaceArtifact,
     ResearchProject,
@@ -55,6 +61,37 @@ def test_python_workspace_files_migration_preserves_existing_code(tmp_path):
         engine.dispose()
 
 
+def test_python_artifact_provenance_migration_is_additive_and_idempotent(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-artifacts.sqlite'}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE python_workspace_artifacts ("
+                "artifact_id CHAR(32) PRIMARY KEY, project_id CHAR(32), filename VARCHAR(128), "
+                "content_type VARCHAR(80), content BLOB, byte_size INTEGER, created_at DATETIME, "
+                "updated_at DATETIME)"
+            ))
+            connection.execute(text(
+                "INSERT INTO python_workspace_artifacts "
+                "(artifact_id, filename, content_type, content, byte_size) "
+                "VALUES ('artifact-1', 'legacy.png', 'image/png', X'01', 1)"
+            ))
+        ensure_python_artifact_provenance_columns(engine)
+        ensure_python_artifact_provenance_columns(engine)
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("python_workspace_artifacts")
+        }
+        with engine.connect() as connection:
+            values = connection.execute(
+                text("SELECT script_filename, input_filenames FROM python_workspace_artifacts")
+            ).all()
+        assert {"script_filename", "input_filenames"} <= columns
+        assert values == [(None, "[]")]
+    finally:
+        engine.dispose()
+
+
 def _client(db, user):
     api = FastAPI()
     api.include_router(python_workspace.router)
@@ -74,6 +111,7 @@ def _database(tmp_path):
         TeamWorkspace,
         ResearchProject,
         ProjectInvitation,
+        ProjectFileVersion,
         UserActivity,
         LatexWorkspace,
         PythonWorkspace,
@@ -171,6 +209,73 @@ def test_python_workspace_persists_multiple_files_and_keeps_legacy_code_updates(
         engine.dispose()
 
 
+def test_python_history_restores_deleted_scripts_and_rejects_stale_restore(tmp_path):
+    engine, db, owner, project = _database(tmp_path)
+    path = f"/api/projects/{project.project_id}/python"
+    try:
+        with _client(db, owner) as client:
+            first = client.put(
+                path,
+                json={
+                    "files": [
+                        {"filename": "main.py", "code": "print('first')"},
+                        {"filename": "helpers.py", "code": "VALUE = 1"},
+                    ],
+                    "expected_updated_at": None,
+                },
+            ).json()
+            second = client.put(
+                path,
+                json={
+                    "files": [
+                        {"filename": "main.py", "code": "print('second')"},
+                        {"filename": "helpers.py", "code": "VALUE = 2"},
+                    ],
+                    "expected_updated_at": first["updated_at"],
+                },
+            ).json()
+            deleted = client.put(
+                path,
+                json={
+                    "files": [{"filename": "main.py", "code": "print('second')"}],
+                    "expected_updated_at": second["updated_at"],
+                },
+            ).json()
+            history = client.get(f"{path}/history").json()
+            helper_history = [
+                version for version in history if version["filename"] == "helpers.py"
+            ]
+            assert [version["version_number"] for version in helper_history] == [2, 1]
+
+            restored = client.post(
+                f"{path}/history/{helper_history[0]['version_id']}/restore",
+                json={"expected_updated_at": deleted["updated_at"]},
+            )
+            assert restored.status_code == 200
+            assert {"filename": "helpers.py", "code": "VALUE = 2"} in restored.json()["files"]
+            assert [
+                version["version_number"]
+                for version in client.get(f"{path}/history").json()
+                if version["filename"] == "helpers.py"
+            ] == [3, 2, 1]
+
+            restored_older = client.post(
+                f"{path}/history/{helper_history[-1]['version_id']}/restore",
+                json={"expected_updated_at": restored.json()["updated_at"]},
+            )
+            assert restored_older.status_code == 200
+            assert {"filename": "helpers.py", "code": "VALUE = 1"} in restored_older.json()["files"]
+
+            stale = client.post(
+                f"{path}/history/{helper_history[-1]['version_id']}/restore",
+                json={"expected_updated_at": deleted["updated_at"]},
+            )
+            assert stale.status_code == 409
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_python_workspace_rejects_unsafe_or_incomplete_file_sets(tmp_path):
     engine, db, owner, project = _database(tmp_path)
     path = f"/api/projects/{project.project_id}/python"
@@ -246,7 +351,12 @@ def test_readers_can_view_but_not_edit_python_workspace_or_outputs(tmp_path):
         with _client(db, reader) as client:
             path = f"/api/projects/{project.project_id}/python"
             assert client.get(path).status_code == 200
+            assert client.get(f"{path}/history").status_code == 200
             assert client.put(path, json={"code": "print(1)"}).status_code == 403
+            assert client.post(
+                f"{path}/history/{uuid.uuid4()}/restore",
+                json={"expected_updated_at": None},
+            ).status_code == 403
             assert client.put(
                 f"{path}/artifacts",
                 files=[("files", _upload("figure.png")["files"])],
@@ -284,6 +394,58 @@ def test_artifacts_are_validated_persisted_replaceable_and_deletable(tmp_path):
 
             assert client.delete(f"{path}/artifacts/figure.png").status_code == 204
             assert client.get(f"{path}/artifacts/figure.png").status_code == 404
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_saved_python_outputs_include_run_script_and_input_filenames(tmp_path):
+    engine, db, owner, project = _database(tmp_path)
+    path = f"/api/projects/{project.project_id}/python"
+    try:
+        with _client(db, owner) as client:
+            saved = client.put(
+                path,
+                json={
+                    "files": [{"filename": "main.py", "code": "print('run')"}],
+                    "expected_updated_at": None,
+                },
+            )
+            assert saved.status_code == 200
+            upload = client.put(
+                f"{path}/artifacts",
+                data={
+                    "script_filename": "main.py",
+                    "input_filenames": '["study.csv", "lookup.tsv"]',
+                },
+                files=[("files", _upload("figure.png")["files"])],
+            )
+            assert upload.status_code == 200
+            assert upload.json()[0]["script_filename"] == "main.py"
+            assert upload.json()[0]["input_filenames"] == ["study.csv", "lookup.tsv"]
+            assert client.get(path).json()["artifacts"][0]["input_filenames"] == [
+                "study.csv",
+                "lookup.tsv",
+            ]
+
+            invalid_inputs = client.put(
+                f"{path}/artifacts",
+                data={
+                    "script_filename": "main.py",
+                    "input_filenames": '["../private.csv"]',
+                },
+                files=[("files", _upload("other.png")["files"])],
+            )
+            invalid_script = client.put(
+                f"{path}/artifacts",
+                data={
+                    "script_filename": "missing.py",
+                    "input_filenames": "[]",
+                },
+                files=[("files", _upload("other.png")["files"])],
+            )
+            assert invalid_inputs.status_code == 422
+            assert invalid_script.status_code == 422
     finally:
         db.close()
         engine.dispose()

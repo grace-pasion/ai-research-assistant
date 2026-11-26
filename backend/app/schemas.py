@@ -328,6 +328,13 @@ class ColleagueResponse(BaseModel):
     email: EmailStr
 
 
+class ProjectCollaboratorResponse(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    name: str
+    role: Literal["owner", "read", "comment", "edit"]
+
+
 class DirectMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 
@@ -358,7 +365,14 @@ class MessageThreadResponse(BaseModel):
 
 class NotificationResponse(BaseModel):
     notification_id: uuid.UUID
-    kind: Literal["project_invitation", "invitation_response", "message", "saved_search_alert"]
+    kind: Literal[
+        "project_invitation",
+        "invitation_response",
+        "message",
+        "saved_search_alert",
+        "annotation_mention",
+        "task_assigned",
+    ]
     actor_id: uuid.UUID
     actor_name: str
     actor_username: str | None
@@ -386,6 +400,18 @@ class LatexWorkspaceResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class WorkspaceVersionMetadata(BaseModel):
+    version_id: uuid.UUID
+    filename: str
+    version_number: int
+    created_at: datetime
+    author_name: str | None = None
+
+
+class WorkspaceRestoreRequest(BaseModel):
+    expected_updated_at: datetime | None
+
+
 class PythonWorkspaceFile(BaseModel):
     filename: str = Field(min_length=4, max_length=128)
     code: str = Field(max_length=100_000)
@@ -408,6 +434,8 @@ class PythonArtifactMetadata(BaseModel):
     content_type: str
     byte_size: int
     updated_at: datetime
+    script_filename: str | None = None
+    input_filenames: list[str] = Field(default_factory=list)
 
 
 class PythonWorkspaceResponse(BaseModel):
@@ -511,6 +539,44 @@ class CrossProjectSearchResult(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ProjectCollectionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_collection_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Collection name cannot be blank.")
+        return normalized
+
+
+class ProjectCollectionUpdate(ProjectCollectionCreate):
+    pass
+
+
+class ProjectCollectionItemCreate(BaseModel):
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+
+
+class ProjectCollectionItemResponse(BaseModel):
+    item_id: uuid.UUID
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+    source_title: str | None
+    added_at: datetime
+
+
+class ProjectCollectionResponse(BaseModel):
+    collection_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    items: list[ProjectCollectionItemResponse] = Field(default_factory=list)
+
+
 class DocumentReaderResponse(BaseModel):
     document_id: uuid.UUID
     filename: str
@@ -608,6 +674,51 @@ class AnnotationResponse(APIModel):
 class ProjectAnnotationResponse(AnnotationResponse):
     source_type: Literal["document", "paper"]
     source_title: str
+
+
+class ProjectTaskCreate(BaseModel):
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+    annotation_id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=240)
+    assignee_id: uuid.UUID
+
+    @field_validator("title")
+    @classmethod
+    def normalize_task_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Task title cannot be blank.")
+        return value
+
+
+class ProjectTaskUpdate(BaseModel):
+    status: Literal["open", "in_progress", "done"] | None = None
+    assignee_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def require_update(self):
+        if self.status is None and "assignee_id" not in self.model_fields_set:
+            raise ValueError("Provide a task status or assignee update.")
+        return self
+
+
+class ProjectTaskResponse(APIModel):
+    task_id: uuid.UUID
+    project_id: uuid.UUID
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+    source_title: str
+    annotation_id: uuid.UUID | None
+    title: str
+    status: Literal["open", "in_progress", "done"]
+    created_by: uuid.UUID
+    created_by_name: str
+    assignee_id: uuid.UUID | None
+    assignee_name: str | None
+    assignee_username: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PaperAuthorResponse(BaseModel):
