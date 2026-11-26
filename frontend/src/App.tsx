@@ -1949,7 +1949,7 @@ function App() {
                 : project && user && project.user_id !== user.user_id
                   ? <><Users size={14} /> Shared project</>
                   : <><ShieldCheck size={14} /> Private workspace</>}
-            </span>
+            </span>}
             <button
               className="icon-button topbar-action inbox-button"
               title="Inbox and messages"
