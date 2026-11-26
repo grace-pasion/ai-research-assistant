@@ -142,8 +142,33 @@ export type Paper = {
   saved: boolean;
   screening_status: "unread" | "undecided" | "include" | "exclude";
   screening_note: string;
+  screening_exclusion_reason: ScreeningExclusionReason | null;
+  screening_decisions: PaperScreeningDecision[];
+  screening_disagreement: boolean;
   tags: string[];
   metadata: Record<string, string>;
+};
+
+export type ScreeningExclusionReason =
+  | "wrong_population"
+  | "wrong_intervention"
+  | "wrong_comparator"
+  | "wrong_outcome"
+  | "wrong_study_design"
+  | "wrong_setting"
+  | "wrong_publication_type"
+  | "duplicate_record"
+  | "full_text_unavailable"
+  | "other";
+
+export type PaperScreeningDecision = {
+  user_id: string;
+  user_name: string;
+  screening_status: "undecided" | "include" | "exclude";
+  exclusion_reason: ScreeningExclusionReason | null;
+  screening_note: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type SystematicReview = {

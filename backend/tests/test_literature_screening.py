@@ -1,6 +1,7 @@
 import uuid
 import csv
 import io
+import json
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,7 @@ from app.models import (
     Author,
     Paper,
     PaperAuthor,
+    PaperScreeningDecision,
     ProjectInvitation,
     ProjectPaper,
     ResearchProject,
@@ -32,8 +34,14 @@ from app.routers.papers import (
     save_paper,
     save_systematic_review,
     update_paper_screening,
+    update_reviewer_screening_decision,
 )
-from app.schemas import PaperScreeningBulkUpdate, PaperScreeningUpdate, SystematicReviewUpdate
+from app.schemas import (
+    PaperScreeningBulkUpdate,
+    PaperScreeningDecisionUpdate,
+    PaperScreeningUpdate,
+    SystematicReviewUpdate,
+)
 from sqlalchemy.exc import IntegrityError
 from app.security import get_current_user
 
@@ -48,6 +56,7 @@ def screening_databases(tmp_path):
         ResearchProject,
         ProjectInvitation,
         ProjectPaper,
+        PaperScreeningDecision,
         SystematicReviewWorkspace,
         UserActivity,
     ):
@@ -174,7 +183,7 @@ def test_screening_requires_owned_project_and_saved_paper(screening_databases):
 
     with pytest.raises(HTTPException) as missing_paper:
         update_paper_screening(
-            project.project_id, uuid.uuid4(), PaperScreeningUpdate(screening_status="exclude"), db, user
+            project.project_id, uuid.uuid4(), PaperScreeningUpdate(screening_status="include"), db, user
         )
     assert missing_paper.value.status_code == 404
 
@@ -186,7 +195,7 @@ def test_screening_requires_owned_project_and_saved_paper(screening_databases):
     )
     with pytest.raises(HTTPException) as other_owner:
         update_paper_screening(
-            project.project_id, paper.paper_id, PaperScreeningUpdate(screening_status="exclude"), db, other_user
+            project.project_id, paper.paper_id, PaperScreeningUpdate(screening_status="include"), db, other_user
         )
     assert other_owner.value.status_code == 404
 
@@ -211,11 +220,14 @@ def test_existing_project_paper_table_gets_screening_columns(tmp_path):
 
     with engine.connect() as connection:
         columns = {row["name"] for row in connection.execute(text("PRAGMA table_info(project_papers)")).mappings()}
-        assert {"screening_status", "screening_note"} <= columns
+        assert {"screening_status", "screening_note", "screening_exclusion_reason"} <= columns
         row = connection.execute(
-            text("SELECT screening_status, screening_note FROM project_papers")
+            text(
+                "SELECT screening_status, screening_note, screening_exclusion_reason "
+                "FROM project_papers"
+            )
         ).first()
-        assert row == ("unread", "")
+        assert row == ("unread", "", None)
     engine.dispose()
 
 
@@ -225,6 +237,91 @@ def test_screening_update_rejects_unknown_decisions_and_long_notes():
     assert PaperScreeningUpdate(screening_status="undecided").screening_status == "undecided"
     with pytest.raises(ValidationError):
         PaperScreeningUpdate(screening_status="include", screening_note="x" * 501)
+    with pytest.raises(ValidationError):
+        PaperScreeningUpdate(screening_status="exclude")
+    with pytest.raises(ValidationError):
+        PaperScreeningUpdate(screening_status="exclude", exclusion_reason="other")
+    assert PaperScreeningUpdate(
+        screening_status="exclude",
+        exclusion_reason="other",
+        screening_note="Outside our research question",
+    ).exclusion_reason == "other"
+
+
+def test_reviewer_decisions_keep_identity_and_flag_status_and_reason_disagreements(
+    screening_databases,
+):
+    db, literature_db, owner, project, paper = screening_databases
+    reviewer = User(
+        email="reviewer@example.com",
+        name="Second reviewer",
+        password_hash="hashed",
+    )
+    db.add(reviewer)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=reviewer.user_id,
+            status="accepted",
+            role="edit",
+        )
+    )
+    db.commit()
+
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(screening_status="include"),
+        db,
+        owner,
+    )
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(
+            screening_status="exclude",
+            exclusion_reason="wrong_population",
+        ),
+        db,
+        reviewer,
+    )
+
+    listed = list_saved_papers(project.project_id, db, literature_db, owner)[0]
+    assert listed.screening_disagreement is True
+    assert {decision.user_name for decision in listed.screening_decisions} == {
+        "Reader",
+        "Second reviewer",
+    }
+
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(
+            screening_status="exclude",
+            exclusion_reason="wrong_outcome",
+        ),
+        db,
+        owner,
+    )
+    listed = list_saved_papers(project.project_id, db, literature_db, owner)[0]
+    assert listed.screening_disagreement is True
+
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(
+            screening_status="exclude",
+            exclusion_reason="wrong_outcome",
+        ),
+        db,
+        reviewer,
+    )
+    listed = list_saved_papers(project.project_id, db, literature_db, owner)[0]
+    assert listed.screening_disagreement is False
+    assert db.get(PaperScreeningDecision, (project.project_id, paper.paper_id, owner.user_id))
+    assert db.get(ProjectPaper, (project.project_id, paper.paper_id)).screening_status == "unread"
 
 
 def test_bulk_screening_updates_saved_papers_and_preserves_notes_by_default(screening_databases):
@@ -268,6 +365,7 @@ def test_bulk_screening_rejects_mixed_saved_and_unsaved_papers_without_partial_u
             PaperScreeningBulkUpdate(
                 paper_ids=[paper.paper_id, missing_paper_id],
                 screening_status="exclude",
+                exclusion_reason="wrong_population",
             ),
             db,
             user,
@@ -291,6 +389,42 @@ def test_screening_csv_exports_decisions_and_neutralizes_spreadsheet_formulas(sc
     assert rows[0]["title"].startswith("'=")
     assert rows[0]["screening_status"] == "unread"
     assert rows[0]["screening_note"] == "'  - formula"
+
+
+def test_screening_exports_include_exclusion_reason_and_named_reviewer_trail(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    update_paper_screening(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningUpdate(
+            screening_status="exclude",
+            screening_note="Outside the target population",
+            exclusion_reason="wrong_population",
+        ),
+        db,
+        user,
+    )
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(screening_status="include"),
+        db,
+        user,
+    )
+
+    screening = export_screening_csv(project.project_id, db, literature_db, user)
+    screening_rows = list(csv.DictReader(io.StringIO(screening.body.decode("utf-8"))))
+    decision_trail = json.loads(screening_rows[0]["reviewer_decisions"])
+    assert screening_rows[0]["screening_exclusion_reason"] == "wrong_population"
+    assert screening_rows[0]["reviewer_disagreement"] == "no"
+    assert decision_trail[0]["user_name"] == "Reader"
+    assert decision_trail[0]["screening_status"] == "include"
+
+    report = export_systematic_review_csv(project.project_id, db, literature_db, user)
+    report_rows = list(csv.reader(io.StringIO(report.body.decode("utf-8"))))
+    assert len(report_rows[0]) == len(report_rows[1]) == len(report_rows[2])
+    assert report_rows[2][19] == "wrong_population"
+    assert json.loads(report_rows[2][21])[0]["user_name"] == "Reader"
 
 
 def test_systematic_review_persists_protocol_and_reports_shared_screening_counts(screening_databases):
@@ -456,7 +590,7 @@ def test_review_report_exports_zero_counts_without_saved_papers(screening_databa
 
 
 def test_systematic_review_http_routes_round_trip_and_export(screening_databases):
-    db, literature_db, user, project, _paper = screening_databases
+    db, literature_db, user, project, paper = screening_databases
     app = FastAPI()
     app.include_router(papers_router.router)
     app.dependency_overrides[get_db] = lambda: db
@@ -479,6 +613,23 @@ def test_systematic_review_http_routes_round_trip_and_export(screening_databases
         )
         assert updated.status_code == 200
         assert updated.json()["review_question"] == "Can the method improve outcomes?"
+
+        reviewer_decision = client.patch(
+            f"/api/projects/{project.project_id}/papers/{paper.paper_id}/screening/decision",
+            json={
+                "screening_status": "exclude",
+                "exclusion_reason": "wrong_study_design",
+                "screening_note": "",
+            },
+        )
+        assert reviewer_decision.status_code == 200
+        assert reviewer_decision.json()["user_name"] == "Reader"
+        assert reviewer_decision.json()["exclusion_reason"] == "wrong_study_design"
+        assert reviewer_decision.json()["updated_at"]
+        listed = client.get(f"/api/projects/{project.project_id}/papers")
+        assert listed.status_code == 200
+        assert listed.json()[0]["screening_status"] == "unread"
+        assert listed.json()[0]["screening_decisions"][0]["user_id"] == str(user.user_id)
 
         report = client.get(f"{path}/export")
         assert report.status_code == 200

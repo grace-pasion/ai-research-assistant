@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import logging
 import re
 import uuid
@@ -22,6 +23,7 @@ from app.models import (
     DocumentPaper,
     Paper,
     PaperAuthor,
+    PaperScreeningDecision,
     ProjectPaper,
     ResearchProject,
     SavedPaperSearch,
@@ -39,6 +41,8 @@ from app.schemas import (
     PaperScreeningBulkResponse,
     PaperScreeningBulkUpdate,
     PaperScreeningCounts,
+    PaperScreeningDecisionResponse,
+    PaperScreeningDecisionUpdate,
     PaperScreeningUpdate,
     LibraryMetadataResponse,
     LibraryMetadataUpdate,
@@ -82,6 +86,9 @@ def _paper_response(
     saved: bool = False,
     screening_status: str = "unread",
     screening_note: str = "",
+    screening_exclusion_reason: str | None = None,
+    screening_decisions: list[PaperScreeningDecisionResponse] | None = None,
+    screening_disagreement: bool | None = None,
     tags: list[str] | None = None,
     metadata: dict[str, str] | None = None,
 ) -> PaperResponse:
@@ -91,6 +98,7 @@ def _paper_response(
         .where(PaperAuthor.paper_id == paper.paper_id)
         .order_by(PaperAuthor.author_order)
     ).all()
+    screening_decisions = screening_decisions or []
     return PaperResponse(
         paper_id=paper.paper_id,
         external_paper_id=paper.external_paper_id,
@@ -106,6 +114,13 @@ def _paper_response(
         saved=saved,
         screening_status=screening_status,
         screening_note=screening_note,
+        screening_exclusion_reason=screening_exclusion_reason,
+        screening_decisions=screening_decisions,
+        screening_disagreement=(
+            _has_screening_disagreement(screening_decisions)
+            if screening_disagreement is None
+            else screening_disagreement
+        ),
         tags=tags or [],
         metadata=metadata or {},
     )
@@ -130,6 +145,28 @@ def list_saved_papers(
     screening = {item.paper_id: item for item in saved}
     papers = literature_db.scalars(select(Paper).where(Paper.paper_id.in_(paper_ids))).all()
     papers_by_id = {paper.paper_id: paper for paper in papers}
+    decision_rows = db.execute(
+        select(PaperScreeningDecision, User.name)
+        .join(User, User.user_id == PaperScreeningDecision.user_id)
+        .where(
+            PaperScreeningDecision.project_id == project_id,
+            PaperScreeningDecision.paper_id.in_(paper_ids),
+        )
+        .order_by(PaperScreeningDecision.updated_at.desc())
+    ).all()
+    decisions_by_paper: dict[uuid.UUID, list[PaperScreeningDecisionResponse]] = {}
+    for decision, user_name in decision_rows:
+        decisions_by_paper.setdefault(decision.paper_id, []).append(
+            PaperScreeningDecisionResponse(
+                user_id=decision.user_id,
+                user_name=user_name,
+                screening_status=decision.screening_status,
+                exclusion_reason=decision.exclusion_reason,
+                screening_note=decision.screening_note,
+                created_at=decision.created_at,
+                updated_at=decision.updated_at,
+            )
+        )
     return [
         _paper_response(
             papers_by_id[paper_id],
@@ -137,12 +174,27 @@ def list_saved_papers(
             saved=True,
             screening_status=screening[paper_id].screening_status,
             screening_note=screening[paper_id].screening_note,
+            screening_exclusion_reason=screening[paper_id].screening_exclusion_reason,
+            screening_decisions=decisions_by_paper.get(paper_id, []),
             tags=screening[paper_id].tags,
             metadata=screening[paper_id].custom_metadata,
         )
         for paper_id in paper_ids
         if paper_id in papers_by_id
     ]
+
+
+def _has_screening_disagreement(
+    decisions: list[PaperScreeningDecisionResponse],
+) -> bool:
+    outcomes = {
+        (
+            decision.screening_status,
+            decision.exclusion_reason if decision.screening_status == "exclude" else None,
+        )
+        for decision in decisions
+    }
+    return len(outcomes) > 1
 
 
 @router.post("/import", response_model=PaperImportResponse, status_code=status.HTTP_201_CREATED)
@@ -369,6 +421,9 @@ def export_systematic_review_csv(
             "citation_count",
             "screening_status",
             "screening_note",
+            "screening_exclusion_reason",
+            "reviewer_disagreement",
+            "reviewer_decisions",
             "abstract",
         ]
     )
@@ -383,6 +438,9 @@ def export_systematic_review_csv(
             counts.undecided,
             counts.include,
             counts.exclude,
+            "",
+            "",
+            "",
             "",
             "",
             "",
@@ -418,6 +476,18 @@ def export_systematic_review_csv(
                 paper.citation_count if paper.citation_count is not None else "",
                 paper.screening_status,
                 _safe_csv_cell(paper.screening_note),
+                paper.screening_exclusion_reason or "",
+                "yes" if paper.screening_disagreement else "no",
+                _safe_csv_cell(
+                    json.dumps(
+                        [
+                            decision.model_dump(mode="json")
+                            for decision in paper.screening_decisions
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                ),
                 _safe_csv_cell(paper.abstract),
             ]
         )
@@ -451,6 +521,9 @@ def export_screening_csv(
             "citation_count",
             "screening_status",
             "screening_note",
+            "screening_exclusion_reason",
+            "reviewer_disagreement",
+            "reviewer_decisions",
             "abstract",
         ]
     )
@@ -466,6 +539,18 @@ def export_screening_csv(
                 paper.citation_count if paper.citation_count is not None else "",
                 paper.screening_status,
                 _safe_csv_cell(paper.screening_note),
+                paper.screening_exclusion_reason or "",
+                "yes" if paper.screening_disagreement else "no",
+                _safe_csv_cell(
+                    json.dumps(
+                        [
+                            decision.model_dump(mode="json")
+                            for decision in paper.screening_decisions
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                ),
                 _safe_csv_cell(paper.abstract),
             ]
         )
@@ -947,16 +1032,18 @@ def update_paper_screening(
         raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
     relation.screening_status = payload.screening_status
     relation.screening_note = payload.screening_note
+    relation.screening_exclusion_reason = payload.exclusion_reason
     record_activity(
         db,
         user.user_id,
         "paper.screening.updated",
-        {"status": payload.screening_status},
+        {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
     )
     db.commit()
     return PaperScreeningResponse(
         screening_status=relation.screening_status,
         screening_note=relation.screening_note,
+        exclusion_reason=relation.screening_exclusion_reason,
     )
 
 
@@ -979,6 +1066,71 @@ def update_paper_metadata(
     return LibraryMetadataResponse(tags=relation.tags, metadata=relation.custom_metadata)
 
 
+@router.patch(
+    "/{paper_id}/screening/decision",
+    response_model=PaperScreeningDecisionResponse,
+)
+def update_reviewer_screening_decision(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    payload: PaperScreeningDecisionUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    if db.get(ProjectPaper, (project_id, paper_id)) is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+
+    decision = db.get(PaperScreeningDecision, (project_id, paper_id, user.user_id))
+    if decision is None:
+        decision = PaperScreeningDecision(
+            project_id=project_id,
+            paper_id=paper_id,
+            user_id=user.user_id,
+            screening_status=payload.screening_status,
+            exclusion_reason=payload.exclusion_reason,
+            screening_note=payload.screening_note,
+        )
+        db.add(decision)
+    else:
+        decision.screening_status = payload.screening_status
+        decision.exclusion_reason = payload.exclusion_reason
+        decision.screening_note = payload.screening_note
+    record_activity(
+        db,
+        user.user_id,
+        "paper.screening.decision.updated",
+        {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        decision = db.get(PaperScreeningDecision, (project_id, paper_id, user.user_id))
+        if decision is None:
+            raise
+        decision.screening_status = payload.screening_status
+        decision.exclusion_reason = payload.exclusion_reason
+        decision.screening_note = payload.screening_note
+        record_activity(
+            db,
+            user.user_id,
+            "paper.screening.decision.updated",
+            {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
+        )
+        db.commit()
+    db.refresh(decision)
+    return PaperScreeningDecisionResponse(
+        user_id=user.user_id,
+        user_name=user.name,
+        screening_status=decision.screening_status,
+        exclusion_reason=decision.exclusion_reason,
+        screening_note=decision.screening_note,
+        created_at=decision.created_at,
+        updated_at=decision.updated_at,
+    )
+
+
 @router.post("/screening/bulk", response_model=PaperScreeningBulkResponse)
 def bulk_update_paper_screening(
     project_id: uuid.UUID,
@@ -999,13 +1151,18 @@ def bulk_update_paper_screening(
 
     for relation in relations:
         relation.screening_status = payload.screening_status
+        relation.screening_exclusion_reason = payload.exclusion_reason
         if payload.screening_note is not None:
             relation.screening_note = payload.screening_note
     record_activity(
         db,
         user.user_id,
         "paper.screening.bulk_updated",
-        {"status": payload.screening_status, "count": len(relations)},
+        {
+            "status": payload.screening_status,
+            "exclusion_reason": payload.exclusion_reason,
+            "count": len(relations),
+        },
     )
     db.commit()
     return PaperScreeningBulkResponse(updated_count=len(relations))

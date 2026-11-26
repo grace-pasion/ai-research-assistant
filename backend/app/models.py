@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -500,11 +501,37 @@ class ProjectPaper(ResearchBase):
     screening_note: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    screening_exclusion_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     custom_metadata: Mapped[dict[str, str]] = mapped_column(
         "metadata", JSON, nullable=False, default=dict, server_default="{}"
     )
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PaperScreeningDecision(ResearchBase):
+    __tablename__ = "paper_screening_decisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "paper_id"],
+            ["project_papers.project_id", "project_papers.paper_id"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_screening_decisions_project_paper", "project_id", "paper_id"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    screening_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    exclusion_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    screening_note: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class SystematicReviewWorkspace(ResearchBase):

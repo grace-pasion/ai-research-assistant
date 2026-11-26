@@ -72,6 +72,10 @@ def ensure_project_paper_screening_columns(engine) -> None:
                     "TEXT NOT NULL DEFAULT ''"
                 )
             )
+        if "screening_exclusion_reason" not in columns:
+            connection.execute(
+                text("ALTER TABLE project_papers ADD COLUMN screening_exclusion_reason VARCHAR(32)")
+            )
 
 
 def ensure_library_metadata_columns(engine) -> None:

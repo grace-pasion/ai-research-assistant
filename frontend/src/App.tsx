@@ -43,6 +43,8 @@ import { LatexWorkspace } from "./LatexWorkspace";
 import { fetchProjectData } from "./projectData";
 import {
   filterAndSortScreeningPapers,
+  hasScreeningDisagreement,
+  SCREENING_EXCLUSION_REASONS,
   type ScreeningSort,
   type ScreeningStatusFilter,
 } from "./literatureScreening";
@@ -67,8 +69,10 @@ import type {
   Message,
   PaperImportResponse,
   Paper,
+  PaperScreeningDecision,
   ProjectAnnotation,
   Project,
+  ScreeningExclusionReason,
   SavedPaperSearch,
   SavedPaperSearchRun,
   SearchResult,
@@ -164,6 +168,9 @@ function App() {
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
   const [bulkScreeningStatus, setBulkScreeningStatus] =
     useState<Paper["screening_status"]>("include");
+  const [bulkExclusionReason, setBulkExclusionReason] =
+    useState<ScreeningExclusionReason | "">("");
+  const [bulkScreeningNote, setBulkScreeningNote] = useState("");
   const [screeningBusy, setScreeningBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [savedPaperSearches, setSavedPaperSearches] = useState<SavedPaperSearch[]>([]);
@@ -458,6 +465,13 @@ function App() {
     exclude: papers.filter((paper) => paper.screening_status === "exclude").length,
   }), [papers]);
   const reviewedPaperCount = screeningCounts.undecided + screeningCounts.include + screeningCounts.exclude;
+  const reviewerAssessmentCount = papers.reduce(
+    (count, paper) => count + paper.screening_decisions.length,
+    0,
+  );
+  const screeningDisagreementCount = papers.filter(
+    (paper) => paper.screening_disagreement,
+  ).length;
   const visibleDocuments = useMemo(
     () => filterByLibraryMetadata(documents, documentMetadataFilters),
     [documents, documentMetadataFilters],
@@ -600,6 +614,18 @@ function App() {
       .filter((paper) => selectedPaperIds.has(paper.paper_id))
       .map((paper) => paper.paper_id);
     if (!paperIds.length) return;
+    const exclusionReason: ScreeningExclusionReason | null =
+      bulkScreeningStatus === "exclude" && bulkExclusionReason
+        ? bulkExclusionReason
+        : null;
+    if (bulkScreeningStatus === "exclude" && !exclusionReason) {
+      setError("Choose a structured exclusion reason before applying the decision.");
+      return;
+    }
+    if (exclusionReason === "other" && !bulkScreeningNote.trim()) {
+      setError("Add a note when the exclusion reason is Other.");
+      return;
+    }
     setScreeningBusy(true);
     setError("");
     try {
@@ -607,13 +633,27 @@ function App() {
         `/api/projects/${project.project_id}/papers/screening/bulk`,
         {
           method: "POST",
-          body: jsonBody({ paper_ids: paperIds, screening_status: bulkScreeningStatus }),
+          body: jsonBody({
+            paper_ids: paperIds,
+            screening_status: bulkScreeningStatus,
+            exclusion_reason: exclusionReason,
+            ...(bulkScreeningStatus === "exclude" && bulkScreeningNote.trim()
+              ? { screening_note: bulkScreeningNote.trim() }
+              : {}),
+          }),
         },
       );
       const updatedPaperIds = new Set(paperIds);
       setPapers((current) => current.map((paper) =>
         updatedPaperIds.has(paper.paper_id)
-          ? { ...paper, screening_status: bulkScreeningStatus }
+          ? {
+            ...paper,
+            screening_status: bulkScreeningStatus,
+            screening_exclusion_reason: exclusionReason,
+            ...(bulkScreeningStatus === "exclude" && bulkScreeningNote.trim()
+              ? { screening_note: bulkScreeningNote.trim() }
+              : {}),
+          }
           : paper,
       ));
       setSelectedPaperIds(new Set());
@@ -1391,23 +1431,79 @@ function App() {
     paper: Paper,
     screeningStatus: Paper["screening_status"],
     screeningNote: string,
+    exclusionReason: ScreeningExclusionReason | null,
   ) {
     if (!project) return;
     setError("");
     try {
-      const updated = await request<Pick<Paper, "screening_status" | "screening_note">>(
+      const updated = await request<{
+        screening_status: Paper["screening_status"];
+        screening_note: string;
+        exclusion_reason: ScreeningExclusionReason | null;
+      }>(
         `/api/projects/${project.project_id}/papers/${paper.paper_id}/screening`,
         {
           method: "PATCH",
-          body: jsonBody({ screening_status: screeningStatus, screening_note: screeningNote }),
+          body: jsonBody({
+            screening_status: screeningStatus,
+            screening_note: screeningNote,
+            exclusion_reason: exclusionReason,
+          }),
         },
       );
       setPapers((current) => current.map((item) =>
-        item.paper_id === paper.paper_id ? { ...item, ...updated } : item,
+        item.paper_id === paper.paper_id
+          ? {
+            ...item,
+            screening_status: updated.screening_status,
+            screening_note: updated.screening_note,
+            screening_exclusion_reason: updated.exclusion_reason,
+          }
+          : item,
       ));
       setNotice("Screening decision saved.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this screening decision.");
+    }
+  }
+
+  async function updateReviewerScreeningDecision(
+    paper: Paper,
+    screeningStatus: PaperScreeningDecision["screening_status"],
+    exclusionReason: ScreeningExclusionReason | null,
+    screeningNote: string,
+  ): Promise<PaperScreeningDecision> {
+    if (!project || !user) throw new Error("Sign in to save a reviewer decision.");
+    setError("");
+    try {
+      const updated = await request<PaperScreeningDecision>(
+        `/api/projects/${project.project_id}/papers/${paper.paper_id}/screening/decision`,
+        {
+          method: "PATCH",
+          body: jsonBody({
+            screening_status: screeningStatus,
+            exclusion_reason: exclusionReason,
+            screening_note: screeningNote,
+          }),
+        },
+      );
+      setPapers((current) => current.map((item) => {
+        if (item.paper_id !== paper.paper_id) return item;
+        const decisions = [
+          ...item.screening_decisions.filter((decision) => decision.user_id !== updated.user_id),
+          updated,
+        ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+        return {
+          ...item,
+          screening_decisions: decisions,
+          screening_disagreement: hasScreeningDisagreement(decisions),
+        };
+      }));
+      setNotice("Your reviewer decision was saved.");
+      return updated;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save your reviewer decision.");
+      throw cause;
     }
   }
 
@@ -2584,7 +2680,9 @@ function App() {
                     <section className="screening-progress" aria-label="Literature screening progress">
                       <div className="screening-progress-heading">
                         <strong>Screening progress</strong>
-                        <span>{reviewedPaperCount} of {papers.length} reviewed</span>
+                        <span>
+                          {reviewedPaperCount} of {papers.length} adjudicated · {reviewerAssessmentCount} reviewer assessments
+                        </span>
                       </div>
                       <progress
                         max={Math.max(papers.length, 1)}
@@ -2596,6 +2694,7 @@ function App() {
                         <span>{screeningCounts.undecided} undecided</span>
                         <span>{screeningCounts.include} included</span>
                         <span>{screeningCounts.exclude} excluded</span>
+                        <span>{screeningDisagreementCount} disagreements</span>
                       </div>
                     </section>
                     {papers.length > 0 && (
@@ -2658,7 +2757,7 @@ function App() {
                           <div className="bulk-screening-actions">
                             <span>{selectedScreeningCount} selected</span>
                             <label>
-                              Set decision to
+                              Set project adjudication to
                               <select
                                 value={bulkScreeningStatus}
                                 onChange={(event) =>
@@ -2672,10 +2771,45 @@ function App() {
                                 <option value="exclude">Exclude</option>
                               </select>
                             </label>
+                            {bulkScreeningStatus === "exclude" && (
+                              <>
+                                <label>
+                                  Exclusion reason
+                                  <select
+                                    value={bulkExclusionReason}
+                                    onChange={(event) =>
+                                      setBulkExclusionReason(event.target.value as ScreeningExclusionReason | "")
+                                    }
+                                    disabled={!canEditProject || screeningBusy}
+                                  >
+                                    <option value="">Choose a reason</option>
+                                    {SCREENING_EXCLUSION_REASONS.map((reason) => (
+                                      <option key={reason.value} value={reason.value}>{reason.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                {bulkExclusionReason === "other" && (
+                                  <label>
+                                    Explain “Other”
+                                    <input
+                                      value={bulkScreeningNote}
+                                      onChange={(event) => setBulkScreeningNote(event.target.value)}
+                                      maxLength={500}
+                                      placeholder="Required for Other"
+                                      disabled={!canEditProject || screeningBusy}
+                                    />
+                                  </label>
+                                )}
+                              </>
+                            )}
                             <button
                               className="button primary small-button"
                               onClick={() => void bulkUpdatePaperScreening()}
-                              disabled={!canEditProject || screeningBusy}
+                              disabled={!canEditProject || screeningBusy ||
+                                bulkScreeningStatus === "exclude" && !bulkExclusionReason ||
+                                bulkScreeningStatus === "exclude" && bulkExclusionReason === "other" &&
+                                !bulkScreeningNote.trim()
+                              }
                             >
                               {screeningBusy ? "Applying…" : "Apply to selected"}
                             </button>
@@ -2702,7 +2836,12 @@ function App() {
                             ? (selected) => togglePaperSelection(paper.paper_id, selected)
                             : undefined}
                           onScreeningChange={canEditProject
-                            ? (status, note) => void updatePaperScreening(paper, status, note)
+                            ? (status, note, reason) => void updatePaperScreening(paper, status, note, reason)
+                            : undefined}
+                          currentUserId={user?.user_id ?? null}
+                          onReviewerDecisionChange={canEditProject
+                            ? (status, reason, note) =>
+                              updateReviewerScreeningDecision(paper, status, reason, note)
                             : undefined}
                           onMetadataChange={canEditProject
                             ? (tags, metadata) => updatePaperMetadata(paper, tags, metadata)
@@ -3495,6 +3634,8 @@ function PaperCard({
   onAnnotate,
   onSummarize,
   onScreeningChange,
+  currentUserId,
+  onReviewerDecisionChange,
   onMetadataChange,
   selected = false,
   onSelectionChange,
@@ -3509,7 +3650,17 @@ function PaperCard({
   onRemove?: () => void;
   onAnnotate?: () => void;
   onSummarize?: () => void;
-  onScreeningChange?: (status: Paper["screening_status"], note: string) => void;
+  onScreeningChange?: (
+    status: Paper["screening_status"],
+    note: string,
+    reason: ScreeningExclusionReason | null,
+  ) => void;
+  currentUserId?: string | null;
+  onReviewerDecisionChange?: (
+    status: PaperScreeningDecision["screening_status"],
+    reason: ScreeningExclusionReason | null,
+    note: string,
+  ) => Promise<PaperScreeningDecision>;
   onMetadataChange?: (tags: string[], metadata: Record<string, string>) => Promise<void>;
   selected?: boolean;
   onSelectionChange?: (selected: boolean) => void;
@@ -3518,11 +3669,61 @@ function PaperCard({
 }) {
   const [screeningStatus, setScreeningStatus] = useState(paper.screening_status);
   const [screeningNote, setScreeningNote] = useState(paper.screening_note);
+  const [screeningReason, setScreeningReason] = useState<ScreeningExclusionReason | "">(
+    paper.screening_exclusion_reason ?? "",
+  );
+  const [reviewerStatus, setReviewerStatus] = useState<PaperScreeningDecision["screening_status"] | "">("");
+  const [reviewerReason, setReviewerReason] = useState<ScreeningExclusionReason | "">("");
+  const [reviewerNote, setReviewerNote] = useState("");
+  const [reviewerDirty, setReviewerDirty] = useState(false);
+  const [reviewerSaving, setReviewerSaving] = useState(false);
+  const [reviewerError, setReviewerError] = useState("");
+  const myDecision = paper.screening_decisions.find((decision) => decision.user_id === currentUserId);
 
   useEffect(() => {
     setScreeningStatus(paper.screening_status);
     setScreeningNote(paper.screening_note);
-  }, [paper.screening_status, paper.screening_note]);
+    setScreeningReason(paper.screening_exclusion_reason ?? "");
+  }, [paper.screening_status, paper.screening_note, paper.screening_exclusion_reason]);
+
+  useEffect(() => {
+    if (reviewerDirty) return;
+    setReviewerStatus(myDecision?.screening_status ?? "");
+    setReviewerReason(myDecision?.exclusion_reason ?? "");
+    setReviewerNote(myDecision?.screening_note ?? "");
+  }, [
+    currentUserId,
+    myDecision?.screening_note,
+    myDecision?.screening_status,
+    myDecision?.exclusion_reason,
+    reviewerDirty,
+  ]);
+
+  async function saveReviewerDecision() {
+    if (!onReviewerDecisionChange || !reviewerStatus) return;
+    const reason = reviewerStatus === "exclude" && reviewerReason ? reviewerReason : null;
+    if (reviewerStatus === "exclude" && !reason) {
+      setReviewerError("Choose a structured exclusion reason.");
+      return;
+    }
+    if (reason === "other" && !reviewerNote.trim()) {
+      setReviewerError("Add a note when the exclusion reason is Other.");
+      return;
+    }
+    setReviewerSaving(true);
+    setReviewerError("");
+    try {
+      const savedDecision = await onReviewerDecisionChange(reviewerStatus, reason, reviewerNote.trim());
+      setReviewerStatus(savedDecision.screening_status);
+      setReviewerReason(savedDecision.exclusion_reason ?? "");
+      setReviewerNote(savedDecision.screening_note);
+      setReviewerDirty(false);
+    } catch (cause) {
+      setReviewerError(cause instanceof Error ? cause.message : "Could not save your decision.");
+    } finally {
+      setReviewerSaving(false);
+    }
+  }
 
   return (
     <article className="paper-card">
@@ -3538,6 +3739,9 @@ function PaperCard({
       )}
       <div className="paper-icon"><Library size={17} /></div>
       <div className="paper-main">
+        {paper.screening_disagreement && (
+          <span className="screening-disagreement" role="status">Reviewer disagreement</span>
+        )}
         <h3>{paper.title}</h3>
         <p className="paper-meta">
           {[paper.authors.slice(0, 4).map((author) => author.author_name).join(", "), paper.publication_year, paper.venue, paper.citation_count != null ? `${paper.citation_count.toLocaleString()} citations` : ""].filter(Boolean).join(" · ") || paper.api_provider}
@@ -3545,42 +3749,161 @@ function PaperCard({
         {paper.abstract && <p className="paper-abstract">{paper.abstract.replace(/<[^>]*>/g, "").slice(0, 500)}{paper.abstract.length > 500 ? "…" : ""}</p>}
         {paper.doi && <p className="doi-line">DOI: {paper.doi.replace(/^https?:\/\/doi\.org\//, "")}</p>}
         {saved && (
-          <div className="screening-controls">
-            <label>
-              Decision
-              <select
-                value={screeningStatus}
-                onChange={(event) => setScreeningStatus(event.target.value as Paper["screening_status"])}
-                aria-label={`Screening decision for ${paper.title}`}
-                disabled={!canEditProject}
-              >
-                <option value="unread">Unread</option>
-                <option value="undecided">Undecided</option>
-                <option value="include">Include</option>
-                <option value="exclude">Exclude</option>
-              </select>
-            </label>
-            <label>
-              Reason / note
-              <input
-                value={screeningNote}
-                onChange={(event) => setScreeningNote(event.target.value)}
-                maxLength={500}
-                placeholder="Add a short reason (optional)"
-                aria-label={`Screening note for ${paper.title}`}
-                disabled={!canEditProject}
-              />
-            </label>
-            <button
-              className="button secondary small-button"
-              onClick={() => onScreeningChange?.(screeningStatus, screeningNote)}
-              disabled={!onScreeningChange ||
-                screeningStatus === paper.screening_status &&
-                screeningNote === paper.screening_note
-              }
-            >
-              Save decision
-            </button>
+          <div className="screening-review-workspace">
+            <section className="screening-review-panel" aria-label="Project adjudication">
+              <strong>Project adjudication</strong>
+              <div className="screening-controls">
+                <label>
+                  Final decision
+                  <select
+                    value={screeningStatus}
+                    onChange={(event) => setScreeningStatus(event.target.value as Paper["screening_status"])}
+                    aria-label={`Project adjudication for ${paper.title}`}
+                    disabled={!canEditProject}
+                  >
+                    <option value="unread">Unread</option>
+                    <option value="undecided">Undecided</option>
+                    <option value="include">Include</option>
+                    <option value="exclude">Exclude</option>
+                  </select>
+                </label>
+                {screeningStatus === "exclude" && (
+                  <label>
+                    Exclusion reason
+                    <select
+                      value={screeningReason}
+                      onChange={(event) =>
+                        setScreeningReason(event.target.value as ScreeningExclusionReason | "")
+                      }
+                      disabled={!canEditProject}
+                    >
+                      <option value="">Choose a reason</option>
+                      {SCREENING_EXCLUSION_REASONS.map((reason) => (
+                        <option key={reason.value} value={reason.value}>{reason.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label>
+                  Adjudication note
+                  <input
+                    value={screeningNote}
+                    onChange={(event) => setScreeningNote(event.target.value)}
+                    maxLength={500}
+                    placeholder="Optional note"
+                    aria-label={`Adjudication note for ${paper.title}`}
+                    disabled={!canEditProject}
+                  />
+                </label>
+                <button
+                  className="button secondary small-button"
+                  onClick={() => onScreeningChange?.(
+                    screeningStatus,
+                    screeningNote,
+                    screeningStatus === "exclude" && screeningReason ? screeningReason : null,
+                  )}
+                  disabled={!onScreeningChange ||
+                    screeningStatus === "exclude" && !screeningReason ||
+                    screeningStatus === "exclude" && screeningReason === "other" && !screeningNote.trim() ||
+                    screeningStatus === paper.screening_status &&
+                    screeningNote === paper.screening_note &&
+                    (screeningStatus !== "exclude" || screeningReason === (paper.screening_exclusion_reason ?? ""))
+                  }
+                >
+                  Save adjudication
+                </button>
+              </div>
+            </section>
+            <section className="screening-review-panel reviewer-decision-panel" aria-label="Independent reviewer assessment">
+              <div className="reviewer-decision-heading">
+                <strong>Your independent assessment</strong>
+                {myDecision && (
+                  <span>Last saved {new Date(myDecision.updated_at).toLocaleString()}</span>
+                )}
+              </div>
+              <div className="screening-controls">
+                <label>
+                  Your decision
+                  <select
+                    value={reviewerStatus}
+                    onChange={(event) => {
+                      setReviewerStatus(event.target.value as PaperScreeningDecision["screening_status"] | "");
+                      setReviewerDirty(true);
+                    }}
+                    disabled={!onReviewerDecisionChange || reviewerSaving}
+                  >
+                    <option value="" disabled={Boolean(myDecision)}>Not screened</option>
+                    <option value="undecided">Undecided</option>
+                    <option value="include">Include</option>
+                    <option value="exclude">Exclude</option>
+                  </select>
+                </label>
+                {reviewerStatus === "exclude" && (
+                  <label>
+                    Exclusion reason
+                    <select
+                      value={reviewerReason}
+                      onChange={(event) => {
+                        setReviewerReason(event.target.value as ScreeningExclusionReason | "");
+                        setReviewerDirty(true);
+                      }}
+                      disabled={!onReviewerDecisionChange || reviewerSaving}
+                    >
+                      <option value="">Choose a reason</option>
+                      {SCREENING_EXCLUSION_REASONS.map((reason) => (
+                        <option key={reason.value} value={reason.value}>{reason.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label>
+                  Reviewer note
+                  <input
+                    value={reviewerNote}
+                    onChange={(event) => {
+                      setReviewerNote(event.target.value);
+                      setReviewerDirty(true);
+                    }}
+                    maxLength={500}
+                    placeholder="Optional note"
+                    disabled={!onReviewerDecisionChange || reviewerSaving}
+                  />
+                </label>
+                <button
+                  className="button secondary small-button"
+                  onClick={() => void saveReviewerDecision()}
+                  disabled={!onReviewerDecisionChange || reviewerSaving || !reviewerStatus ||
+                    reviewerStatus === "exclude" && !reviewerReason ||
+                    reviewerStatus === "exclude" && reviewerReason === "other" &&
+                    !reviewerNote.trim() ||
+                    !reviewerDirty
+                  }
+                >
+                  {reviewerSaving ? "Saving…" : "Save my assessment"}
+                </button>
+              </div>
+              {reviewerError && <p className="screening-form-error" role="alert">{reviewerError}</p>}
+              {paper.screening_decisions.length > 0 && (
+                <ul className="reviewer-decision-trail" aria-label="Reviewer decision trail">
+                  {paper.screening_decisions.map((decision) => (
+                    <li key={decision.user_id}>
+                      <span>
+                        <strong>{decision.user_name}</strong>: {decision.screening_status}
+                        {decision.exclusion_reason && (
+                          <> · {SCREENING_EXCLUSION_REASONS.find(
+                            (reason) => reason.value === decision.exclusion_reason,
+                          )?.label ?? decision.exclusion_reason}</>
+                        )}
+                        {decision.screening_note && <> · {decision.screening_note}</>}
+                      </span>
+                      <time dateTime={decision.updated_at}>
+                        {new Date(decision.updated_at).toLocaleString()}
+                      </time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
         )}
         {saved && (

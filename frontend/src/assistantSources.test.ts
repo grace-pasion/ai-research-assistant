@@ -33,6 +33,9 @@ const paper = (paper_id: string): Paper => ({
   saved: true,
   screening_status: "unread",
   screening_note: "",
+  screening_exclusion_reason: null,
+  screening_decisions: [],
+  screening_disagreement: false,
   tags: [],
   metadata: {},
 });

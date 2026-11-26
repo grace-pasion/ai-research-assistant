@@ -564,6 +564,43 @@ class PaperAuthorResponse(BaseModel):
     author_name: str
 
 
+ScreeningExclusionReason = Literal[
+    "wrong_population",
+    "wrong_intervention",
+    "wrong_comparator",
+    "wrong_outcome",
+    "wrong_study_design",
+    "wrong_setting",
+    "wrong_publication_type",
+    "duplicate_record",
+    "full_text_unavailable",
+    "other",
+]
+
+
+def _validate_exclusion_fields(
+    screening_status: str,
+    exclusion_reason: str | None,
+    screening_note: str,
+) -> None:
+    if screening_status == "exclude" and exclusion_reason is None:
+        raise ValueError("Choose a structured reason when excluding a paper.")
+    if screening_status != "exclude" and exclusion_reason is not None:
+        raise ValueError("An exclusion reason can only be set for excluded papers.")
+    if exclusion_reason == "other" and not screening_note.strip():
+        raise ValueError("Add a note when the exclusion reason is Other.")
+
+
+class PaperScreeningDecisionResponse(BaseModel):
+    user_id: uuid.UUID
+    user_name: str
+    screening_status: Literal["undecided", "include", "exclude"]
+    exclusion_reason: ScreeningExclusionReason | None
+    screening_note: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class PaperResponse(BaseModel):
     paper_id: uuid.UUID
     external_paper_id: str
@@ -579,6 +616,9 @@ class PaperResponse(BaseModel):
     saved: bool = False
     screening_status: Literal["unread", "undecided", "include", "exclude"] = "unread"
     screening_note: str = ""
+    screening_exclusion_reason: ScreeningExclusionReason | None = None
+    screening_decisions: list[PaperScreeningDecisionResponse] = Field(default_factory=list)
+    screening_disagreement: bool = False
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
 
@@ -586,27 +626,62 @@ class PaperResponse(BaseModel):
 class PaperScreeningUpdate(BaseModel):
     screening_status: Literal["unread", "undecided", "include", "exclude"]
     screening_note: str = Field(default="", max_length=500)
+    exclusion_reason: ScreeningExclusionReason | None = None
 
     @field_validator("screening_note")
     @classmethod
     def normalize_screening_note(cls, value: str) -> str:
         return value.strip()
 
+    @model_validator(mode="after")
+    def validate_exclusion(self):
+        _validate_exclusion_fields(
+            self.screening_status, self.exclusion_reason, self.screening_note
+        )
+        return self
+
 
 class PaperScreeningResponse(BaseModel):
     screening_status: Literal["unread", "undecided", "include", "exclude"]
     screening_note: str
+    exclusion_reason: ScreeningExclusionReason | None
+
+
+class PaperScreeningDecisionUpdate(BaseModel):
+    screening_status: Literal["undecided", "include", "exclude"]
+    exclusion_reason: ScreeningExclusionReason | None = None
+    screening_note: str = Field(default="", max_length=500)
+
+    @field_validator("screening_note")
+    @classmethod
+    def normalize_screening_decision_note(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_exclusion(self):
+        _validate_exclusion_fields(
+            self.screening_status, self.exclusion_reason, self.screening_note
+        )
+        return self
 
 
 class PaperScreeningBulkUpdate(BaseModel):
     paper_ids: list[uuid.UUID] = Field(min_length=1)
     screening_status: Literal["unread", "undecided", "include", "exclude"]
     screening_note: str | None = Field(default=None, max_length=500)
+    exclusion_reason: ScreeningExclusionReason | None = None
 
     @field_validator("screening_note")
     @classmethod
     def normalize_screening_note(cls, value: str | None) -> str | None:
         return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_exclusion(self):
+        _validate_exclusion_fields(
+            self.screening_status, self.exclusion_reason, self.screening_note or ""
+        )
+        return self
 
 
 class PaperScreeningBulkResponse(BaseModel):

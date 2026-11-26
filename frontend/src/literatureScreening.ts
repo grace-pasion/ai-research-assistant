@@ -1,7 +1,34 @@
-import type { Paper } from "./types";
+import type { Paper, PaperScreeningDecision, ScreeningExclusionReason } from "./types";
 
 export type ScreeningStatusFilter = Paper["screening_status"] | "all";
 export type ScreeningSort = "saved" | "title" | "year_desc" | "year_asc";
+
+export const SCREENING_EXCLUSION_REASONS: {
+  value: ScreeningExclusionReason;
+  label: string;
+}[] = [
+  { value: "wrong_population", label: "Wrong population" },
+  { value: "wrong_intervention", label: "Wrong intervention or exposure" },
+  { value: "wrong_comparator", label: "Wrong comparator" },
+  { value: "wrong_outcome", label: "Wrong outcome" },
+  { value: "wrong_study_design", label: "Wrong study design" },
+  { value: "wrong_setting", label: "Wrong setting" },
+  { value: "wrong_publication_type", label: "Wrong publication type" },
+  { value: "duplicate_record", label: "Duplicate record" },
+  { value: "full_text_unavailable", label: "Full text unavailable" },
+  { value: "other", label: "Other" },
+];
+
+export function exclusionReasonLabel(reason: ScreeningExclusionReason | null): string {
+  return SCREENING_EXCLUSION_REASONS.find((item) => item.value === reason)?.label ?? "";
+}
+
+export function hasScreeningDisagreement(decisions: PaperScreeningDecision[]): boolean {
+  const outcomes = new Set(decisions.map((decision) =>
+    `${decision.screening_status}:${decision.screening_status === "exclude" ? decision.exclusion_reason ?? "" : ""}`,
+  ));
+  return outcomes.size > 1;
+}
 
 export function filterAndSortScreeningPapers(
   papers: Paper[],
