@@ -8,7 +8,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 ### Browser navigation and responsive layout
 
-The persistent desktop sidebar switches between personal/team workspaces and their projects; project content is organized in labeled section tabs for Documents, Literature, Notes, Main document, and Ask & explore. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
+The persistent desktop sidebar switches between personal/team workspaces, projects, and **Search all projects**; project content is organized in labeled section tabs for Documents, Literature, Notes, Main document, and Ask & explore. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
 
 The browser API client retries network-level failures for idempotent GET requests with bounded delays to tolerate API wake-up after inactivity. It does not retry writes or HTTP error responses; if a read still cannot reach the API, the client displays a connection error.
 
@@ -16,7 +16,7 @@ The browser API client retries network-level failures for idempotent GET request
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, and project backup bundles. |
+| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, cross-project search over saved documents and papers, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, and project backup bundles. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -303,6 +303,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `GET` | `/api/projects/{project_id}/documents` | List project documents and processing states. |
 | `PATCH` | `/api/documents/{document_id}/metadata` | Update a document's tags and custom metadata; requires project edit access. |
 | `GET` | `/api/projects/{project_id}/documents/search?q=...` | Search extracted text in a project. |
+| `GET` | `/api/search?q=...` | Search saved papers and documents across accessible projects; optional project, source type, author, year, tag, limit, and offset filters are applied without exposing inaccessible project data. |
 | `GET` | `/api/documents/{document_id}/reader` | Read extracted text from an owned document for annotation. |
 | `GET` | `/api/projects/{project_id}/annotations?q=...` | List project annotations with document/paper source labels and tags; optional search across source title, highlight, note, and tags. |
 | `POST` | `/api/projects/{project_id}/documents` | Upload a document. |

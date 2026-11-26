@@ -33,6 +33,7 @@ import { Fragment, type FormEvent, type ReactNode, useCallback, useEffect, useLa
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
 import { findCitationRange } from "./citationEvidence";
+import { CrossProjectSearch } from "./CrossProjectSearch";
 import {
   InboxDialog,
   ShareDialog,
@@ -64,6 +65,7 @@ import type {
   AnnotationSourceLink,
   BulkDocumentUploadResponse,
   Conversation,
+  CrossProjectSearchResult,
   DocumentRecord,
   DocumentSearchResult,
   Draft,
@@ -84,7 +86,7 @@ import type {
   User,
 } from "./types";
 
-type View = "documents" | "papers" | "notes" | "latex" | "assistant";
+type View = "documents" | "papers" | "notes" | "latex" | "assistant" | "search";
 type LoginResponse = { access_token: string; user: User };
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
@@ -541,6 +543,29 @@ function App() {
     setScreeningQuery(sourceTitle);
     setScreeningFilter("all");
     setAnnotationPaperId(sourceId);
+    setView("papers");
+  }
+
+  function openCrossProjectSearchResult(result: CrossProjectSearchResult) {
+    const target = projects.find((item) => item.project_id === result.project_id);
+    if (!target) {
+      setError("This project is no longer available.");
+      return;
+    }
+    setProject(target);
+    setSelectedTeamWorkspaceId(target.team_workspace_id);
+    setNotice("");
+    setMobileNavigationOpen(false);
+    if (result.source_type === "document") {
+      openDocumentEvidence(result.source_id, null, result.excerpt);
+      setAnnotationPaperId(null);
+      return;
+    }
+    setScreeningQuery(result.title);
+    setScreeningFilter("all");
+    setPaperMetadataFilters({ tag: "", metadataKey: "", metadataValue: "" });
+    setAnnotationPaperId(result.source_id);
+    setAnnotationDocumentId(null);
     setView("papers");
   }
 
@@ -1822,6 +1847,17 @@ function App() {
             </button>
           ))}
         </nav>
+        <button
+          className={`project-link global-search-link${view === "search" ? " selected" : ""}`}
+          type="button"
+          aria-current={view === "search" ? "page" : undefined}
+          onClick={() => {
+            setView("search");
+            setMobileNavigationOpen(false);
+          }}
+        >
+          <Search size={15} /><span className="project-link-name">Search all projects</span>
+        </button>
         <div className="sidebar-project-heading">
           <span className="sidebar-label">PROJECTS</span>
           <span className="project-count">{visibleProjects.length}</span>
@@ -1903,11 +1939,11 @@ function App() {
             </button>
             <div className="breadcrumb">
             <span>Workspace</span><span className="crumb-separator">/</span>
-            <span className="crumb-current">{project?.project_name ?? "No project selected"}</span>
+            <span className="crumb-current">{view === "search" ? "Search all projects" : project?.project_name ?? "No project selected"}</span>
             </div>
           </div>
           <div className="topbar-right">
-            <span className="private-badge">
+            {view !== "search" && <span className="private-badge">
               {project?.team_workspace_id
                 ? <><Users size={14} /> Team workspace</>
                 : project && user && project.user_id !== user.user_id
@@ -1944,7 +1980,7 @@ function App() {
               <Users size={16} />
               <span className="topbar-action-label">Teams</span>
             </button>
-            {project && (
+            {project && view !== "search" && (
               <>
                 {user && project.user_id === user.user_id && (
                   <button
@@ -2178,7 +2214,13 @@ function App() {
             </div>
           )}
 
-          {!project ? (
+          {view === "search" ? (
+            <CrossProjectSearch
+              projects={projects}
+              request={request}
+              onOpen={openCrossProjectSearchResult}
+            />
+          ) : !project ? (
             <section className="empty-workspace">
               <div className="empty-icon"><FolderPlus size={24} /></div>
               <p className="eyebrow">A FRESH START</p>

@@ -499,6 +499,18 @@ class DocumentSearchResult(BaseModel):
     excerpt: str
 
 
+class CrossProjectSearchResult(BaseModel):
+    project_id: uuid.UUID
+    project_name: str
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+    title: str
+    excerpt: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class DocumentReaderResponse(BaseModel):
     document_id: uuid.UUID
     filename: str

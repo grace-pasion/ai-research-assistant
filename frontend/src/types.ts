@@ -107,6 +107,18 @@ export type DocumentSearchResult = {
   excerpt: string;
 };
 
+export type CrossProjectSearchResult = {
+  project_id: string;
+  project_name: string;
+  source_type: "document" | "paper";
+  source_id: string;
+  title: string;
+  excerpt: string | null;
+  authors: string[];
+  year: number | null;
+  tags: string[];
+};
+
 export type Annotation = {
   annotation_id: string;
   project_id: string;
