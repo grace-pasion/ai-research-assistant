@@ -175,3 +175,23 @@ def ensure_project_collaboration_columns(engine) -> None:
                     "ON annotations (created_by)"
                 )
             )
+
+
+def ensure_annotation_synthesis_columns(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("annotations")}
+    with engine.begin() as connection:
+        if "tags" not in columns:
+            connection.execute(
+                text("ALTER TABLE annotations ADD COLUMN tags JSON NOT NULL DEFAULT '[]'")
+            )
+        if "is_pinned" not in columns:
+            connection.execute(
+                text("ALTER TABLE annotations ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT FALSE")
+            )
+        if "related_sources" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE annotations ADD COLUMN related_sources "
+                    "JSON NOT NULL DEFAULT '[]'"
+                )
+            )

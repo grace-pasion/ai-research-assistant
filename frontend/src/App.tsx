@@ -61,6 +61,7 @@ import {
 import type {
   AIUsageResponse,
   Annotation,
+  AnnotationSourceLink,
   BulkDocumentUploadResponse,
   Conversation,
   DocumentRecord,
@@ -95,6 +96,9 @@ type UploadQueueItem = {
   documentId: string | null;
   error: string | null;
 };
+type ProjectAnnotationUpdate = Partial<
+  Pick<Annotation, "note" | "tags" | "is_pinned" | "related_sources">
+>;
 
 function retainProjectSelection(current: Project | null, loaded: Project[]): Project | null {
   if (!current) return loaded[0] ?? null;
@@ -140,7 +144,9 @@ function App() {
   const [annotationQuery, setAnnotationQuery] = useState("");
   const [annotationSourceFilter, setAnnotationSourceFilter] = useState<AnnotationSourceFilter>("all");
   const [annotationSort, setAnnotationSort] = useState<AnnotationSort>("newest");
+  const [pinnedAnnotationsOnly, setPinnedAnnotationsOnly] = useState(false);
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(() => new Set());
+  const [annotationBusyIds, setAnnotationBusyIds] = useState<Set<string>>(() => new Set());
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentMatches, setDocumentMatches] = useState<DocumentSearchResult[] | null>(null);
   const [documentMetadataFilters, setDocumentMetadataFilters] = useState<LibraryMetadataFilters>({
@@ -494,8 +500,9 @@ function App() {
       annotationQuery,
       annotationSourceFilter,
       annotationSort,
+      pinnedAnnotationsOnly,
     ),
-    [annotationQuery, annotationSourceFilter, annotationSort, projectAnnotations],
+    [annotationQuery, annotationSourceFilter, annotationSort, pinnedAnnotationsOnly, projectAnnotations],
   );
   const selectedProjectAnnotationCount = projectAnnotations
     .filter((annotation) => selectedAnnotationIds.has(annotation.annotation_id)).length;
@@ -518,16 +525,59 @@ function App() {
     setView("documents");
   }
 
-  function openProjectAnnotation(annotation: ProjectAnnotation) {
-    if (annotation.document_id) {
-      openDocumentEvidence(annotation.document_id);
+  function openProjectSource(sourceType: "document" | "paper", sourceId: string, sourceTitle: string) {
+    if (sourceType === "document") {
+      if (!documents.some((document) => document.document_id === sourceId)) {
+        setError("This linked document is no longer available in the project.");
+        return;
+      }
+      openDocumentEvidence(sourceId);
       return;
     }
-    if (annotation.paper_id) {
-      setScreeningQuery(annotation.source_title);
-      setScreeningFilter("all");
-      setAnnotationPaperId(annotation.paper_id);
-      setView("papers");
+    if (!papers.some((paper) => paper.paper_id === sourceId)) {
+      setError("This linked paper is no longer saved in the project.");
+      return;
+    }
+    setScreeningQuery(sourceTitle);
+    setScreeningFilter("all");
+    setAnnotationPaperId(sourceId);
+    setView("papers");
+  }
+
+  function openProjectAnnotation(annotation: ProjectAnnotation) {
+    openProjectSource(annotation.source_type, annotation.source_type === "document"
+      ? annotation.document_id ?? ""
+      : annotation.paper_id ?? "", annotation.source_title);
+  }
+
+  async function updateProjectAnnotation(
+    annotation: ProjectAnnotation,
+    update: ProjectAnnotationUpdate,
+  ): Promise<Annotation | null> {
+    setAnnotationBusyIds((current) => new Set(current).add(annotation.annotation_id));
+    setError("");
+    try {
+      const sourceId = annotation.source_type === "document"
+        ? annotation.document_id
+        : annotation.paper_id;
+      if (!sourceId) throw new Error("The note's source is no longer available.");
+      const updated = await api<Annotation>(
+        `/api/projects/${annotation.project_id}/${annotation.source_type === "document" ? "documents" : "papers"}/${sourceId}/annotations/${annotation.annotation_id}`,
+        { method: "PATCH", body: jsonBody(update) },
+      );
+      setProjectAnnotations((current) =>
+        current.map((item) => item.annotation_id === updated.annotation_id ? { ...item, ...updated } : item),
+      );
+      return updated;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update this note.");
+      return null;
+    } finally {
+      setAnnotationBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(annotation.annotation_id);
+        return next;
+      });
     }
   }
 
@@ -2356,7 +2406,7 @@ function App() {
                   <div className="section-heading">
                     <div>
                       <h2>Project notes and highlights</h2>
-                      <p>Search saved annotations across documents and papers, then select notes to add as context to a source comparison.</p>
+                      <p>Tag and pin notes, connect related sources, and select notes to add as context to a source comparison.</p>
                     </div>
                     <button
                       className="button primary"
@@ -2371,7 +2421,7 @@ function App() {
                       type="search"
                       value={annotationQuery}
                       onChange={(event) => setAnnotationQuery(event.target.value)}
-                      placeholder="Search notes, highlights, or sources…"
+                      placeholder="Search notes, highlights, tags, or sources…"
                       aria-label="Search project notes and highlights"
                     />
                     <select
@@ -2392,6 +2442,14 @@ function App() {
                       <option value="oldest">Least recently updated</option>
                     </select>
                     <button
+                      type="button"
+                      className={`button ${pinnedAnnotationsOnly ? "primary" : "secondary"} small-button`}
+                      aria-pressed={pinnedAnnotationsOnly}
+                      onClick={() => setPinnedAnnotationsOnly((current) => !current)}
+                    >
+                      {pinnedAnnotationsOnly ? "Showing pinned" : "Pinned only"}
+                    </button>
+                    <button
                       className="button secondary small-button"
                       disabled={!visibleProjectAnnotations.length}
                       onClick={() => setSelectedAnnotationIds((current) => {
@@ -2408,8 +2466,41 @@ function App() {
                   </div>
                   {visibleProjectAnnotations.length ? (
                     <div className="annotation-library-list">
-                      {visibleProjectAnnotations.map((annotation) => (
-                        <article className="annotation-library-card" key={annotation.annotation_id}>
+                      {visibleProjectAnnotations.map((annotation) => {
+                        const primarySourceId = annotation.source_type === "document"
+                          ? annotation.document_id
+                          : annotation.paper_id;
+                        const primarySourceKey = `${annotation.source_type}.${primarySourceId ?? ""}`;
+                        const linkedSourceKeys = new Set(annotation.related_sources.map(
+                          (source) => `${source.source_type}.${source.source_id}`,
+                        ));
+                        const availableSources = [
+                          ...documents
+                            .map((document) => ({
+                              source_type: "document" as const,
+                              source_id: document.document_id,
+                              source_title: document.filename,
+                            })),
+                          ...papers
+                            .map((paper) => ({
+                              source_type: "paper" as const,
+                              source_id: paper.paper_id,
+                              source_title: paper.title,
+                            })),
+                        ].filter((source) =>
+                          `${source.source_type}.${source.source_id}` !== primarySourceKey
+                          && !linkedSourceKeys.has(`${source.source_type}.${source.source_id}`),
+                        );
+                        const canManage = project.access_role !== "read"
+                          && (project.access_role === "owner" || annotation.author_id === user?.user_id);
+                        const noteBusy = annotationBusyIds.has(annotation.annotation_id);
+                        const relatedSourceTitle = (source: AnnotationSourceLink) => source.source_type === "document"
+                          ? documents.find((document) => document.document_id === source.source_id)?.filename
+                            ?? "Unavailable document"
+                          : papers.find((paper) => paper.paper_id === source.source_id)?.title
+                            ?? "Unavailable paper";
+                        return (
+                        <article className={`annotation-library-card${annotation.is_pinned ? " pinned" : ""}`} key={annotation.annotation_id}>
                           <label className="annotation-library-select">
                             <input
                               type="checkbox"
@@ -2421,6 +2512,7 @@ function App() {
                           <div className="annotation-library-body">
                             <div className="annotation-library-source">
                               <span>{annotation.source_type === "document" ? "DOCUMENT" : "PAPER"}</span>
+                              {annotation.is_pinned && <span className="annotation-pinned-badge">PINNED</span>}
                               <button type="button" onClick={() => openProjectAnnotation(annotation)}>
                                 {annotation.source_title}
                               </button>
@@ -2446,10 +2538,127 @@ function App() {
                             </div>
                             {annotation.quote && <blockquote>{annotation.quote}</blockquote>}
                             {annotation.note && <p>{annotation.note}</p>}
+                            {!!annotation.tags.length && (
+                              <div className="annotation-tags" aria-label="Note tags">
+                                {annotation.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                              </div>
+                            )}
+                            {!!annotation.related_sources.length && (
+                              <div className="annotation-related-links" aria-label="Related sources">
+                                <span>Related:</span>
+                                {annotation.related_sources.map((source) => (
+                                  <span className="annotation-related-link" key={`${source.source_type}.${source.source_id}`}>
+                                    <button
+                                      type="button"
+                                      onClick={() => openProjectSource(
+                                        source.source_type,
+                                        source.source_id,
+                                        relatedSourceTitle(source),
+                                      )}
+                                    >
+                                      {relatedSourceTitle(source)}
+                                    </button>
+                                    {canManage && (
+                                      <button
+                                        type="button"
+                                        className="annotation-unlink"
+                                        disabled={noteBusy}
+                                        onClick={() => void updateProjectAnnotation(annotation, {
+                                          related_sources: annotation.related_sources.filter(
+                                            (item) => item.source_type !== source.source_type
+                                              || item.source_id !== source.source_id,
+                                          ),
+                                        })}
+                                        aria-label={`Unlink ${relatedSourceTitle(source)}`}
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {canManage && (
+                              <div className="annotation-library-actions">
+                                <button
+                                  type="button"
+                                  className="button secondary small-button"
+                                  disabled={noteBusy}
+                                  aria-pressed={annotation.is_pinned}
+                                  onClick={() => void updateProjectAnnotation(annotation, {
+                                    is_pinned: !annotation.is_pinned,
+                                  })}
+                                >
+                                  {annotation.is_pinned ? "Unpin note" : "Pin note"}
+                                </button>
+                                <form
+                                  className="annotation-tag-form"
+                                  onSubmit={(event) => {
+                                    event.preventDefault();
+                                    const form = event.currentTarget;
+                                    const formData = new FormData(form);
+                                    const tags = String(formData.get("tags") ?? "")
+                                      .split(",")
+                                      .map((tag) => tag.trim())
+                                      .filter(Boolean);
+                                    void updateProjectAnnotation(annotation, { tags }).then((updated) => {
+                                      const input = form.elements.namedItem("tags");
+                                      if (updated && input instanceof HTMLInputElement) {
+                                        input.value = updated.tags.join(", ");
+                                      }
+                                    });
+                                  }}
+                                >
+                                  <input
+                                    name="tags"
+                                    aria-label={`Tags for note from ${annotation.source_title}`}
+                                    defaultValue={annotation.tags.join(", ")}
+                                    maxLength={659}
+                                    placeholder="Tags, comma-separated"
+                                    disabled={noteBusy}
+                                  />
+                                  <button className="button secondary small-button" disabled={noteBusy}>Save tags</button>
+                                </form>
+                                {availableSources.length > 0 && (
+                                  <form
+                                    className="annotation-link-form"
+                                    onSubmit={(event) => {
+                                      event.preventDefault();
+                                      const form = event.currentTarget;
+                                      const selected = String(new FormData(form).get("source") ?? "");
+                                      const separator = selected.indexOf(".");
+                                      if (separator < 0) return;
+                                      const sourceType = selected.slice(0, separator);
+                                      if (sourceType !== "document" && sourceType !== "paper") return;
+                                      const sourceId = selected.slice(separator + 1);
+                                      const link: AnnotationSourceLink = { source_type: sourceType, source_id: sourceId };
+                                      void updateProjectAnnotation(annotation, {
+                                        related_sources: [...annotation.related_sources, link],
+                                      });
+                                      form.reset();
+                                    }}
+                                  >
+                                    <select name="source" defaultValue="" aria-label={`Link source to note from ${annotation.source_title}`}>
+                                      <option value="" disabled>Link a paper or document</option>
+                                      {availableSources.map((source) => (
+                                        <option
+                                          key={`${source.source_type}.${source.source_id}`}
+                                          value={`${source.source_type}.${source.source_id}`}
+                                        >
+                                          {source.source_type === "document" ? "Document" : "Paper"}: {source.source_title}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button className="button secondary small-button" disabled={noteBusy}>Link source</button>
+                                  </form>
+                                )}
+                              </div>
+                            )}
                             <small>Updated {new Date(annotation.updated_at).toLocaleDateString()}</small>
                           </div>
                         </article>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="annotation-library-empty">

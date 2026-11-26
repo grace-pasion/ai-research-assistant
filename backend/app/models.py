@@ -352,6 +352,11 @@ class Annotation(ResearchBase):
     )
     quote: Mapped[str | None] = mapped_column(Text)
     note: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    related_sources: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     start_offset: Mapped[int | None] = mapped_column(Integer)
     end_offset: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

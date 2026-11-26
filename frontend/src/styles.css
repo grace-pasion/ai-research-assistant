@@ -202,12 +202,14 @@ h1, h2, h3, p { margin-top: 0; }
 .annotation-library-controls input { flex: 1 1 240px; }
 .annotation-library-controls select { flex: 0 1 160px; }
 .annotation-library-card { align-items: flex-start; background: #fff; border: 1px solid #e9ede9; border-radius: 8px; display: flex; gap: 12px; padding: 14px; }
+.annotation-library-card.pinned { border-color: #c9dbc9; box-shadow: inset 3px 0 #668b70; }
 .annotation-library-list { display: grid; gap: 9px; }
 .annotation-library-select { padding-top: 2px; }
 .annotation-library-select input { accent-color: #4b8062; }
 .annotation-library-body { flex: 1; min-width: 0; }
 .annotation-library-source { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .annotation-library-source span { background: #edf4ee; border-radius: 4px; color: #547462; font-size: 8px; font-weight: 650; letter-spacing: .5px; padding: 4px 6px; }
+.annotation-library-source .annotation-pinned-badge { background: #e8f0e5; color: #557452; }
 .annotation-library-source button { background: transparent; border: 0; color: #3e624c; cursor: pointer; font-size: 11px; font-weight: 650; padding: 0; text-align: left; }
 .annotation-library-source button.button { font-size: 10px; font-weight: 600; text-decoration: none; }
 .annotation-library-source button:hover { text-decoration: underline; }
@@ -215,6 +217,17 @@ h1, h2, h3, p { margin-top: 0; }
 .annotation-library-body blockquote { border-left: 3px solid #e5c568; color: #68746b; font-size: 10px; line-height: 1.6; margin: 0 0 7px; padding-left: 9px; white-space: pre-wrap; }
 .annotation-library-body p { color: #46534b; font-size: 11px; line-height: 1.5; margin: 0 0 7px; white-space: pre-wrap; }
 .annotation-library-body small { color: #89938b; font-size: 9px; }
+.annotation-library-actions, .annotation-tag-form, .annotation-link-form, .annotation-related-links, .annotation-related-link, .annotation-tags { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }
+.annotation-library-actions { margin: 10px 0 7px; }
+.annotation-tag-form input, .annotation-link-form select { background: #fff; border: 1px solid #e3e9e3; border-radius: 6px; color: #526057; font: inherit; font-size: 10px; min-height: 30px; padding: 0 8px; }
+.annotation-tag-form input { width: min(230px, 45vw); }
+.annotation-link-form select { max-width: min(300px, 55vw); }
+.annotation-tags { margin: 7px 0; }
+.annotation-tags span { background: #f0f3e8; border-radius: 10px; color: #64734d; font-size: 9px; padding: 3px 8px; }
+.annotation-related-links { color: #89938b; font-size: 10px; margin: 7px 0; }
+.annotation-related-link { background: #f4f7f4; border-radius: 5px; gap: 2px; padding: 3px 5px; }
+.annotation-related-link button { background: transparent; border: 0; color: #3e624c; cursor: pointer; font: inherit; padding: 1px 3px; text-align: left; }
+.annotation-related-link .annotation-unlink { color: #89938b; font-size: 14px; line-height: 1; }
 .annotation-library-empty { align-items: center; background: #fbfcfa; border: 1px dashed #dfe6df; border-radius: 8px; color: #859087; display: flex; flex-direction: column; gap: 8px; padding: 38px 16px; text-align: center; }
 .annotation-library-empty p { font-size: 11px; margin: 0; }
 .file-icon, .paper-icon { align-items: center; background: #eff4f0; border-radius: 8px; color: #527662; display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }

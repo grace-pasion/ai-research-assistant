@@ -114,12 +114,20 @@ export type Annotation = {
   paper_id: string | null;
   quote: string | null;
   note: string;
+  tags: string[];
+  is_pinned: boolean;
+  related_sources: AnnotationSourceLink[];
   author_id: string | null;
   author_name: string | null;
   start_offset: number | null;
   end_offset: number | null;
   created_at: string;
   updated_at: string;
+};
+
+export type AnnotationSourceLink = {
+  source_type: "document" | "paper";
+  source_id: string;
 };
 
 export type ProjectAnnotation = Annotation & {

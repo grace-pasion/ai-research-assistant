@@ -8,18 +8,22 @@ export function filterProjectAnnotations(
   query: string,
   sourceFilter: AnnotationSourceFilter,
   sort: AnnotationSort,
+  pinnedOnly = false,
 ): ProjectAnnotation[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = annotations.filter((annotation) => {
     if (sourceFilter !== "all" && annotation.source_type !== sourceFilter) return false;
+    if (pinnedOnly && !annotation.is_pinned) return false;
     if (!normalizedQuery) return true;
     return [
       annotation.source_title,
       annotation.quote ?? "",
       annotation.note,
+      ...annotation.tags,
     ].join(" ").toLocaleLowerCase().includes(normalizedQuery);
   });
   return filtered.sort((left, right) => {
+    if (left.is_pinned !== right.is_pinned) return left.is_pinned ? -1 : 1;
     const order = left.updated_at.localeCompare(right.updated_at);
     return sort === "newest" ? -order : order;
   });

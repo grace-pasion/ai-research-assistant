@@ -13,6 +13,9 @@ function annotation(
     paper_id: `paper-${id}`,
     quote: null,
     note: `Note ${id}`,
+    tags: [],
+    is_pinned: false,
+    related_sources: [],
     author_id: null,
     author_name: null,
     start_offset: null,
@@ -49,6 +52,19 @@ describe("project annotations", () => {
     expect(filterProjectAnnotations(notes, "", "all", "newest").map((item) => item.annotation_id))
       .toEqual(["2", "1"]);
     expect(notes.map((item) => item.annotation_id)).toEqual(["1", "2"]);
+  });
+
+  it("searches tags, shows pinned notes first, and can restrict the list to pinned notes", () => {
+    const notes = [
+      annotation("1", { tags: ["sampling"] }),
+      annotation("2", { is_pinned: true, updated_at: "2025-01-01T00:00:00Z" }),
+      annotation("3", { is_pinned: true, tags: ["sampling"] }),
+    ];
+
+    expect(filterProjectAnnotations(notes, "SAMPLING", "all", "newest").map((item) => item.annotation_id))
+      .toEqual(["3", "1"]);
+    expect(filterProjectAnnotations(notes, "", "all", "newest", true).map((item) => item.annotation_id))
+      .toEqual(["3", "2"]);
   });
 
   it("formats only selected notes, labels them as untrusted context, and respects the prompt limit", () => {

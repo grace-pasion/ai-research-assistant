@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import get_settings
 from app.database import (
+    ensure_annotation_synthesis_columns,
     ensure_document_chunk_page_column,
     ensure_library_metadata_columns,
     ensure_notification_details_column,
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
     ensure_library_metadata_columns(research_engine)
     ensure_project_team_workspace_column(research_engine)
     ensure_project_collaboration_columns(research_engine)
+    ensure_annotation_synthesis_columns(research_engine)
     ensure_python_workspace_files_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield

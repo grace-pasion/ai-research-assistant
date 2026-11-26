@@ -1,13 +1,20 @@
 import uuid
 
 import pytest
-from fastapi import HTTPException
-from sqlalchemy import create_engine, select
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from app.database import (
+    ensure_annotation_synthesis_columns,
+    get_db,
+    get_literature_db,
+)
 from app.models import Annotation, Document, Paper, ProjectInvitation, ProjectPaper, ResearchProject, TeamWorkspace, User
 from app.routers import annotations, documents
 from app.schemas import AnnotationCreate, AnnotationUpdate
+from app.security import get_current_user
 
 
 @pytest.fixture
@@ -202,6 +209,199 @@ def test_project_annotations_require_project_access(annotation_databases):
             project.project_id, db=db, literature_db=literature_db, user=other_user
         )
     assert error.value.status_code == 404
+
+
+def test_annotation_updates_save_normalized_tags_pin_and_related_sources(annotation_databases):
+    db, literature_db, user, project, document, paper = annotation_databases
+    annotation = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="Synthesize this source."),
+        db,
+        user,
+    )
+
+    updated = annotations.update_document_annotation(
+        project.project_id,
+        document.document_id,
+        annotation.annotation_id,
+        AnnotationUpdate(
+            tags=["  methods ", "Synthesis", "METHODS"],
+            is_pinned=True,
+            related_sources=[{"source_type": "paper", "source_id": str(paper.paper_id)}],
+        ),
+        db,
+        user,
+        literature_db=literature_db,
+    )
+
+    assert updated.tags == ["methods", "Synthesis"]
+    assert updated.is_pinned is True
+    assert updated.related_sources == [
+        {"source_type": "paper", "source_id": str(paper.paper_id)}
+    ]
+    assert annotations.list_project_annotations(
+        project.project_id, db=db, literature_db=literature_db, user=user
+    )[0].tags == ["methods", "Synthesis"]
+    assert [
+        item.annotation_id
+        for item in annotations.list_project_annotations(
+            project.project_id,
+            q="methods",
+            db=db,
+            literature_db=literature_db,
+            user=user,
+        )
+    ] == [annotation.annotation_id]
+
+
+def test_annotation_links_must_be_distinct_project_sources(annotation_databases):
+    db, literature_db, user, project, document, paper = annotation_databases
+    annotation = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="Synthesize this source."),
+        db,
+        user,
+    )
+
+    with pytest.raises(HTTPException) as same_source:
+        annotations.update_document_annotation(
+            project.project_id,
+            document.document_id,
+            annotation.annotation_id,
+            AnnotationUpdate(
+                related_sources=[
+                    {"source_type": "document", "source_id": str(document.document_id)}
+                ]
+            ),
+            db,
+            user,
+            literature_db=literature_db,
+        )
+    assert same_source.value.status_code == 422
+
+    with pytest.raises(HTTPException) as unsaved_paper:
+        annotations.update_document_annotation(
+            project.project_id,
+            document.document_id,
+            annotation.annotation_id,
+            AnnotationUpdate(
+                related_sources=[
+                    {"source_type": "paper", "source_id": str(uuid.uuid4())}
+                ]
+            ),
+            db,
+            user,
+            literature_db=literature_db,
+        )
+    assert unsaved_paper.value.status_code == 404
+
+    other_project = ResearchProject(user_id=user.user_id, project_name="Other project")
+    db.add(other_project)
+    db.flush()
+    other_document = Document(
+        project_id=other_project.project_id,
+        filename="other.txt",
+        file_type="txt",
+        storage_path="other.txt",
+        file_size=5,
+        extracted_text="Other",
+        processing_status="ready",
+    )
+    db.add(other_document)
+    db.commit()
+    with pytest.raises(HTTPException) as foreign_document:
+        annotations.update_document_annotation(
+            project.project_id,
+            document.document_id,
+            annotation.annotation_id,
+            AnnotationUpdate(
+                related_sources=[
+                    {"source_type": "document", "source_id": str(other_document.document_id)}
+                ]
+            ),
+            db,
+            user,
+            literature_db=literature_db,
+        )
+    assert foreign_document.value.status_code == 404
+
+    with pytest.raises(HTTPException) as duplicate_source:
+        annotations.update_document_annotation(
+            project.project_id,
+            document.document_id,
+            annotation.annotation_id,
+            AnnotationUpdate(
+                related_sources=[
+                    {"source_type": "paper", "source_id": str(paper.paper_id)},
+                    {"source_type": "paper", "source_id": str(paper.paper_id)},
+                ]
+            ),
+            db,
+            user,
+            literature_db=literature_db,
+        )
+    assert duplicate_source.value.status_code == 422
+
+
+def test_annotation_metadata_patch_http_contract(annotation_databases):
+    db, literature_db, user, project, document, paper = annotation_databases
+    annotation = annotations.create_document_annotation(
+        project.project_id,
+        document.document_id,
+        AnnotationCreate(note="Synthesize this source."),
+        db,
+        user,
+    )
+    app = FastAPI()
+    app.include_router(annotations.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_literature_db] = lambda: literature_db
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/projects/{project.project_id}/documents/{document.document_id}/annotations/{annotation.annotation_id}",
+            json={
+                "tags": [" synthesis "],
+                "is_pinned": True,
+                "related_sources": [{"source_type": "paper", "source_id": str(paper.paper_id)}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["tags"] == ["synthesis"]
+    assert response.json()["is_pinned"] is True
+    assert response.json()["related_sources"] == [
+        {"source_type": "paper", "source_id": str(paper.paper_id)}
+    ]
+
+
+def test_annotation_synthesis_migration_adds_defaults_and_is_idempotent():
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE annotations (annotation_id CHAR(32) PRIMARY KEY)")
+        )
+        connection.execute(
+            text("INSERT INTO annotations (annotation_id) VALUES ('old-note')")
+        )
+
+    ensure_annotation_synthesis_columns(engine)
+    ensure_annotation_synthesis_columns(engine)
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT tags, is_pinned, related_sources FROM annotations "
+                "WHERE annotation_id = 'old-note'"
+            )
+        ).one()
+    assert row.tags == "[]"
+    assert row.is_pinned in (False, 0)
+    assert row.related_sources == "[]"
+    engine.dispose()
 
 
 def test_comment_access_is_role_limited_and_authors_can_only_edit_their_own(annotation_databases):

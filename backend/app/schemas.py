@@ -528,13 +528,49 @@ class AnnotationCreate(BaseModel):
         return self
 
 
+class AnnotationSourceLink(BaseModel):
+    source_type: Literal["document", "paper"]
+    source_id: uuid.UUID
+
+
 class AnnotationUpdate(BaseModel):
-    note: str = Field(max_length=5000)
+    note: str | None = Field(default=None, max_length=5000)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    is_pinned: bool | None = None
+    related_sources: list[AnnotationSourceLink] | None = Field(default=None, max_length=20)
 
     @field_validator("note")
     @classmethod
-    def normalize_annotation_note(cls, value: str) -> str:
-        return value.strip()
+    def normalize_annotation_note(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_annotation_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for tag in value:
+            tag = tag.strip()
+            if not tag:
+                continue
+            if len(tag) > 32:
+                raise ValueError("Tags must be 32 characters or fewer.")
+            key = tag.casefold()
+            if key not in seen:
+                normalized.append(tag)
+                seen.add(key)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_annotation_update(self):
+        if not any(
+            getattr(self, field) is not None
+            for field in ("note", "tags", "is_pinned", "related_sources")
+        ):
+            raise ValueError("Provide at least one note field to update.")
+        return self
 
 
 class AnnotationResponse(APIModel):
@@ -544,6 +580,9 @@ class AnnotationResponse(APIModel):
     paper_id: uuid.UUID | None
     quote: str | None
     note: str
+    tags: list[str] = Field(default_factory=list)
+    is_pinned: bool = False
+    related_sources: list[AnnotationSourceLink] = Field(default_factory=list)
     author_id: uuid.UUID | None = Field(
         validation_alias=AliasChoices("author_id", "created_by")
     )

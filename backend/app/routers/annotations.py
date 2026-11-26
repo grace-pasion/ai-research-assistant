@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, get_literature_db
 from app.models import Annotation, Document, Paper, ProjectPaper, ResearchProject, User
 from app.schemas import (
+    AnnotationSourceLink,
     AnnotationCreate,
     AnnotationResponse,
     AnnotationUpdate,
@@ -103,6 +104,37 @@ def _require_annotation_author(
         raise HTTPException(status_code=403, detail="Only the comment author or project owner can edit it.")
 
 
+def _validate_related_sources(
+    db: Session,
+    literature_db: Session,
+    project_id: uuid.UUID,
+    annotation: Annotation,
+    related_sources: list[AnnotationSourceLink],
+) -> list[dict[str, str]]:
+    seen: set[tuple[str, uuid.UUID]] = set()
+    validated = []
+    for source in related_sources:
+        key = (source.source_type, source.source_id)
+        if key in seen:
+            raise HTTPException(status_code=422, detail="Related sources must be unique.")
+        seen.add(key)
+        if (
+            (source.source_type == "document" and annotation.document_id == source.source_id)
+            or (source.source_type == "paper" and annotation.paper_id == source.source_id)
+        ):
+            raise HTTPException(status_code=422, detail="A note cannot link to its own source.")
+        if source.source_type == "document":
+            document = db.get(Document, source.source_id)
+            if document is None or document.project_id != project_id:
+                raise HTTPException(status_code=404, detail="Related document not found in this project.")
+        else:
+            _require_saved_paper(db, literature_db, project_id, source.source_id)
+        validated.append(
+            {"source_type": source.source_type, "source_id": str(source.source_id)}
+        )
+    return validated
+
+
 @router.get(
     "/api/projects/{project_id}/annotations",
     response_model=list[ProjectAnnotationResponse],
@@ -160,7 +192,7 @@ def list_project_annotations(
                 continue
             source_title = source.title
         if search_text and search_text not in " ".join(
-            (source_title, annotation.quote or "", annotation.note)
+            (source_title, annotation.quote or "", annotation.note, *annotation.tags)
         ).casefold():
             continue
         results.append(
@@ -276,14 +308,24 @@ def update_document_annotation(
     payload: AnnotationUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    literature_db: Session = Depends(get_literature_db),
 ):
     require_project_access(db, project_id, user.user_id, "comment")
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
     _require_annotation_author(db, annotation, user)
-    if not payload.note and not annotation.quote:
+    if payload.note is not None and not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
-    annotation.note = payload.note
+    if payload.note is not None:
+        annotation.note = payload.note
+    if payload.tags is not None:
+        annotation.tags = payload.tags
+    if payload.is_pinned is not None:
+        annotation.is_pinned = payload.is_pinned
+    if payload.related_sources is not None:
+        annotation.related_sources = _validate_related_sources(
+            db, literature_db, project_id, annotation, payload.related_sources
+        )
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -306,9 +348,18 @@ def update_paper_annotation(
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
     _require_annotation_author(db, annotation, user)
-    if not payload.note and not annotation.quote:
+    if payload.note is not None and not payload.note and not annotation.quote:
         raise HTTPException(status_code=422, detail="Add a note or select text to highlight.")
-    annotation.note = payload.note
+    if payload.note is not None:
+        annotation.note = payload.note
+    if payload.tags is not None:
+        annotation.tags = payload.tags
+    if payload.is_pinned is not None:
+        annotation.is_pinned = payload.is_pinned
+    if payload.related_sources is not None:
+        annotation.related_sources = _validate_related_sources(
+            db, literature_db, project_id, annotation, payload.related_sources
+        )
     db.commit()
     db.refresh(annotation)
     return annotation
