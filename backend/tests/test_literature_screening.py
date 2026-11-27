@@ -16,6 +16,7 @@ from app.models import (
     Paper,
     PaperAuthor,
     PaperScreeningDecision,
+    PaperStudyExtraction,
     ProjectActivity,
     ProjectInvitation,
     ProjectPaper,
@@ -41,6 +42,7 @@ from app.schemas import (
     PaperScreeningBulkUpdate,
     PaperScreeningDecisionUpdate,
     PaperScreeningUpdate,
+    PaperStudyExtractionUpdate,
     SystematicReviewUpdate,
 )
 from sqlalchemy.exc import IntegrityError
@@ -58,6 +60,7 @@ def screening_databases(tmp_path):
         ProjectInvitation,
         ProjectPaper,
         PaperScreeningDecision,
+        PaperStudyExtraction,
         SystematicReviewWorkspace,
         UserActivity,
         ProjectActivity,
@@ -141,6 +144,107 @@ def test_saved_paper_list_returns_project_tags_and_custom_metadata(screening_dat
 
     assert listed[0].tags == ["methodology"]
     assert listed[0].metadata == {"Study design": "Cohort"}
+
+
+def test_study_extraction_is_shared_with_saved_papers_and_persists(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    assert list_saved_papers(project.project_id, db, literature_db, user)[0].study_extraction is None
+
+    saved = papers_router.update_paper_study_extraction(
+        project.project_id,
+        paper.paper_id,
+        PaperStudyExtractionUpdate(
+            population="  Adults with chronic illness  ",
+            methods="  Randomized controlled trial  ",
+            sample_size="  240 participants (120 per arm)  ",
+            outcomes="  Symptom severity at 12 weeks  ",
+            limitations="  Single-center study  ",
+            expected_updated_at=None,
+        ),
+        db,
+        user,
+    )
+    listed = list_saved_papers(project.project_id, db, literature_db, user)[0]
+
+    assert saved.population == "Adults with chronic illness"
+    assert saved.methods == "Randomized controlled trial"
+    assert saved.sample_size == "240 participants (120 per arm)"
+    assert saved.updated_by == user.user_id
+    assert saved.updated_by_name == user.name
+    assert saved.updated_at.tzinfo is not None
+    assert listed.study_extraction == saved
+    with Session(db.get_bind()) as fresh_db:
+        persisted = fresh_db.get(PaperStudyExtraction, (project.project_id, paper.paper_id))
+        assert persisted is not None
+        assert persisted.outcomes == "Symptom severity at 12 weeks"
+        assert persisted.limitations == "Single-center study"
+
+
+def test_study_extraction_rejects_stale_values_and_unsaved_papers(screening_databases):
+    db, _literature_db, user, project, paper = screening_databases
+    saved = papers_router.update_paper_study_extraction(
+        project.project_id,
+        paper.paper_id,
+        PaperStudyExtractionUpdate(population="Initial", expected_updated_at=None),
+        db,
+        user,
+    )
+
+    with pytest.raises(HTTPException) as stale:
+        papers_router.update_paper_study_extraction(
+            project.project_id,
+            paper.paper_id,
+            PaperStudyExtractionUpdate(
+                population="Stale overwrite",
+                expected_updated_at=None,
+            ),
+            db,
+            user,
+        )
+    assert stale.value.status_code == 409
+    assert db.get(PaperStudyExtraction, (project.project_id, paper.paper_id)).population == "Initial"
+
+    with pytest.raises(HTTPException) as missing:
+        papers_router.update_paper_study_extraction(
+            project.project_id,
+            uuid.uuid4(),
+            PaperStudyExtractionUpdate(expected_updated_at=None),
+            db,
+            user,
+        )
+    assert missing.value.status_code == 404
+    assert saved.updated_at is not None
+
+
+def test_study_extraction_requires_editor_access(screening_databases):
+    db, _literature_db, owner, project, paper = screening_databases
+    commenter = User(
+        email="commenter@example.com",
+        name="Commenter",
+        password_hash="hashed",
+    )
+    db.add(commenter)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=commenter.user_id,
+            status="accepted",
+            role="comment",
+        )
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        papers_router.update_paper_study_extraction(
+            project.project_id,
+            paper.paper_id,
+            PaperStudyExtractionUpdate(population="Not permitted", expected_updated_at=None),
+            db,
+            commenter,
+        )
+    assert error.value.status_code == 403
 
 
 def test_concurrent_save_of_same_paper_is_idempotent(screening_databases, monkeypatch):
@@ -429,6 +533,38 @@ def test_screening_exports_include_exclusion_reason_and_named_reviewer_trail(scr
     assert json.loads(report_rows[2][21])[0]["user_name"] == "Reader"
 
 
+def test_screening_exports_include_formula_safe_study_extraction(screening_databases):
+    db, literature_db, user, project, paper = screening_databases
+    papers_router.update_paper_study_extraction(
+        project.project_id,
+        paper.paper_id,
+        PaperStudyExtractionUpdate(
+            population="  =HYPERLINK(\"https://example.test\")",
+            methods="Cohort study",
+            sample_size="120",
+            outcomes="+CMD()",
+            limitations="@external",
+            expected_updated_at=None,
+        ),
+        db,
+        user,
+    )
+
+    for export in (
+        export_screening_csv(project.project_id, db, literature_db, user),
+        export_systematic_review_csv(project.project_id, db, literature_db, user),
+    ):
+        row = next(
+            row for row in csv.DictReader(io.StringIO(export.body.decode("utf-8")))
+            if row.get("record_type", "paper") == "paper"
+        )
+        assert row["population"].startswith("'=")
+        assert row["methods"] == "Cohort study"
+        assert row["sample_size"] == "120"
+        assert row["outcomes"] == "'+CMD()"
+        assert row["limitations"] == "'@external"
+
+
 def test_systematic_review_persists_protocol_and_reports_shared_screening_counts(screening_databases):
     db, _literature_db, user, project, paper = screening_databases
 
@@ -633,10 +769,43 @@ def test_systematic_review_http_routes_round_trip_and_export(screening_databases
         assert listed.json()[0]["screening_status"] == "unread"
         assert listed.json()[0]["screening_decisions"][0]["user_id"] == str(user.user_id)
 
+        extraction_path = f"/api/projects/{project.project_id}/papers/{paper.paper_id}/extraction"
+        extraction = client.put(
+            extraction_path,
+            json={
+                "population": "Older adults",
+                "methods": "Prospective cohort",
+                "sample_size": "N=85",
+                "outcomes": "Readmission at 30 days",
+                "limitations": "Small sample",
+                "expected_updated_at": None,
+            },
+        )
+        assert extraction.status_code == 200
+        assert extraction.json()["sample_size"] == "N=85"
+        assert extraction.json()["updated_by_name"] == user.name
+        updated_extraction = client.put(
+            extraction_path,
+            json={
+                "population": "Older adults",
+                "methods": "Prospective cohort",
+                "sample_size": "N=90",
+                "outcomes": "Readmission at 30 days",
+                "limitations": "Small sample",
+                "expected_updated_at": extraction.json()["updated_at"],
+            },
+        )
+        assert updated_extraction.status_code == 200, updated_extraction.text
+        assert updated_extraction.json()["sample_size"] == "N=90"
+        assert client.get(f"/api/projects/{project.project_id}/papers").json()[0][
+            "study_extraction"
+        ]["limitations"] == "Small sample"
+
         report = client.get(f"{path}/export")
         assert report.status_code == 200
         assert report.headers["content-type"] == "text/csv; charset=utf-8"
         assert "Can the method improve outcomes?" in report.text
+        assert "Older adults" in report.text
 
 
 def test_bulk_screening_requires_at_least_one_paper():

@@ -38,6 +38,7 @@ import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
 import { ProjectHome } from "./ProjectHome";
+import { StudyExtractionTable } from "./StudyExtractionTable";
 import { addRecentProjectSource, parseRecentProjectSources } from "./projectHome";
 import {
   InboxDialog,
@@ -65,6 +66,7 @@ import {
   type LibraryMetadataFilters,
 } from "./libraryMetadata";
 import { literatureSearchRequest } from "./searchHistory";
+import type { StudyExtractionValues } from "./studyExtraction";
 import type {
   AIUsageResponse,
   Annotation,
@@ -78,6 +80,7 @@ import type {
   Message,
   PaperImportResponse,
   Paper,
+  PaperStudyExtraction,
   PaperScreeningDecision,
   ProjectAnnotation,
   Project,
@@ -1875,6 +1878,31 @@ function App() {
     }
   }
 
+  async function savePaperStudyExtraction(
+    paperId: string,
+    values: StudyExtractionValues,
+    expectedUpdatedAt: string | null,
+  ): Promise<PaperStudyExtraction> {
+    if (!project || !canEditProject) {
+      throw new Error("Editor access is required to save study extractions.");
+    }
+    const projectId = project.project_id;
+    const saved = await request<PaperStudyExtraction>(
+      `/api/projects/${projectId}/papers/${paperId}/extraction`,
+      {
+        method: "PUT",
+        body: jsonBody({ ...values, expected_updated_at: expectedUpdatedAt }),
+      },
+    );
+    if (selectedProjectIdRef.current === projectId) {
+      setPapers((current) => current.map((paper) =>
+        paper.paper_id === paperId ? { ...paper, study_extraction: saved } : paper,
+      ));
+      setNotice("Study extraction saved.");
+    }
+    return saved;
+  }
+
   async function openConversation(item: Conversation) {
     if (!project) return;
     setError("");
@@ -3406,6 +3434,12 @@ function App() {
                   </section>
                   <div className="result-group saved-group">
                     <div className="result-label"><span>Saved to this project</span><small>{papers.length} papers</small></div>
+                    <StudyExtractionTable
+                      key={project.project_id}
+                      papers={papers}
+                      canEdit={canEditProject}
+                      onSave={savePaperStudyExtraction}
+                    />
                     <section className="screening-progress" aria-label="Literature screening progress">
                       <div className="screening-progress-heading">
                         <strong>Screening progress</strong>

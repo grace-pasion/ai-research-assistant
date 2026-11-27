@@ -11,6 +11,7 @@ from app.models import (
     Paper,
     PaperAuthor,
     PaperScreeningDecision,
+    PaperStudyExtraction,
     ProjectActivity,
     ProjectInvitation,
     ProjectPaper,
@@ -42,6 +43,7 @@ def bibliography_databases(tmp_path):
         ProjectInvitation,
         ProjectPaper,
         PaperScreeningDecision,
+        PaperStudyExtraction,
         UserActivity,
         ProjectActivity,
     ):

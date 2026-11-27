@@ -770,6 +770,22 @@ class PaperScreeningDecisionResponse(BaseModel):
     updated_at: datetime
 
 
+class PaperStudyExtractionResponse(APIModel):
+    population: str
+    methods: str
+    sample_size: str
+    outcomes: str
+    limitations: str
+    updated_by: uuid.UUID | None
+    updated_by_name: str | None
+    updated_at: datetime
+
+    @field_validator("updated_at")
+    @classmethod
+    def assume_utc_for_naive_timestamp(cls, value: datetime) -> datetime:
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 class PaperResponse(BaseModel):
     paper_id: uuid.UUID
     external_paper_id: str
@@ -790,6 +806,21 @@ class PaperResponse(BaseModel):
     screening_disagreement: bool = False
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
+    study_extraction: PaperStudyExtractionResponse | None = None
+
+
+class PaperStudyExtractionUpdate(BaseModel):
+    population: str = Field(default="", max_length=10_000)
+    methods: str = Field(default="", max_length=10_000)
+    sample_size: str = Field(default="", max_length=2_000)
+    outcomes: str = Field(default="", max_length=10_000)
+    limitations: str = Field(default="", max_length=10_000)
+    expected_updated_at: datetime | None
+
+    @field_validator("population", "methods", "sample_size", "outcomes", "limitations")
+    @classmethod
+    def normalize_extraction_text(cls, value: str) -> str:
+        return value.strip()
 
 
 class PaperScreeningUpdate(BaseModel):

@@ -24,6 +24,7 @@ from app.models import (
     Paper,
     PaperAuthor,
     PaperScreeningDecision,
+    PaperStudyExtraction,
     ProjectCollection,
     ProjectCollectionItem,
     ProjectPaper,
@@ -46,6 +47,8 @@ from app.schemas import (
     PaperScreeningDecisionResponse,
     PaperScreeningDecisionUpdate,
     PaperScreeningUpdate,
+    PaperStudyExtractionResponse,
+    PaperStudyExtractionUpdate,
     LibraryMetadataResponse,
     LibraryMetadataUpdate,
     SystematicReviewResponse,
@@ -94,6 +97,7 @@ def _paper_response(
     screening_disagreement: bool | None = None,
     tags: list[str] | None = None,
     metadata: dict[str, str] | None = None,
+    study_extraction: PaperStudyExtractionResponse | None = None,
 ) -> PaperResponse:
     relationships = literature_db.execute(
         select(Author.author_id, Author.author_name)
@@ -126,6 +130,7 @@ def _paper_response(
         ),
         tags=tags or [],
         metadata=metadata or {},
+        study_extraction=study_extraction,
     )
 
 
@@ -170,6 +175,27 @@ def list_saved_papers(
                 updated_at=decision.updated_at,
             )
         )
+    extraction_rows = db.execute(
+        select(PaperStudyExtraction, User.name)
+        .outerjoin(User, User.user_id == PaperStudyExtraction.updated_by)
+        .where(
+            PaperStudyExtraction.project_id == project_id,
+            PaperStudyExtraction.paper_id.in_(paper_ids),
+        )
+    ).all()
+    extractions_by_paper = {
+        extraction.paper_id: PaperStudyExtractionResponse(
+            population=extraction.population,
+            methods=extraction.methods,
+            sample_size=extraction.sample_size,
+            outcomes=extraction.outcomes,
+            limitations=extraction.limitations,
+            updated_by=extraction.updated_by,
+            updated_by_name=user_name,
+            updated_at=extraction.updated_at,
+        )
+        for extraction, user_name in extraction_rows
+    }
     return [
         _paper_response(
             papers_by_id[paper_id],
@@ -181,6 +207,7 @@ def list_saved_papers(
             screening_decisions=decisions_by_paper.get(paper_id, []),
             tags=screening[paper_id].tags,
             metadata=screening[paper_id].custom_metadata,
+            study_extraction=extractions_by_paper.get(paper_id),
         )
         for paper_id in paper_ids
         if paper_id in papers_by_id
@@ -392,6 +419,19 @@ def _safe_csv_cell(value: str | None) -> str:
     return value
 
 
+def _safe_study_extraction_cells(paper: PaperResponse) -> list[str]:
+    extraction = paper.study_extraction
+    if extraction is None:
+        return ["", "", "", "", ""]
+    return [
+        _safe_csv_cell(extraction.population),
+        _safe_csv_cell(extraction.methods),
+        _safe_csv_cell(extraction.sample_size),
+        _safe_csv_cell(extraction.outcomes),
+        _safe_csv_cell(extraction.limitations),
+    ]
+
+
 @router.get("/review/export")
 def export_systematic_review_csv(
     project_id: uuid.UUID,
@@ -429,6 +469,11 @@ def export_systematic_review_csv(
             "reviewer_disagreement",
             "reviewer_decisions",
             "abstract",
+            "population",
+            "methods",
+            "sample_size",
+            "outcomes",
+            "limitations",
         ]
     )
     writer.writerow(
@@ -442,6 +487,11 @@ def export_systematic_review_csv(
             counts.undecided,
             counts.include,
             counts.exclude,
+            "",
+            "",
+            "",
+            "",
+            "",
             "",
             "",
             "",
@@ -493,6 +543,7 @@ def export_systematic_review_csv(
                     )
                 ),
                 _safe_csv_cell(paper.abstract),
+                *_safe_study_extraction_cells(paper),
             ]
         )
     return Response(
@@ -529,6 +580,11 @@ def export_screening_csv(
             "reviewer_disagreement",
             "reviewer_decisions",
             "abstract",
+            "population",
+            "methods",
+            "sample_size",
+            "outcomes",
+            "limitations",
         ]
     )
     for paper in papers:
@@ -556,6 +612,7 @@ def export_screening_csv(
                     )
                 ),
                 _safe_csv_cell(paper.abstract),
+                *_safe_study_extraction_cells(paper),
             ]
         )
     return Response(
@@ -1086,6 +1143,92 @@ def update_paper_screening(
         screening_status=relation.screening_status,
         screening_note=relation.screening_note,
         exclusion_reason=relation.screening_exclusion_reason,
+    )
+
+
+@router.put("/{paper_id}/extraction", response_model=PaperStudyExtractionResponse)
+def update_paper_study_extraction(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    payload: PaperStudyExtractionUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    if db.get(ProjectPaper, (project_id, paper_id)) is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+
+    extraction = db.get(PaperStudyExtraction, (project_id, paper_id))
+    expected = payload.expected_updated_at
+    current = extraction.updated_at if extraction is not None else None
+    if expected is not None and expected.tzinfo is None:
+        expected = expected.replace(tzinfo=timezone.utc)
+    if current is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if expected != current:
+        raise HTTPException(
+            status_code=409,
+            detail="This study extraction changed in another session. Reload the latest values before saving.",
+        )
+
+    values = {
+        "population": payload.population,
+        "methods": payload.methods,
+        "sample_size": payload.sample_size,
+        "outcomes": payload.outcomes,
+        "limitations": payload.limitations,
+        "updated_by": user.user_id,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if extraction is None:
+        extraction = PaperStudyExtraction(
+            project_id=project_id,
+            paper_id=paper_id,
+            **values,
+        )
+        db.add(extraction)
+    else:
+        result = db.execute(
+            update(PaperStudyExtraction)
+            .where(
+                PaperStudyExtraction.project_id == project_id,
+                PaperStudyExtraction.paper_id == paper_id,
+                PaperStudyExtraction.updated_at == extraction.updated_at,
+            )
+            .values(**values)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This study extraction could not be updated. Reload the latest values before saving.",
+            )
+
+    record_activity(
+        db,
+        user.user_id,
+        "paper.study_extraction.updated",
+        {"paper_id": str(paper_id)},
+        project_id=project_id,
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This study extraction changed in another session. Reload the latest values before saving.",
+        ) from None
+    db.refresh(extraction)
+    return PaperStudyExtractionResponse(
+        population=extraction.population,
+        methods=extraction.methods,
+        sample_size=extraction.sample_size,
+        outcomes=extraction.outcomes,
+        limitations=extraction.limitations,
+        updated_by=extraction.updated_by,
+        updated_by_name=user.name,
+        updated_at=extraction.updated_at,
     )
 
 

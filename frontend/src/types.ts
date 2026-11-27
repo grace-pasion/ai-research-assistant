@@ -167,6 +167,18 @@ export type Paper = {
   screening_disagreement: boolean;
   tags: string[];
   metadata: Record<string, string>;
+  study_extraction?: PaperStudyExtraction | null;
+};
+
+export type PaperStudyExtraction = {
+  population: string;
+  methods: string;
+  sample_size: string;
+  outcomes: string;
+  limitations: string;
+  updated_by: string | null;
+  updated_by_name: string | null;
+  updated_at: string;
 };
 
 export type ProjectCollectionItem = {
