@@ -20,6 +20,7 @@ import {
   MessageSquareText,
   Plus,
   Pencil,
+  Pin,
   Search,
   Send,
   Settings,
@@ -42,6 +43,13 @@ import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
 import { ProjectHome } from "./ProjectHome.tsx";
+import {
+  EMPTY_QUICK_ACCESS,
+  mergeQuickAccessSources,
+  parseQuickAccessState,
+  rememberQuickAccessSource,
+  toggleQuickAccessPin,
+} from "./quickAccess";
 import { WorkStatusPanel } from "./WorkStatusPanel";
 import {
   buildWorkStatusItems,
@@ -104,6 +112,8 @@ import type {
   ProjectCollaborator,
   ProjectTask,
   RecentProjectSource,
+  QuickAccessSource,
+  QuickAccessState,
   ResearchPacketAssistantOutputOption,
   ScreeningExclusionReason,
   SavedPaperSearch,
@@ -199,6 +209,14 @@ function App() {
     projectId: string;
     message: string;
   }>({ userId: "", projectId: "", message: "" });
+  const [quickAccess, setQuickAccess] = useState<{
+    userId: string;
+    state: QuickAccessState;
+  }>({ userId: "", state: EMPTY_QUICK_ACCESS });
+  const [quickAccessError, setQuickAccessError] = useState<{
+    userId: string;
+    message: string;
+  }>({ userId: "", message: "" });
   const [taskSourceSelection, setTaskSourceSelection] = useState("");
   const [taskAnnotationSelection, setTaskAnnotationSelection] = useState("");
   const [taskAssigneeSelection, setTaskAssigneeSelection] = useState("");
@@ -324,6 +342,30 @@ function App() {
   );
 
   useEffect(() => {
+    if (!user) {
+      setQuickAccess({ userId: "", state: EMPTY_QUICK_ACCESS });
+      setQuickAccessError({ userId: "", message: "" });
+      return;
+    }
+    const userId = user.user_id;
+    try {
+      setQuickAccess({
+        userId,
+        state: parseQuickAccessState(
+          window.localStorage.getItem(`fieldnotes:quick-access:${userId}`),
+        ),
+      });
+      setQuickAccessError({ userId, message: "" });
+    } catch {
+      setQuickAccess({ userId, state: EMPTY_QUICK_ACCESS });
+      setQuickAccessError({
+        userId,
+        message: "Could not load quick access items from this browser.",
+      });
+    }
+  }, [user?.user_id]);
+
+  useEffect(() => {
     if (!user || !project) {
       setRecentSources({ userId: "", projectId: "", sources: [] });
       setRecentSourcesError({ userId: "", projectId: "", message: "" });
@@ -334,11 +376,31 @@ function App() {
     setRecentSourcesError({ userId, projectId, message: "" });
     try {
       const key = `fieldnotes:recent-sources:${userId}:${projectId}`;
-      setRecentSources({
-        userId,
-        projectId,
-        sources: parseRecentProjectSources(window.localStorage.getItem(key)),
-      });
+      const sources = parseRecentProjectSources(window.localStorage.getItem(key));
+      setRecentSources({ userId, projectId, sources });
+      setRecentSourcesError({ userId, projectId, message: "" });
+      try {
+        const quickAccessKey = `fieldnotes:quick-access:${userId}`;
+        const currentQuickAccess = parseQuickAccessState(
+          window.localStorage.getItem(quickAccessKey),
+        );
+        const merged = mergeQuickAccessSources(
+          currentQuickAccess,
+          sources.map((source) => ({
+            ...source,
+            project_id: projectId,
+            project_name: project.project_name,
+          })),
+        );
+        window.localStorage.setItem(quickAccessKey, JSON.stringify(merged));
+        setQuickAccess({ userId, state: merged });
+        setQuickAccessError({ userId, message: "" });
+      } catch {
+        setQuickAccessError({
+          userId,
+          message: "Could not update quick access items in this browser.",
+        });
+      }
     } catch {
       setRecentSources({ userId, projectId, sources: [] });
       setRecentSourcesError({
@@ -356,6 +418,7 @@ function App() {
     sourceTitle: string,
   ) {
     if (!user || !projectId) return;
+    const openedAt = new Date().toISOString();
     try {
       const key = `fieldnotes:recent-sources:${user.user_id}:${projectId}`;
       const current = parseRecentProjectSources(window.localStorage.getItem(key));
@@ -363,12 +426,12 @@ function App() {
         source_type: sourceType,
         source_id: sourceId,
         source_title: sourceTitle,
-        opened_at: new Date().toISOString(),
+        opened_at: openedAt,
       });
       window.localStorage.setItem(key, JSON.stringify(updated));
+      setRecentSourcesError({ userId: user.user_id, projectId, message: "" });
       if (projectId === project?.project_id) {
         setRecentSources({ userId: user.user_id, projectId, sources: updated });
-        setRecentSourcesError({ userId: user.user_id, projectId, message: "" });
       }
     } catch {
       if (projectId === project?.project_id) {
@@ -379,8 +442,50 @@ function App() {
         });
       }
     }
+
+    try {
+      const quickAccessKey = `fieldnotes:quick-access:${user.user_id}`;
+      const currentQuickAccess = parseQuickAccessState(
+        window.localStorage.getItem(quickAccessKey),
+      );
+      const projectName = projects.find((item) => item.project_id === projectId)?.project_name
+        ?? (project?.project_id === projectId ? project.project_name : "Project");
+      const quickSource: QuickAccessSource = {
+        project_id: projectId,
+        project_name: projectName,
+        source_type: sourceType,
+        source_id: sourceId,
+        source_title: sourceTitle,
+        opened_at: openedAt,
+      };
+      const updatedQuickAccess = rememberQuickAccessSource(currentQuickAccess, quickSource);
+      window.localStorage.setItem(quickAccessKey, JSON.stringify(updatedQuickAccess));
+      setQuickAccess({ userId: user.user_id, state: updatedQuickAccess });
+      setQuickAccessError({ userId: user.user_id, message: "" });
+    } catch {
+      setQuickAccessError({
+        userId: user.user_id,
+        message: "Could not save quick access items in this browser.",
+      });
+    }
   }
 
+  function toggleQuickAccessSourcePin(source: QuickAccessSource) {
+    if (!user) return;
+    try {
+      const key = `fieldnotes:quick-access:${user.user_id}`;
+      const current = parseQuickAccessState(window.localStorage.getItem(key));
+      const updated = toggleQuickAccessPin(current, source);
+      window.localStorage.setItem(key, JSON.stringify(updated));
+      setQuickAccess({ userId: user.user_id, state: updated });
+      setQuickAccessError({ userId: user.user_id, message: "" });
+    } catch {
+      setQuickAccessError({
+        userId: user.user_id,
+        message: "Could not update pinned items in this browser.",
+      });
+    }
+  }
   const refreshTeamWorkspaces = useCallback(async (selectWorkspaceId?: string) => {
     const loaded = await request<TeamWorkspace[]>("/api/team-workspaces");
     setTeamWorkspaces(loaded);
@@ -866,6 +971,77 @@ function App() {
     setScreeningQuery(sourceTitle);
     setScreeningFilter("all");
     setAnnotationPaperId(sourceId);
+    setView("papers");
+  }
+
+  async function openQuickAccessSource(source: QuickAccessSource) {
+    const target = projects.find((item) => item.project_id === source.project_id);
+    if (!target) {
+      setError("This source's project is no longer available.");
+      return;
+    }
+    if (target.project_id === project?.project_id) {
+      openProjectSource(source.source_type, source.source_id, source.source_title);
+      setMobileNavigationOpen(false);
+      return;
+    }
+
+    const currentProjectId = project?.project_id ?? null;
+    try {
+      if (source.source_type === "document") {
+        const targetDocuments = await request<DocumentRecord[]>(
+          `/api/projects/${target.project_id}/documents`,
+        );
+        if (selectedProjectIdRef.current !== currentProjectId) return;
+        if (!targetDocuments.some((document) => document.document_id === source.source_id)) {
+          setError(`This document is no longer available in ${target.project_name}.`);
+          return;
+        }
+      } else {
+        const targetPapers = await request<Paper[]>(
+          `/api/projects/${target.project_id}/papers`,
+        );
+        if (selectedProjectIdRef.current !== currentProjectId) return;
+        if (!targetPapers.some((paper) => paper.paper_id === source.source_id)) {
+          setError(`This paper is no longer saved in ${target.project_name}.`);
+          return;
+        }
+      }
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== currentProjectId) return;
+      setError(cause instanceof Error ? cause.message : "Could not verify this quick access source.");
+      return;
+    }
+
+    setProject(target);
+    setSelectedTeamWorkspaceId(target.team_workspace_id);
+    setConversation(null);
+    setDraft(null);
+    setNotice("");
+    setError("");
+    setMobileNavigationOpen(false);
+    if (source.source_type === "document") {
+      setAnnotationPaperId(null);
+      openDocumentEvidence(
+        source.source_id,
+        null,
+        null,
+        target.project_id,
+        source.source_title,
+      );
+      return;
+    }
+    rememberRecentProjectSource(
+      target.project_id,
+      "paper",
+      source.source_id,
+      source.source_title,
+    );
+    setScreeningQuery(source.source_title);
+    setScreeningFilter("all");
+    setPaperMetadataFilters({ tag: "", metadataKey: "", metadataValue: "" });
+    setAnnotationPaperId(source.source_id);
+    setAnnotationDocumentId(null);
     setView("papers");
   }
 
@@ -2381,6 +2557,25 @@ function App() {
     () => projectsInWorkspace(projects, selectedTeamWorkspaceId, teamWorkspaces),
     [projects, selectedTeamWorkspaceId, teamWorkspaces],
   );
+  const quickAccessState = quickAccess.userId === user?.user_id
+    ? quickAccess.state
+    : EMPTY_QUICK_ACCESS;
+  const accessibleProjectIds = new Set(projects.map((item) => item.project_id));
+  const pinnedQuickAccessSources = quickAccessState.pinned.filter(
+    (source) => accessibleProjectIds.has(source.project_id),
+  );
+  const pinnedQuickAccessKeys = new Set(pinnedQuickAccessSources.map(
+    (source) => `${source.project_id}:${source.source_type}:${source.source_id}`,
+  ));
+  const recentQuickAccessSources = quickAccessState.recent.filter(
+    (source) => accessibleProjectIds.has(source.project_id)
+      && !pinnedQuickAccessKeys.has(
+        `${source.project_id}:${source.source_type}:${source.source_id}`,
+      ),
+  );
+  const quickAccessErrorText = quickAccessError.userId === user?.user_id
+    ? quickAccessError.message
+    : "";
   const channelWorkspaceId = selectedTeamWorkspaceId ?? project?.team_workspace_id ?? null;
   const channelWorkspace = teamWorkspaces.find(
     (item) => item.team_workspace_id === channelWorkspaceId,
@@ -2566,6 +2761,44 @@ function App() {
           ))}
           {!visibleProjects.length && <p className="sidebar-empty">No projects here yet.</p>}
         </nav>
+        <section className="sidebar-quick-access" aria-label="Quick access">
+          <div className="sidebar-project-heading">
+            <span className="sidebar-label">QUICK ACCESS</span>
+          </div>
+          {quickAccessErrorText && (
+            <p className="sidebar-quick-access-error" role="alert">{quickAccessErrorText}</p>
+          )}
+          {pinnedQuickAccessSources.length > 0 && (
+            <>
+              <p className="quick-access-group-label">PINNED</p>
+              <QuickAccessSourceList
+                label="Pinned sources"
+                sources={pinnedQuickAccessSources}
+                pinned
+                projects={projects}
+                onOpen={openQuickAccessSource}
+                onTogglePin={toggleQuickAccessSourcePin}
+              />
+            </>
+          )}
+          {recentQuickAccessSources.length > 0 && (
+            <>
+              <p className="quick-access-group-label">RECENT</p>
+              <QuickAccessSourceList
+                label="Recently viewed sources"
+                sources={recentQuickAccessSources}
+                pinned={false}
+                projects={projects}
+                onOpen={openQuickAccessSource}
+                onTogglePin={toggleQuickAccessSourcePin}
+              />
+            </>
+          )}
+          {!quickAccessErrorText
+            && pinnedQuickAccessSources.length === 0
+            && recentQuickAccessSources.length === 0
+            && <p className="sidebar-empty quick-access-empty">Viewed sources appear here.</p>}
+        </section>
         <div className="sidebar-spacer" />
         <div className="account-card">
           <button
@@ -4587,6 +4820,64 @@ function App() {
         </footer>
       </main>
     </div>
+  );
+}
+
+type QuickAccessSourceListProps = {
+  label: string;
+  sources: QuickAccessSource[];
+  pinned: boolean;
+  projects: Project[];
+  onOpen: (source: QuickAccessSource) => void;
+  onTogglePin: (source: QuickAccessSource) => void;
+};
+
+function QuickAccessSourceList({
+  label,
+  sources,
+  pinned,
+  projects,
+  onOpen,
+  onTogglePin,
+}: QuickAccessSourceListProps) {
+  return (
+    <nav className="quick-access-list" aria-label={label}>
+      <ul>
+        {sources.map((source) => {
+          const projectName = projects.find(
+            (item) => item.project_id === source.project_id,
+          )?.project_name ?? source.project_name;
+          return (
+            <li key={`${source.project_id}:${source.source_type}:${source.source_id}`}>
+              <button
+                type="button"
+                className="quick-access-open"
+                title={`Open ${source.source_title} in ${projectName}`}
+                onClick={() => onOpen(source)}
+              >
+                {source.source_type === "document"
+                  ? <FileText size={14} />
+                  : <Library size={14} />}
+                <span>
+                  <strong>{source.source_title}</strong>
+                  <small>{projectName}</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={`quick-access-pin ${pinned ? "is-pinned" : ""}`}
+                aria-label={`${pinned ? "Unpin" : "Pin"} ${source.source_title}`}
+                aria-pressed={pinned}
+                title={`${pinned ? "Unpin" : "Pin"} this source`}
+                onClick={() => onTogglePin(source)}
+              >
+                <Pin size={13} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 

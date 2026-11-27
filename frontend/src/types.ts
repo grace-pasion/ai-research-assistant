@@ -410,6 +410,16 @@ export type RecentProjectSource = {
   opened_at: string;
 };
 
+export type QuickAccessSource = RecentProjectSource & {
+  project_id: string;
+  project_name: string;
+};
+
+export type QuickAccessState = {
+  recent: QuickAccessSource[];
+  pinned: QuickAccessSource[];
+};
+
 export type DirectMessage = {
   message_id: string;
   sender_id: string;

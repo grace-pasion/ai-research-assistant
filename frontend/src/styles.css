@@ -49,6 +49,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .new-project-button:hover { background: #e8ede8; }
 .push-right { margin-left: auto; }
 .project-list { display: grid; gap: 3px; margin-top: 15px; }
+.sidebar-quick-access { margin-top: 11px; }
+.sidebar-quick-access .sidebar-project-heading { margin-top: 10px; }
+.quick-access-group-label { color: #a0a8a2; font-size: 8px; font-weight: 700; letter-spacing: 1.1px; margin: 9px 9px 3px; }
+.quick-access-list { max-height: 180px; overflow-y: auto; }
+.quick-access-list ul { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.quick-access-list li { align-items: center; display: flex; gap: 2px; min-width: 0; }
+.quick-access-open { align-items: center; background: transparent; border: 0; border-radius: 6px; color: #78827b; display: flex; flex: 1; gap: 7px; min-width: 0; padding: 6px 6px 6px 9px; text-align: left; }
+.quick-access-open:hover { background: #f2f4f1; color: #345b44; }
+.quick-access-open > svg { flex: 0 0 auto; }
+.quick-access-open > span { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.quick-access-open strong, .quick-access-open small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-access-open strong { color: #53605a; font-size: 10px; font-weight: 600; }
+.quick-access-open small { color: #929b95; font-size: 8px; }
+.quick-access-pin { align-items: center; background: transparent; border: 0; border-radius: 5px; color: #a4ada6; display: inline-flex; flex: 0 0 25px; height: 26px; justify-content: center; padding: 0; }
+.quick-access-pin:hover, .quick-access-pin.is-pinned { background: #eaf3ed; color: #397153; }
+.quick-access-empty, .sidebar-quick-access-error { font-size: 9px; margin: 7px 9px; }
+.sidebar-quick-access-error { color: #a24f49; line-height: 1.5; }
 .sidebar-team-heading, .sidebar-project-heading { align-items: center; display: flex; justify-content: space-between; margin: 17px 0 3px; }
 .sidebar-team-heading .sidebar-label { margin-bottom: 0; }
 .sidebar-project-heading { margin: 16px 9px 4px; }
