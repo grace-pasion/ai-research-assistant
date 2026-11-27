@@ -807,6 +807,9 @@ h1, h2, h3, p { margin-top: 0; }
 .modal-heading h2 { color: #2d3932; font: 700 20px var(--serif); margin: 0 0 4px; }
 .project-export-modal { display: flex; flex-direction: column; gap: 15px; max-width: 520px; }
 .project-export-modal > .muted { font-size: 11px; line-height: 1.65; margin: 0; }
+.notes-heading-actions { flex-wrap: wrap; }
+.quick-note-modal { display: flex; flex-direction: column; gap: 14px; max-width: 520px; }
+.quick-note-modal > .muted { font-size: 11px; line-height: 1.65; margin: 0; }
 .research-packet-modal { display: flex; flex-direction: column; gap: 13px; max-height: 90vh; max-width: 760px; overflow: auto; }
 .research-packet-modal > .muted { font-size: 11px; line-height: 1.65; margin: 0; }
 .research-packet-sections { display: grid; gap: 10px; max-height: 58vh; overflow: auto; }

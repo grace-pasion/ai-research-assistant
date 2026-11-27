@@ -34,10 +34,14 @@ import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, 
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
 import { findCitationRange } from "./citationEvidence";
+import {
+  resolveGlobalShortcut,
+  type ProjectSectionView,
+} from "./globalShortcuts";
 import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
-import { ProjectHome } from "./ProjectHome";
+import { ProjectHome } from "./ProjectHome.tsx";
 import { StudyExtractionTable } from "./StudyExtractionTable";
 import { addRecentProjectSource, parseRecentProjectSources } from "./projectHome";
 import {
@@ -106,7 +110,7 @@ import type {
   User,
 } from "./types";
 
-type View = "home" | "documents" | "papers" | "notes" | "collections" | "latex" | "assistant" | "search";
+type View = ProjectSectionView | "search";
 type LoginResponse = { access_token: string; user: User };
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
@@ -167,6 +171,11 @@ function App() {
   const [citationPage, setCitationPage] = useState<number | null>(null);
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
   const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
+  const [showQuickNote, setShowQuickNote] = useState(false);
+  const [quickNoteSourceSelection, setQuickNoteSourceSelection] = useState("");
+  const [quickNoteText, setQuickNoteText] = useState("");
+  const [quickNoteBusy, setQuickNoteBusy] = useState(false);
+  const [quickNoteError, setQuickNoteError] = useState("");
   const [projectAnnotations, setProjectAnnotations] = useState<ProjectAnnotation[]>([]);
   const [projectCollaborators, setProjectCollaborators] = useState<ProjectCollaborator[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
@@ -273,6 +282,8 @@ function App() {
   const [askMode, setAskMode] = useState<"question" | "compare" | "directions">("question");
   const selectedProjectIdRef = useRef<string | null>(null);
   const sourceSummaryRequestIdRef = useRef(0);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const quickNoteTextRef = useRef<HTMLTextAreaElement | null>(null);
   const [sourceSummary, setSourceSummary] = useState<{
     title: string;
     summary: string | null;
@@ -468,6 +479,11 @@ function App() {
     setResearchPacketLoading(false);
     setResearchPacketBusy(false);
     setResearchPacketError("");
+    setShowQuickNote(false);
+    setQuickNoteSourceSelection("");
+    setQuickNoteText("");
+    setQuickNoteBusy(false);
+    setQuickNoteError("");
     setResearchPacketPapers([]);
     setResearchPacketNotes([]);
     setResearchPacketOutputs([]);
@@ -729,6 +745,63 @@ function App() {
     ? documents.find((document) => document.document_id === annotationDocumentId) ?? null
     : null;
 
+  useEffect(() => {
+    if (!token || !user) return;
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editingText = target instanceof HTMLElement
+        && (target.isContentEditable || target.matches("input, textarea, select, [role='textbox']"));
+      const dialogOpen = Boolean(document.querySelector('[role="dialog"], [aria-modal="true"]'));
+      const action = resolveGlobalShortcut(event, editingText || dialogOpen);
+      if (!action) return;
+
+      event.preventDefault();
+      if (action.type === "search") {
+        setView("search");
+        setMobileNavigationOpen(false);
+        return;
+      }
+      if (action.type === "section") {
+        if (!project) return;
+        setView(action.view);
+        setMobileNavigationOpen(false);
+        return;
+      }
+      if (!project) {
+        setError("Select a project before creating a note or uploading documents.");
+        return;
+      }
+      if (action.type === "new-note") {
+        if (!canCommentOnProject) {
+          setError("Comment access is required to create a note.");
+          return;
+        }
+        openQuickNote();
+        return;
+      }
+      if (!canEditProject) {
+        setError("Editor access is required to upload documents.");
+        return;
+      }
+      if (uploadingFiles) {
+        setError("Wait for the current upload to finish before starting another.");
+        return;
+      }
+      setView("documents");
+      uploadInputRef.current?.click();
+    };
+    window.addEventListener("keydown", handleGlobalShortcut);
+    return () => window.removeEventListener("keydown", handleGlobalShortcut);
+  }, [
+    canCommentOnProject,
+    canEditProject,
+    project,
+    projectTaskSources,
+    token,
+    uploadingFiles,
+    user,
+  ]);
+
   function openDocumentEvidence(
     documentId: string,
     pageNumber: number | null = null,
@@ -814,6 +887,78 @@ function App() {
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setView("notes");
     setShowInbox(false);
+  }
+
+  function openQuickNote() {
+    if (!project || !canCommentOnProject) return;
+    const firstSource = projectTaskSources[0];
+    if (!firstSource) {
+      setView("notes");
+      setError("Add a project document or save a paper before creating a note.");
+      return;
+    }
+    setQuickNoteSourceSelection(`${firstSource.source_type}.${firstSource.source_id}`);
+    setQuickNoteText("");
+    setQuickNoteError("");
+    setError("");
+    setNotice("");
+    setView("notes");
+    setMobileNavigationOpen(false);
+    setShowQuickNote(true);
+    window.setTimeout(() => quickNoteTextRef.current?.focus(), 0);
+  }
+
+  async function createQuickNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project || !canCommentOnProject || quickNoteBusy) return;
+    const selectedSource = projectTaskSources.find(
+      (source) => `${source.source_type}.${source.source_id}` === quickNoteSourceSelection,
+    );
+    if (!selectedSource) {
+      setQuickNoteError("Choose a project paper or document for this note.");
+      return;
+    }
+    const note = quickNoteText.trim();
+    if (!note) {
+      setQuickNoteError("Write a note before saving.");
+      return;
+    }
+
+    const projectId = project.project_id;
+    setQuickNoteBusy(true);
+    setQuickNoteError("");
+    try {
+      const sourceCollection = selectedSource.source_type === "document" ? "documents" : "papers";
+      await request<Annotation>(
+        `/api/projects/${projectId}/${sourceCollection}/${selectedSource.source_id}/annotations`,
+        { method: "POST", body: jsonBody({ note }) },
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setShowQuickNote(false);
+      setQuickNoteText("");
+      setNotice("Note saved.");
+      try {
+        const refreshedAnnotations = await request<ProjectAnnotation[]>(
+          `/api/projects/${projectId}/annotations`,
+        );
+        if (selectedProjectIdRef.current === projectId) {
+          setProjectAnnotations(refreshedAnnotations);
+        }
+      } catch (cause) {
+        if (selectedProjectIdRef.current === projectId) {
+          setError(
+            cause instanceof Error
+              ? `Note was saved, but project notes could not refresh: ${cause.message}`
+              : "Note was saved, but project notes could not refresh.",
+          );
+        }
+      }
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== projectId) return;
+      setQuickNoteError(cause instanceof Error ? cause.message : "Could not save this note.");
+    } finally {
+      if (selectedProjectIdRef.current === projectId) setQuickNoteBusy(false);
+    }
   }
 
   async function updateProjectAnnotation(
@@ -2277,6 +2422,23 @@ function App() {
 
   return (
     <div className="app-shell">
+      {project && canEditProject && (
+        <input
+          ref={uploadInputRef}
+          hidden
+          name="files"
+          type="file"
+          accept=".pdf,.docx,.txt,.md"
+          multiple
+          disabled={uploadingFiles}
+          aria-label="Upload project documents"
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            if (files.length) void uploadDocuments(files);
+            event.currentTarget.value = "";
+          }}
+        />
+      )}
       <aside id="app-navigation" className={`sidebar ${mobileNavigationOpen ? "mobile-open" : ""}`}>
         <a className="brand" href="#" aria-label="Fieldnotes home">
           <span className="brand-mark"><BookOpen size={19} /></span>
@@ -2339,6 +2501,8 @@ function App() {
           className={`project-link global-search-link${view === "search" ? " selected" : ""}`}
           type="button"
           aria-current={view === "search" ? "page" : undefined}
+          aria-keyshortcuts="Control+K Meta+K"
+          title="Search all projects (Ctrl/Cmd+K)"
           onClick={() => {
             setView("search");
             setMobileNavigationOpen(false);
@@ -2915,6 +3079,100 @@ function App() {
               onClose={() => setShowAccountSettings(false)}
             />
           )}
+          {showQuickNote && project && (
+            <div
+              className="modal-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget && !quickNoteBusy) {
+                  setShowQuickNote(false);
+                }
+              }}
+            >
+              <form
+                className="modal-card stack-form quick-note-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="quick-note-title"
+                aria-busy={quickNoteBusy}
+                onSubmit={(event) => void createQuickNote(event)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && !quickNoteBusy) {
+                    event.stopPropagation();
+                    setShowQuickNote(false);
+                  }
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">PROJECT NOTES</p>
+                    <h2 id="quick-note-title">New note</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Close new note"
+                    disabled={quickNoteBusy}
+                    onClick={() => setShowQuickNote(false)}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="muted">
+                  Choose a saved paper or project document to attach this note to.
+                </p>
+                {quickNoteError && <p className="inline-error" role="alert">{quickNoteError}</p>}
+                <label>
+                  Source
+                  <select
+                    value={quickNoteSourceSelection}
+                    onChange={(event) => setQuickNoteSourceSelection(event.target.value)}
+                    disabled={quickNoteBusy}
+                    required
+                  >
+                    <option value="" disabled>Choose a project source…</option>
+                    {projectTaskSources.map((source) => (
+                      <option
+                        key={`${source.source_type}.${source.source_id}`}
+                        value={`${source.source_type}.${source.source_id}`}
+                      >
+                        {source.source_type === "document" ? "Document" : "Paper"}: {source.source_title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Note
+                  <textarea
+                    ref={quickNoteTextRef}
+                    value={quickNoteText}
+                    onChange={(event) => setQuickNoteText(event.target.value)}
+                    maxLength={5000}
+                    rows={5}
+                    required
+                    disabled={quickNoteBusy}
+                    placeholder="Write a note for your synthesis…"
+                  />
+                </label>
+                <div className="project-export-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={quickNoteBusy}
+                    onClick={() => setShowQuickNote(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="button primary"
+                    disabled={quickNoteBusy || !projectTaskSources.length || !quickNoteText.trim()}
+                  >
+                    {quickNoteBusy ? "Saving…" : "Save note"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
           {showEditProject && project && (
             <div className="modal-backdrop" onMouseDown={(event) => {
               if (event.target === event.currentTarget) setShowEditProject(false);
@@ -2981,13 +3239,13 @@ function App() {
               </section>
 
               <div className="tab-bar" role="tablist" aria-label="Project sections">
-                <TabButton active={view === "home"} onClick={() => setView("home")} icon={<LayoutDashboard size={16} />}>Home</TabButton>
-                <TabButton active={view === "documents"} onClick={() => setView("documents")} icon={<FileText size={16} />}>Documents</TabButton>
-                <TabButton active={view === "papers"} onClick={() => setView("papers")} icon={<Library size={16} />}>Literature</TabButton>
-                <TabButton active={view === "collections"} onClick={() => setView("collections")} icon={<FolderPlus size={16} />}>Collections</TabButton>
-                <TabButton active={view === "notes"} onClick={() => setView("notes")} icon={<BookOpen size={16} />}>Notes</TabButton>
-                <TabButton active={view === "latex"} onClick={() => setView("latex")} icon={<FileCode2 size={16} />}>Main document</TabButton>
-                <TabButton active={view === "assistant"} onClick={() => setView("assistant")} icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
+                <TabButton active={view === "home"} onClick={() => setView("home")} shortcut="Ctrl/Cmd+Alt+1" ariaKeyShortcuts="Control+Alt+1 Meta+Alt+1" icon={<LayoutDashboard size={16} />}>Home</TabButton>
+                <TabButton active={view === "documents"} onClick={() => setView("documents")} shortcut="Ctrl/Cmd+Alt+2" ariaKeyShortcuts="Control+Alt+2 Meta+Alt+2" icon={<FileText size={16} />}>Documents</TabButton>
+                <TabButton active={view === "papers"} onClick={() => setView("papers")} shortcut="Ctrl/Cmd+Alt+3" ariaKeyShortcuts="Control+Alt+3 Meta+Alt+3" icon={<Library size={16} />}>Literature</TabButton>
+                <TabButton active={view === "collections"} onClick={() => setView("collections")} shortcut="Ctrl/Cmd+Alt+4" ariaKeyShortcuts="Control+Alt+4 Meta+Alt+4" icon={<FolderPlus size={16} />}>Collections</TabButton>
+                <TabButton active={view === "notes"} onClick={() => setView("notes")} shortcut="Ctrl/Cmd+Alt+5" ariaKeyShortcuts="Control+Alt+5 Meta+Alt+5" icon={<BookOpen size={16} />}>Notes</TabButton>
+                <TabButton active={view === "latex"} onClick={() => setView("latex")} shortcut="Ctrl/Cmd+Alt+6" ariaKeyShortcuts="Control+Alt+6 Meta+Alt+6" icon={<FileCode2 size={16} />}>Main document</TabButton>
+                <TabButton active={view === "assistant"} onClick={() => setView("assistant")} shortcut="Ctrl/Cmd+Alt+7" ariaKeyShortcuts="Control+Alt+7 Meta+Alt+7" icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
               </div>
 
               <div className={view === "latex" ? "" : "latex-workspace-hidden"} aria-hidden={view !== "latex"}>
@@ -3069,14 +3327,16 @@ function App() {
                       <div className="section-heading">
                         <div><h2>Research documents</h2><p>Upload up to 20 files at once. Keep this window open until they are accepted; processing can then continue after you close it.</p></div>
                         {canEditProject && <div className="upload-control">
-                          <label className="button primary upload-button">
+                          <button
+                            type="button"
+                            className="button primary upload-button"
+                            aria-keyshortcuts="Control+Alt+U Meta+Alt+U"
+                            title="Upload documents (Ctrl/Cmd+Alt+U)"
+                            disabled={uploadingFiles}
+                            onClick={() => uploadInputRef.current?.click()}
+                          >
                             <Upload size={16} /> {uploadingFiles ? "Uploading…" : "Add documents"}
-                            <input name="files" type="file" accept=".pdf,.docx,.txt,.md" multiple disabled={uploadingFiles} onChange={(event) => {
-                              const files = Array.from(event.currentTarget.files ?? []);
-                              if (files.length) void uploadDocuments(files);
-                              event.currentTarget.value = "";
-                            }} />
-                          </label>
+                          </button>
                         </div>}
                       </div>
                       {bulkUploads.some((item) => item.projectId === project.project_id) && (
@@ -3197,13 +3457,25 @@ function App() {
                       <h2>Project notes and highlights</h2>
                       <p>Tag and pin notes, connect related sources, assign source tasks, and mention collaborators with @username.</p>
                     </div>
-                    <button
-                      className="button primary"
-                      disabled={!selectedProjectAnnotationCount}
-                      onClick={useSelectedAnnotationsInAssistant}
-                    >
-                      <MessageSquareText size={15} /> Use selected in comparison ({selectedProjectAnnotationCount})
-                    </button>
+                    <div className="project-heading-actions notes-heading-actions">
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={!canCommentOnProject || !projectTaskSources.length}
+                        aria-keyshortcuts="Control+Alt+N Meta+Alt+N"
+                        title="New note (Ctrl/Cmd+Alt+N)"
+                        onClick={openQuickNote}
+                      >
+                        <Plus size={15} /> New note
+                      </button>
+                      <button
+                        className="button primary"
+                        disabled={!selectedProjectAnnotationCount}
+                        onClick={useSelectedAnnotationsInAssistant}
+                      >
+                        <MessageSquareText size={15} /> Use selected in comparison ({selectedProjectAnnotationCount})
+                      </button>
+                    </div>
                   </div>
                   <section className="project-task-panel" aria-labelledby="project-task-heading">
                     <div className="project-task-heading">
@@ -4838,9 +5110,30 @@ function Notice({ kind, text, onClose }: { kind: "error" | "success"; text: stri
   );
 }
 
-function TabButton({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: ReactNode; children: ReactNode }) {
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+  shortcut,
+  ariaKeyShortcuts,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  children: ReactNode;
+  shortcut?: string;
+  ariaKeyShortcuts?: string;
+}) {
   return (
-    <button role="tab" aria-selected={active} className={`tab-button ${active ? "active" : ""}`} onClick={onClick}>
+    <button
+      role="tab"
+      aria-selected={active}
+      className={`tab-button ${active ? "active" : ""}`}
+      aria-keyshortcuts={ariaKeyShortcuts}
+      title={shortcut ? `Shortcut: ${shortcut}` : undefined}
+      onClick={onClick}
+    >
       {icon}{children}
     </button>
   );
