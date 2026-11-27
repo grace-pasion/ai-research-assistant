@@ -8,7 +8,7 @@ Fieldnotes is a browser-based research workspace. The browser serves the React a
 
 ### Browser navigation and responsive layout
 
-The persistent desktop sidebar switches between personal/team workspaces, projects, and **Search all projects**; project content is organized in labeled section tabs for Documents, Literature, Notes, Main document, and Ask & explore. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
+The persistent desktop sidebar switches between personal/team workspaces, projects, and **Search all projects**; project content is organized in labeled section tabs for Home, Documents, Literature, Collections, Notes, Main document, and Ask & explore. The Home dashboard combines recent shared project activity, document processing issues, open tasks, and the current user's six most recently opened sources for that project. Recent-source history is stored in browser local storage, scoped by user and project. The top toolbar exposes labeled inbox, workspace, channel, and project actions. At phone widths, the sidebar becomes a dismissible navigation drawer opened from the top bar, with a close control, backdrop dismissal, and Escape-key support. Python file creation and editing are role-gated; read-only collaborators receive an inline explanation of the access needed to change scripts.
 
 The browser API client retries network-level failures for idempotent GET requests with bounded delays to tolerate API wake-up after inactivity. It does not retry writes or HTTP error responses; if a read still cannot reach the API, the client displays a connection error.
 
@@ -16,7 +16,7 @@ The browser API client retries network-level failures for idempotent GET request
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, cross-project search over saved documents and papers, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, and project backup bundles. |
+| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, cross-project search over saved documents and papers, the project Home dashboard, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, and project backup bundles. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -82,11 +82,18 @@ OpenAI request failures are returned as HTTP 502 responses, while a missing API 
 - **Usage control:** assistant prompt counts are keyed by an HMAC hash of the client IP and UTC date; embedding token estimates are keyed by account ID and UTC date. The raw client IP is not stored.
 - **Authentication throttling:** 15-minute counters keyed by HMAC hashes of IP and IP/email pairs. Raw IP addresses and email addresses are not stored in these counters; successful sign-in clears the matching counters.
 - **Activity history:** action type, timestamp, actor account, and a small set of non-content details. Events deliberately exclude document names/text, search terms, assistant questions, and generated answers. User events are removed when that account is hard-deleted.
+- **Project activity:** `project_activities` stores project-scoped action types, timestamps, and nullable actor IDs for the Home dashboard's recent-changes feed. It contains no source text or names and is queried only after project access is checked. Recently opened source IDs, titles, and timestamps are stored separately in browser local storage under a user/project-specific key; they are not sent to or shared through the API.
 - **Original files:** local files in development or private Supabase Storage objects in the hosted setup. PostgreSQL stores the storage path and metadata, not the file bytes.
 
 The API enables PostgreSQL's `vector` extension and creates its tables—including `annotations`, `project_tasks`, `systematic_review_workspaces`, `project_source_summaries`, `project_file_versions`, `python_workspaces`, `python_workspace_artifacts`, team workspace, membership, invitation, channel, and channel-message tables—at startup. Existing research databases receive the nullable project-to-team-workspace link, invitation role, annotation author/tags/pin/related-source fields, Python source-files and output-provenance columns, and document/project-paper tags and custom-metadata columns additively; existing Python code remains available as `main.py`, invitations retain edit access, and legacy comments have no author. The API image installs TeX Live's LaTeX/BibTeX tooling and creates the isolated `latex` runtime account. In local Compose, the initialization script creates `research_db` and `literature_db`. In the hosted Blueprint, one Supabase `DATABASE_URL` is used for both model metadata sets by default; configure `LITERATURE_DATABASE_URL` only if a separate literature database is desired.
 
 ## Main data flows
+
+### Project home
+
+1. When a project is selected, the Home tab requests up to 12 newest project activity records from `GET /api/projects/{project_id}/home/activity`; the endpoint enforces the same project access check as other project resources.
+2. The dashboard loads open tasks from the existing project-tasks endpoint and displays every document whose processing status is not ready, including reported processing errors.
+3. Opening a document or saved paper records that source in browser local storage, deduplicated and capped at six items for the signed-in user and selected project. The dashboard can reopen those sources; this history remains local to the browser.
 
 ### Upload and prepare a document
 
@@ -202,6 +209,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 ### Research projects
 
 - Create a project with a name and optional description.
+- Use the project **Home** dashboard to review recent shared changes, document processing issues, upcoming tasks, and up to six recently opened sources. The recent-source list is scoped to the current user and project in browser storage.
 - Switch between the user's projects; see document and saved-paper counts for the selected project.
 - Search saved papers and documents across all projects the user can access, filtering by project, source type, author, publication year, and exact tag. Results are paged in batches of 50, show project and source metadata, and open the selected source in its project.
 - Create project-shared named collections of saved papers and documents, add or remove sources, rename or delete collections, and open each source in its original library. All collaborators can view collections; project editors and owners manage them.
@@ -296,6 +304,7 @@ Routes require a bearer token except health, registration, and login routes. The
 | `DELETE` | `/api/admin/users/{user_id}` | Permanently delete another user and their associated data/files. |
 | `GET`, `POST` | `/api/projects` | List owned, accepted shared, and team-workspace projects, or create a personal or team-workspace project owned by the authenticated user. |
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
+| `GET` | `/api/projects/{project_id}/home/activity` | List up to 12 newest project activity items for the Home dashboard; requires project read access. |
 | `GET` | `/api/projects/{project_id}/export?include_original_documents=...&include_conversations=...` | Download a ZIP of project data; optional original files and only the requesting user's conversations. |
 | `POST` | `/api/projects/{project_id}/source-summaries` | Generate or reuse a project-shared, content-versioned AI summary for a ready project document or saved paper. |
 | `POST`, `GET` | `/api/projects/{project_id}/invitations` | Owner-only: invite a registered account with a `read`, `comment`, or `edit` role; list invitations and statuses. |

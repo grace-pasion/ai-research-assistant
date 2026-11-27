@@ -11,7 +11,19 @@ from app.database import (
     get_db,
     get_literature_db,
 )
-from app.models import Annotation, Document, Notification, Paper, ProjectInvitation, ProjectPaper, ResearchProject, TeamWorkspace, User
+from app.models import (
+    Annotation,
+    Document,
+    Notification,
+    Paper,
+    ProjectActivity,
+    ProjectInvitation,
+    ProjectPaper,
+    ResearchProject,
+    TeamWorkspace,
+    User,
+    UserActivity,
+)
 from app.routers import annotations, documents
 from app.schemas import AnnotationCreate, AnnotationUpdate
 from app.security import get_current_user
@@ -23,6 +35,8 @@ def annotation_databases(tmp_path):
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
     for model in (
         User,
+        UserActivity,
+        ProjectActivity,
         TeamWorkspace,
         ResearchProject,
         ProjectInvitation,

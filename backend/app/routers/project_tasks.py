@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.schemas import ProjectTaskCreate, ProjectTaskResponse, ProjectTaskUpdate
 from app.security import get_current_user, require_project_access
+from app.services.audit import record_activity
 from app.services.project_collaboration import list_project_collaborators
 
 router = APIRouter(tags=["project tasks"])
@@ -205,6 +206,7 @@ def create_project_task(
     )
     db.add(task)
     db.flush()
+    record_activity(db, user.user_id, "project_task.created", project_id=project_id)
     if payload.assignee_id != user.user_id:
         db.add(
             Notification(
@@ -296,6 +298,7 @@ def update_project_task(
                 },
             )
         )
+    record_activity(db, user.user_id, "project_task.updated", project_id=project_id)
     db.commit()
     db.refresh(task)
     user_ids = {task.created_by}
@@ -330,6 +333,7 @@ def delete_project_task(
         raise HTTPException(status_code=404, detail="Task not found.")
     if task.created_by != user.user_id and project.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Only the task creator or project owner can delete it.")
+    record_activity(db, user.user_id, "project_task.deleted", project_id=project_id)
     db.delete(task)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -16,6 +16,7 @@ from app.models import (
     Paper,
     PaperAuthor,
     PaperScreeningDecision,
+    ProjectActivity,
     ProjectInvitation,
     ProjectPaper,
     ResearchProject,
@@ -59,6 +60,7 @@ def screening_databases(tmp_path):
         PaperScreeningDecision,
         SystematicReviewWorkspace,
         UserActivity,
+        ProjectActivity,
     ):
         model.__table__.create(research_engine)
     for model in (Paper, Author, PaperAuthor):

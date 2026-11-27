@@ -248,6 +248,7 @@ def restore_python_workspace_version(
             user.user_id,
             "python_workspace.version_restored",
             {"filename": version.filename, "version_number": version.version_number},
+            project_id=project_id,
         )
         db.commit()
     except IntegrityError:
@@ -364,7 +365,7 @@ def save_python_workspace(
                     new_by_filename[filename],
                     user.user_id,
                 )
-        record_activity(db, user.user_id, "python_workspace.saved")
+        record_activity(db, user.user_id, "python_workspace.saved", project_id=project_id)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -508,7 +509,13 @@ async def save_python_artifacts(
             artifact.script_filename = script_filename
             artifact.input_filenames = parsed_input_filenames
             artifact.updated_at = datetime.now(timezone.utc)
-    record_activity(db, user.user_id, "python_workspace.outputs_saved", {"count": len(pending)})
+    record_activity(
+        db,
+        user.user_id,
+        "python_workspace.outputs_saved",
+        {"count": len(pending)},
+        project_id=project_id,
+    )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -571,6 +578,12 @@ def delete_python_artifact(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Generated output not found.")
     db.delete(artifact)
-    record_activity(db, user.user_id, "python_workspace.output_deleted", {"filename": filename})
+    record_activity(
+        db,
+        user.user_id,
+        "python_workspace.output_deleted",
+        {"filename": filename},
+        project_id=project_id,
+    )
     db.commit()
     return Response(status_code=204)

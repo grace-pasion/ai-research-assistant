@@ -721,6 +721,13 @@ class ProjectTaskResponse(APIModel):
     updated_at: datetime
 
 
+class ProjectActivityResponse(BaseModel):
+    activity_id: uuid.UUID
+    action: str
+    actor_name: str | None
+    created_at: datetime
+
+
 class PaperAuthorResponse(BaseModel):
     author_id: uuid.UUID
     author_name: str

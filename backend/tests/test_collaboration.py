@@ -18,6 +18,7 @@ from app.models import (
     Document,
     LatexWorkspace,
     Notification,
+    ProjectActivity,
     ProjectFileVersion,
     ProjectInvitation,
     ResearchProject,
@@ -64,6 +65,7 @@ def collaboration_db(tmp_path):
         ProjectFileVersion,
         Notification,
         UserActivity,
+        ProjectActivity,
     ):
         model.__table__.create(engine)
     with Session(engine) as db:

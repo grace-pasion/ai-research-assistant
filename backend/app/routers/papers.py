@@ -235,6 +235,7 @@ async def import_reference_file(
             "added_count": result["added_count"],
             "duplicate_count": result["duplicate_count"],
         },
+        project_id=project_id,
     )
     db.commit()
     return result
@@ -369,7 +370,7 @@ def save_systematic_review(
                 detail="This review protocol changed in another session. Reload the latest version before saving.",
             )
 
-    record_activity(db, user.user_id, "systematic_review.saved")
+    record_activity(db, user.user_id, "systematic_review.saved", project_id=project_id)
     try:
         db.commit()
     except IntegrityError:
@@ -871,7 +872,7 @@ def save_paper(
                 relationship_type="saved",
             )
         )
-        record_activity(db, user.user_id, "paper.saved")
+        record_activity(db, user.user_id, "paper.saved", project_id=project_id)
         try:
             db.commit()
         except IntegrityError:
@@ -900,7 +901,7 @@ def unsave_paper(
             )
         )
         db.delete(relation)
-        record_activity(db, user.user_id, "paper.removed")
+        record_activity(db, user.user_id, "paper.removed", project_id=project_id)
         db.commit()
 
 
@@ -1007,7 +1008,7 @@ def import_open_access_full_text(
             relationship_type="full_text",
         )
     )
-    record_activity(db, user.user_id, "paper.full_text.imported")
+    record_activity(db, user.user_id, "paper.full_text.imported", project_id=project_id)
     try:
         db.commit()
     except Exception:
@@ -1049,6 +1050,7 @@ def update_paper_screening(
         user.user_id,
         "paper.screening.updated",
         {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
+        project_id=project_id,
     )
     db.commit()
     return PaperScreeningResponse(
@@ -1072,7 +1074,7 @@ def update_paper_metadata(
         raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
     relation.tags = payload.tags
     relation.custom_metadata = payload.metadata
-    record_activity(db, user.user_id, "paper.metadata.updated")
+    record_activity(db, user.user_id, "paper.metadata.updated", project_id=project_id)
     db.commit()
     return LibraryMetadataResponse(tags=relation.tags, metadata=relation.custom_metadata)
 
@@ -1112,6 +1114,7 @@ def update_reviewer_screening_decision(
         user.user_id,
         "paper.screening.decision.updated",
         {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
+        project_id=project_id,
     )
     try:
         db.commit()
@@ -1128,6 +1131,7 @@ def update_reviewer_screening_decision(
             user.user_id,
             "paper.screening.decision.updated",
             {"status": payload.screening_status, "exclusion_reason": payload.exclusion_reason},
+            project_id=project_id,
         )
         db.commit()
     db.refresh(decision)
@@ -1174,6 +1178,7 @@ def bulk_update_paper_screening(
             "exclusion_reason": payload.exclusion_reason,
             "count": len(relations),
         },
+        project_id=project_id,
     )
     db.commit()
     return PaperScreeningBulkResponse(updated_count=len(relations))

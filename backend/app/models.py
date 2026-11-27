@@ -60,6 +60,23 @@ class UserActivity(ResearchBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ProjectActivity(ResearchBase):
+    __tablename__ = "project_activities"
+    __table_args__ = (
+        Index("ix_project_activities_project_created", "project_id", "created_at"),
+    )
+
+    activity_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE")
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuthRateLimit(ResearchBase):
     __tablename__ = "auth_rate_limits"
 

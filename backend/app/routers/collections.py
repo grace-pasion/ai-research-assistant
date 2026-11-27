@@ -22,6 +22,7 @@ from app.schemas import (
     ProjectCollectionUpdate,
 )
 from app.security import get_current_user, require_project_access
+from app.services.audit import record_activity
 
 router = APIRouter(tags=["project collections"])
 
@@ -152,6 +153,7 @@ def create_project_collection(
         normalized_name=payload.name.casefold(),
     )
     db.add(collection)
+    record_activity(db, user.user_id, "project_collection.created", project_id=project_id)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -180,6 +182,7 @@ def update_project_collection(
     collection = _get_project_collection(db, project_id, collection_id)
     collection.name = payload.name
     collection.normalized_name = payload.name.casefold()
+    record_activity(db, user.user_id, "project_collection.renamed", project_id=project_id)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -209,6 +212,7 @@ def delete_project_collection(
             ProjectCollectionItem.collection_id == collection_id
         )
     )
+    record_activity(db, user.user_id, "project_collection.deleted", project_id=project_id)
     db.delete(collection)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -271,6 +275,7 @@ def add_project_collection_item(
         )
 
     db.add(item)
+    record_activity(db, user.user_id, "project_collection.source_added", project_id=project_id)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -310,6 +315,7 @@ def remove_project_collection_item(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Collection item not found.")
+    record_activity(db, user.user_id, "project_collection.source_removed", project_id=project_id)
     db.delete(item)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

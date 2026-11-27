@@ -94,7 +94,8 @@ def create_project(
         description=payload.description.strip(),
     )
     db.add(project)
-    record_activity(db, user.user_id, "project.created")
+    db.flush()
+    record_activity(db, user.user_id, "project.created", project_id=project.project_id)
     db.commit()
     db.refresh(project)
     return project
@@ -110,7 +111,7 @@ def update_project(
     project = require_project_owner(db, project_id, user.user_id)
     project.project_name = payload.project_name.strip()
     project.description = payload.description.strip()
-    record_activity(db, user.user_id, "project.updated")
+    record_activity(db, user.user_id, "project.updated", project_id=project_id)
     db.commit()
     db.refresh(project)
     return project

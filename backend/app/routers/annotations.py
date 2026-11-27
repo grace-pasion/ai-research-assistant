@@ -16,6 +16,7 @@ from app.schemas import (
     ProjectAnnotationResponse,
 )
 from app.security import get_current_user, require_project_access
+from app.services.audit import record_activity
 from app.services.project_collaboration import (
     extract_mentioned_usernames,
     list_project_collaborators,
@@ -320,6 +321,7 @@ def create_document_annotation(
         source_title=document.filename,
         actor=user,
     )
+    record_activity(db, user.user_id, "annotation.created", project_id=project_id)
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -379,6 +381,7 @@ def create_paper_annotation(
         source_title=paper.title,
         actor=user,
     )
+    record_activity(db, user.user_id, "annotation.created", project_id=project_id)
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -426,6 +429,7 @@ def update_document_annotation(
             source_title=document.filename,
             actor=user,
         )
+    record_activity(db, user.user_id, "annotation.updated", project_id=project_id)
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -473,6 +477,7 @@ def update_paper_annotation(
             source_title=paper.title,
             actor=user,
         )
+    record_activity(db, user.user_id, "annotation.updated", project_id=project_id)
     db.commit()
     db.refresh(annotation)
     return annotation
@@ -493,6 +498,7 @@ def delete_document_annotation(
     _require_document(db, project_id, document_id)
     annotation = _get_annotation(db, project_id, annotation_id, document_id=document_id)
     _require_annotation_author(db, annotation, user)
+    record_activity(db, user.user_id, "annotation.deleted", project_id=project_id)
     db.delete(annotation)
     db.commit()
 
@@ -513,5 +519,6 @@ def delete_paper_annotation(
     _require_saved_paper(db, literature_db, project_id, paper_id)
     annotation = _get_annotation(db, project_id, annotation_id, paper_id=paper_id)
     _require_annotation_author(db, annotation, user)
+    record_activity(db, user.user_id, "annotation.deleted", project_id=project_id)
     db.delete(annotation)
     db.commit()

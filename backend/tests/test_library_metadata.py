@@ -45,7 +45,7 @@ def test_document_tags_and_metadata_are_saved_and_returned(library_items, monkey
         "require_project_access",
         lambda *args: access_checks.append(args[2:]),
     )
-    monkeypatch.setattr(documents_router, "record_activity", lambda *_args: None)
+    monkeypatch.setattr(documents_router, "record_activity", lambda *_args, **_kwargs: None)
 
     updated = documents_router.update_document_metadata(
         document.document_id,
@@ -73,7 +73,7 @@ def test_paper_tags_and_metadata_are_project_scoped(library_items, monkeypatch):
         "require_project_access",
         lambda *args: access_checks.append(args[2:]),
     )
-    monkeypatch.setattr(papers_router, "record_activity", lambda *_args: None)
+    monkeypatch.setattr(papers_router, "record_activity", lambda *_args, **_kwargs: None)
 
     response = papers_router.update_paper_metadata(
         relation.project_id,
@@ -114,8 +114,8 @@ def test_metadata_patch_routes_return_public_metadata_fields(library_items, monk
     user = type("UserStub", (), {"user_id": uuid.uuid4()})()
     monkeypatch.setattr(documents_router, "require_project_access", lambda *_args: None)
     monkeypatch.setattr(papers_router, "require_project_access", lambda *_args: None)
-    monkeypatch.setattr(documents_router, "record_activity", lambda *_args: None)
-    monkeypatch.setattr(papers_router, "record_activity", lambda *_args: None)
+    monkeypatch.setattr(documents_router, "record_activity", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(papers_router, "record_activity", lambda *_args, **_kwargs: None)
     app = FastAPI()
     app.include_router(documents_router.router)
     app.include_router(papers_router.router)

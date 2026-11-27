@@ -13,6 +13,7 @@ import {
   FileCode2,
   FolderPlus,
   Library,
+  LayoutDashboard,
   LoaderCircle,
   LogOut,
   Menu,
@@ -36,6 +37,8 @@ import { findCitationRange } from "./citationEvidence";
 import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
+import { ProjectHome } from "./ProjectHome";
+import { addRecentProjectSource, parseRecentProjectSources } from "./projectHome";
 import {
   InboxDialog,
   ShareDialog,
@@ -79,6 +82,7 @@ import type {
   Project,
   ProjectCollaborator,
   ProjectTask,
+  RecentProjectSource,
   ScreeningExclusionReason,
   SavedPaperSearch,
   SavedPaperSearchRun,
@@ -90,7 +94,7 @@ import type {
   User,
 } from "./types";
 
-type View = "documents" | "papers" | "notes" | "collections" | "latex" | "assistant" | "search";
+type View = "home" | "documents" | "papers" | "notes" | "collections" | "latex" | "assistant" | "search";
 type LoginResponse = { access_token: string; user: User };
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
@@ -137,7 +141,7 @@ function App() {
   const [teamWorkspaces, setTeamWorkspaces] = useState<TeamWorkspace[]>([]);
   const [selectedTeamWorkspaceId, setSelectedTeamWorkspaceId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
-  const [view, setView] = useState<View>("documents");
+  const [view, setView] = useState<View>("home");
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [aiUsage, setAiUsage] = useState<AIUsageResponse | null>(null);
   const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
@@ -149,6 +153,16 @@ function App() {
   const [projectAnnotations, setProjectAnnotations] = useState<ProjectAnnotation[]>([]);
   const [projectCollaborators, setProjectCollaborators] = useState<ProjectCollaborator[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [recentSources, setRecentSources] = useState<{
+    userId: string;
+    projectId: string;
+    sources: RecentProjectSource[];
+  }>({ userId: "", projectId: "", sources: [] });
+  const [recentSourcesError, setRecentSourcesError] = useState<{
+    userId: string;
+    projectId: string;
+    message: string;
+  }>({ userId: "", projectId: "", message: "" });
   const [taskSourceSelection, setTaskSourceSelection] = useState("");
   const [taskAnnotationSelection, setTaskAnnotationSelection] = useState("");
   const [taskAssigneeSelection, setTaskAssigneeSelection] = useState("");
@@ -254,6 +268,64 @@ function App() {
     async <T,>(path: string, options?: RequestInit) => api<T>(path, options, token),
     [token],
   );
+
+  useEffect(() => {
+    if (!user || !project) {
+      setRecentSources({ userId: "", projectId: "", sources: [] });
+      setRecentSourcesError({ userId: "", projectId: "", message: "" });
+      return;
+    }
+    const userId = user.user_id;
+    const projectId = project.project_id;
+    setRecentSourcesError({ userId, projectId, message: "" });
+    try {
+      const key = `fieldnotes:recent-sources:${userId}:${projectId}`;
+      setRecentSources({
+        userId,
+        projectId,
+        sources: parseRecentProjectSources(window.localStorage.getItem(key)),
+      });
+    } catch {
+      setRecentSources({ userId, projectId, sources: [] });
+      setRecentSourcesError({
+        userId,
+        projectId,
+        message: "Could not load recently opened sources from this browser.",
+      });
+    }
+  }, [project?.project_id, user?.user_id]);
+
+  function rememberRecentProjectSource(
+    projectId: string | null | undefined,
+    sourceType: "document" | "paper",
+    sourceId: string,
+    sourceTitle: string,
+  ) {
+    if (!user || !projectId) return;
+    try {
+      const key = `fieldnotes:recent-sources:${user.user_id}:${projectId}`;
+      const current = parseRecentProjectSources(window.localStorage.getItem(key));
+      const updated = addRecentProjectSource(current, {
+        source_type: sourceType,
+        source_id: sourceId,
+        source_title: sourceTitle,
+        opened_at: new Date().toISOString(),
+      });
+      window.localStorage.setItem(key, JSON.stringify(updated));
+      if (projectId === project?.project_id) {
+        setRecentSources({ userId: user.user_id, projectId, sources: updated });
+        setRecentSourcesError({ userId: user.user_id, projectId, message: "" });
+      }
+    } catch {
+      if (projectId === project?.project_id) {
+        setRecentSourcesError({
+          userId: user.user_id,
+          projectId,
+          message: "Could not save recently opened sources in this browser.",
+        });
+      }
+    }
+  }
 
   const refreshTeamWorkspaces = useCallback(async (selectWorkspaceId?: string) => {
     const loaded = await request<TeamWorkspace[]>("/api/team-workspaces");
@@ -580,7 +652,15 @@ function App() {
     documentId: string,
     pageNumber: number | null = null,
     excerpt: string | null = null,
+    sourceProjectId: string | null | undefined = project?.project_id,
+    sourceTitle?: string,
   ) {
+    const title = sourceTitle ?? documents.find(
+      (document) => document.document_id === documentId,
+    )?.filename;
+    if (title) {
+      rememberRecentProjectSource(sourceProjectId, "document", documentId, title);
+    }
     setAnnotationDocumentId(documentId);
     setCitationPage(pageNumber);
     setCitationExcerpt(excerpt);
@@ -600,6 +680,7 @@ function App() {
       setError("This linked paper is no longer saved in the project.");
       return;
     }
+    rememberRecentProjectSource(project?.project_id, "paper", sourceId, sourceTitle);
     setScreeningQuery(sourceTitle);
     setScreeningFilter("all");
     setAnnotationPaperId(sourceId);
@@ -617,10 +698,17 @@ function App() {
     setNotice("");
     setMobileNavigationOpen(false);
     if (result.source_type === "document") {
-      openDocumentEvidence(result.source_id, null, result.excerpt);
+      openDocumentEvidence(
+        result.source_id,
+        null,
+        result.excerpt,
+        result.project_id,
+        result.title,
+      );
       setAnnotationPaperId(null);
       return;
     }
+    rememberRecentProjectSource(result.project_id, "paper", result.source_id, result.title);
     setScreeningQuery(result.title);
     setScreeningFilter("all");
     setPaperMetadataFilters({ tag: "", metadataKey: "", metadataValue: "" });
@@ -1851,7 +1939,7 @@ function App() {
     ));
     setConversation(null);
     setDraft(null);
-    setView("documents");
+    setView("home");
   }
 
   const visibleProjects = useMemo(
@@ -2013,7 +2101,7 @@ function App() {
                 setProject(item);
                 setConversation(null);
                 setDraft(null);
-                setView("documents");
+                setView("home");
                 setNotice("");
                 setMobileNavigationOpen(false);
               }}
@@ -2398,6 +2486,7 @@ function App() {
               </section>
 
               <div className="tab-bar" role="tablist" aria-label="Project sections">
+                <TabButton active={view === "home"} onClick={() => setView("home")} icon={<LayoutDashboard size={16} />}>Home</TabButton>
                 <TabButton active={view === "documents"} onClick={() => setView("documents")} icon={<FileText size={16} />}>Documents</TabButton>
                 <TabButton active={view === "papers"} onClick={() => setView("papers")} icon={<Library size={16} />}>Literature</TabButton>
                 <TabButton active={view === "collections"} onClick={() => setView("collections")} icon={<FolderPlus size={16} />}>Collections</TabButton>
@@ -2415,6 +2504,28 @@ function App() {
                   request={request}
                 />
               </div>
+
+              {view === "home" && (
+                <ProjectHome
+                  key={`${user?.user_id}:${project.project_id}`}
+                  projectId={project.project_id}
+                  documents={documents}
+                  recentSources={
+                    recentSources.userId === user?.user_id
+                    && recentSources.projectId === project.project_id
+                      ? recentSources.sources
+                      : []
+                  }
+                  recentSourcesError={
+                    recentSourcesError.userId === user?.user_id
+                    && recentSourcesError.projectId === project.project_id
+                      ? recentSourcesError.message
+                      : ""
+                  }
+                  request={request}
+                  onOpenSource={openProjectSource}
+                />
+              )}
 
               {view === "documents" && (
                 <section className="section-content">
@@ -3388,7 +3499,19 @@ function App() {
                             ? (tags, metadata) => updatePaperMetadata(paper, tags, metadata)
                             : undefined}
                           onRemove={canEditProject ? () => void unsavePaper(paper) : undefined}
-                          onAnnotate={() => setAnnotationPaperId((current) => current === paper.paper_id ? null : paper.paper_id)}
+                          onAnnotate={() => {
+                            if (annotationPaperId !== paper.paper_id) {
+                              rememberRecentProjectSource(
+                                project.project_id,
+                                "paper",
+                                paper.paper_id,
+                                paper.title,
+                              );
+                            }
+                            setAnnotationPaperId((current) =>
+                              current === paper.paper_id ? null : paper.paper_id
+                            );
+                          }}
                           onSummarize={() => void summarizeProjectSource("paper", paper.paper_id, paper.title)}
                           onImportFullText={canEditProject ? () => void importPaperFullText(paper) : undefined}
                           importingFullText={busy}

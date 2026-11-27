@@ -8,12 +8,14 @@ from app.models import (
     Document,
     Notification,
     Paper,
+    ProjectActivity,
     ProjectInvitation,
     ProjectPaper,
     ProjectTask,
     ResearchProject,
     TeamWorkspace,
     User,
+    UserActivity,
 )
 from app.routers import project_tasks
 from app.schemas import ProjectTaskCreate, ProjectTaskUpdate
@@ -25,6 +27,8 @@ def task_databases(tmp_path):
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
     for model in (
         User,
+        UserActivity,
+        ProjectActivity,
         TeamWorkspace,
         ResearchProject,
         ProjectInvitation,

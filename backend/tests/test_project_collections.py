@@ -10,6 +10,7 @@ from app.models import (
     Paper,
     ProjectCollection,
     ProjectCollectionItem,
+    ProjectActivity,
     ProjectInvitation,
     ProjectPaper,
     ResearchProject,
@@ -27,6 +28,7 @@ def collection_client(tmp_path):
     for model in (
         User,
         UserActivity,
+        ProjectActivity,
         ResearchProject,
         ProjectInvitation,
         Document,

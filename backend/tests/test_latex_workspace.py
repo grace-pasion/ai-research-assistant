@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     LatexWorkspace,
+    ProjectActivity,
     ProjectInvitation,
     ProjectFileVersion,
     PythonWorkspaceArtifact,
@@ -43,6 +44,7 @@ def latex_database(tmp_path):
         ProjectFileVersion,
         PythonWorkspaceArtifact,
         UserActivity,
+        ProjectActivity,
     ):
         model.__table__.create(engine)
     with Session(engine) as db:

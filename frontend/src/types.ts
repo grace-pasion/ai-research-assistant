@@ -347,6 +347,20 @@ export type ProjectTask = {
   updated_at: string;
 };
 
+export type ProjectActivity = {
+  activity_id: string;
+  action: string;
+  actor_name: string | null;
+  created_at: string;
+};
+
+export type RecentProjectSource = {
+  source_type: "document" | "paper";
+  source_id: string;
+  source_title: string;
+  opened_at: string;
+};
+
 export type DirectMessage = {
   message_id: string;
   sender_id: string;

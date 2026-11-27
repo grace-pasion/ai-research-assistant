@@ -197,6 +197,7 @@ def restore_latex_workspace_version(
             user.user_id,
             "latex_workspace.version_restored",
             {"filename": version.filename, "version_number": version.version_number},
+            project_id=project_id,
         )
         db.commit()
     except IntegrityError:
@@ -306,7 +307,7 @@ def save_latex_workspace(
         record_file_version(
             db, project_id, "latex", "references.bib", payload.references_bib, user.user_id
         )
-        record_activity(db, user.user_id, "latex_workspace.saved")
+        record_activity(db, user.user_id, "latex_workspace.saved", project_id=project_id)
         db.commit()
     except IntegrityError:
         db.rollback()

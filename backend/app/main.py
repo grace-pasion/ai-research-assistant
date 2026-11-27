@@ -32,6 +32,7 @@ from app.routers import (
     documents,
     latex,
     papers,
+    project_home,
     project_exports,
     project_tasks,
     projects,
@@ -94,6 +95,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(projects.router)
 app.include_router(project_tasks.router)
+app.include_router(project_home.router)
 app.include_router(collaboration.router)
 app.include_router(team_workspaces.router)
 app.include_router(collections.router)

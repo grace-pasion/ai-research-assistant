@@ -57,7 +57,7 @@ def test_bulk_upload_returns_per_file_status_and_schedules_accepted_documents(mo
             or f"test://{document}{extension}"
         ),
     )
-    monkeypatch.setattr(documents_router, "record_activity", lambda *_args: None)
+    monkeypatch.setattr(documents_router, "record_activity", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         documents_router,
         "process_saved_document",

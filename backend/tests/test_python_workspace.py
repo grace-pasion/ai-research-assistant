@@ -15,6 +15,7 @@ from app.database import (
 )
 from app.models import (
     LatexWorkspace,
+    ProjectActivity,
     ProjectInvitation,
     ProjectFileVersion,
     PythonWorkspace,
@@ -113,6 +114,7 @@ def _database(tmp_path):
         ProjectInvitation,
         ProjectFileVersion,
         UserActivity,
+        ProjectActivity,
         LatexWorkspace,
         PythonWorkspace,
         PythonWorkspaceArtifact,

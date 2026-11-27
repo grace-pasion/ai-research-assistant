@@ -104,7 +104,9 @@ def update_document_metadata(
     require_project_access(db, document.project_id, user.user_id, "edit")
     document.tags = payload.tags
     document.custom_metadata = payload.metadata
-    record_activity(db, user.user_id, "document.metadata.updated")
+    record_activity(
+        db, user.user_id, "document.metadata.updated", project_id=document.project_id
+    )
     db.commit()
     db.refresh(document)
     return document
@@ -252,6 +254,7 @@ async def _prepare_document_upload(
         user.user_id,
         "document.uploaded",
         {"file_type": extension.lstrip("."), "size_bytes": len(data)},
+        project_id=project_id,
     )
     return document
 
@@ -348,7 +351,13 @@ def reprocess(
         if current is None:
             raise HTTPException(status_code=404, detail="Document not found.")
         return current
-    record_activity(db, user.user_id, "document.reprocessed", {"file_type": document.file_type})
+    record_activity(
+        db,
+        user.user_id,
+        "document.reprocessed",
+        {"file_type": document.file_type},
+        project_id=project.project_id,
+    )
     db.commit()
     db.refresh(document)
     background_tasks.add_task(process_saved_document, document_id)
@@ -368,7 +377,13 @@ def delete_document(
     if project is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     require_project_access(db, project.project_id, user.user_id, "edit")
-    record_activity(db, user.user_id, "document.deleted", {"file_type": document.file_type})
+    record_activity(
+        db,
+        user.user_id,
+        "document.deleted",
+        {"file_type": document.file_type},
+        project_id=project.project_id,
+    )
     db.delete(document)
     db.commit()
     try:
