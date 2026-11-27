@@ -922,6 +922,9 @@ h1, h2, h3, p { margin-top: 0; }
 @media (max-width: 900px) {
   .sidebar { flex-basis: 210px; }
   .content-area { padding: 35px 28px 45px; }
+  .project-heading { align-items: flex-start; flex-direction: column; gap: 14px; margin-bottom: 24px; }
+  .project-heading-actions { align-self: stretch; flex-wrap: wrap; }
+  .project-heading-actions .button { flex: 1 1 145px; }
   .assistant-layout { grid-template-columns: 180px minmax(0, 1fr); }
   .topbar { padding: 0 28px; }
   .topbar-action-label { display: none; }
