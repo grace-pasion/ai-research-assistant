@@ -7,9 +7,13 @@ import {
   Library,
   ListTodo,
   LoaderCircle,
+  MessageSquareText,
   RefreshCw,
+  Search,
+  Upload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { ProjectSectionView } from "./globalShortcuts";
 import type {
   DocumentRecord,
   ProjectActivity,
@@ -20,9 +24,14 @@ import type {
 type Props = {
   projectId: string;
   documents: DocumentRecord[];
+  papersCount: number;
+  canEditProject: boolean;
+  sourceDataLoaded: boolean;
   recentSources: RecentProjectSource[];
   recentSourcesError: string;
   request: <T,>(path: string, options?: RequestInit) => Promise<T>;
+  onOpenSection: (view: ProjectSectionView) => void;
+  onUploadDocuments: () => void;
   onOpenSource: (
     sourceType: "document" | "paper",
     sourceId: string,
@@ -80,9 +89,14 @@ function taskStatusLabel(status: ProjectTask["status"]): string {
 export function ProjectHome({
   projectId,
   documents,
+  papersCount,
+  canEditProject,
+  sourceDataLoaded,
   recentSources,
   recentSourcesError,
   request,
+  onOpenSection,
+  onUploadDocuments,
   onOpenSource,
 }: Props) {
   const [activity, setActivity] = useState<ProjectActivity[]>([]);
@@ -135,14 +149,16 @@ export function ProjectHome({
       || Date.parse(left.created_at) - Date.parse(right.created_at)
     )
     .slice(0, 6);
+  const hasSources = documents.length > 0 || papersCount > 0;
+  const showGettingStarted = sourceDataLoaded && !hasSources;
 
   return (
     <section className="section-content project-home" aria-labelledby="project-home-heading">
       <div className="project-home-heading">
         <div>
-          <p className="eyebrow">PROJECT OVERVIEW</p>
-          <h2 id="project-home-heading">Home</h2>
-          <p>A quick view of what changed and what needs attention.</p>
+          <p className="eyebrow">YOUR PROJECT</p>
+          <h2 id="project-home-heading">Overview</h2>
+          <p>Recent progress, important sources, and the next steps for your research.</p>
         </div>
         <button
           className="button secondary small-button"
@@ -154,6 +170,44 @@ export function ProjectHome({
           Refresh
         </button>
       </div>
+
+      {showGettingStarted && (
+        <section className="project-start-card" aria-labelledby="project-start-title">
+          <div className="project-start-copy">
+            <p className="eyebrow">GET STARTED</p>
+            <h3 id="project-start-title">Build your research workspace</h3>
+            <p>
+              Add documents or find scholarly papers. Once you have sources, you can organize
+              notes and ask the assistant evidence-based questions.
+            </p>
+          </div>
+          <div className="project-start-actions">
+            {canEditProject ? (
+              <button className="button primary" type="button" onClick={onUploadDocuments}>
+                <Upload size={16} /> Upload documents
+              </button>
+            ) : (
+              <p className="project-start-permission">
+                Ask a project owner or editor to upload documents.
+              </p>
+            )}
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => onOpenSection("papers")}
+            >
+              <Search size={16} /> Find papers
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => onOpenSection("assistant")}
+            >
+              <MessageSquareText size={16} /> Ask the assistant
+            </button>
+          </div>
+        </section>
+      )}
 
       <div className="project-home-grid">
         <section className="project-home-card project-home-activity" aria-labelledby="recent-changes-heading">

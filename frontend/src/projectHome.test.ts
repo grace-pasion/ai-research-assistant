@@ -1,4 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { ProjectHome } from "./ProjectHome.tsx";
 import {
   addRecentProjectSource,
   parseRecentProjectSources,
@@ -15,6 +18,22 @@ function source(
     source_title: `${sourceType} ${sourceId}`,
     opened_at: "2026-11-26T12:00:00.000Z",
   };
+}
+
+function renderProjectHome(sourceDataLoaded: boolean, canEditProject = true): string {
+  return renderToStaticMarkup(createElement(ProjectHome, {
+    projectId: "project",
+    documents: [],
+    papersCount: 0,
+    canEditProject,
+    sourceDataLoaded,
+    recentSources: [],
+    recentSourcesError: "",
+    request: async <T,>() => [] as T,
+    onOpenSection: () => undefined,
+    onUploadDocuments: () => undefined,
+    onOpenSource: () => undefined,
+  }));
 }
 
 describe("project home recent sources", () => {
@@ -43,5 +62,20 @@ describe("project home recent sources", () => {
       source("valid"),
       { source_type: "document", source_id: "", source_title: "", opened_at: "bad" },
     ])).map((item) => item.source_id)).toEqual(["valid"]);
+  });
+});
+
+describe("project home getting-started guidance", () => {
+  it("waits until source data has loaded before showing the empty-project guide", () => {
+    expect(renderProjectHome(false)).not.toContain("Build your research workspace");
+    expect(renderProjectHome(true)).toContain("Build your research workspace");
+  });
+
+  it("offers document upload only to project editors", () => {
+    expect(renderProjectHome(true)).toContain("Upload documents");
+    expect(renderProjectHome(true, false)).not.toContain("Upload documents");
+    expect(renderProjectHome(true, false)).toContain(
+      "Ask a project owner or editor to upload documents.",
+    );
   });
 });

@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   LogOut,
   Menu,
+  MoreHorizontal,
   MessageSquareText,
   Plus,
   Pencil,
@@ -129,6 +130,15 @@ import type {
 
 type View = ProjectSectionView | "search";
 type LoginResponse = { access_token: string; user: User };
+const PROJECT_SECTION_OPTIONS: { view: ProjectSectionView; label: string }[] = [
+  { view: "home", label: "Overview" },
+  { view: "documents", label: "Documents" },
+  { view: "papers", label: "Literature" },
+  { view: "collections", label: "Collections" },
+  { view: "notes", label: "Notes" },
+  { view: "latex", label: "Writing & analysis" },
+  { view: "assistant", label: "AI assistant" },
+];
 const MAX_BULK_UPLOAD_COUNT = 20;
 type UploadQueueItem = {
   key: string;
@@ -180,6 +190,9 @@ function App() {
   const [selectedTeamWorkspaceId, setSelectedTeamWorkspaceId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("home");
+  const [projectDataLoadedId, setProjectDataLoadedId] = useState<string | null>(null);
+  const [topbarMoreOpen, setTopbarMoreOpen] = useState(false);
+  const topbarMoreRef = useRef<HTMLDivElement | null>(null);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [aiUsage, setAiUsage] = useState<AIUsageResponse | null>(null);
   const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
@@ -330,6 +343,24 @@ function App() {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    if (!topbarMoreOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !topbarMoreRef.current?.contains(event.target)) {
+        setTopbarMoreOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTopbarMoreOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [topbarMoreOpen]);
 
   useEffect(() => {
     setSelectedPaperIds(new Set());
@@ -536,6 +567,7 @@ function App() {
           setDocuments(docs);
           setPapers(savedPapers);
           setConversations(chats);
+          setProjectDataLoadedId(id);
           void refreshUsage();
         },
       );
@@ -576,6 +608,7 @@ function App() {
 
   useLayoutEffect(() => {
     selectedProjectIdRef.current = project?.project_id ?? null;
+    setProjectDataLoadedId(null);
     sourceSummaryRequestIdRef.current += 1;
     setSourceSummary(null);
     setDocuments([]);
@@ -2698,6 +2731,7 @@ function App() {
         <nav className="team-workspace-list" aria-label="Team workspaces">
           <button
             className={`team-workspace-link ${selectedTeamWorkspaceId === null ? "selected" : ""}`}
+            aria-current={selectedTeamWorkspaceId === null ? "page" : undefined}
             onClick={() => {
               switchTeamWorkspace(null);
               setMobileNavigationOpen(false);
@@ -2710,6 +2744,7 @@ function App() {
             <button
               className={`team-workspace-link ${selectedTeamWorkspaceId === workspace.team_workspace_id ? "selected" : ""}`}
               key={workspace.team_workspace_id}
+              aria-current={selectedTeamWorkspaceId === workspace.team_workspace_id ? "page" : undefined}
               onClick={() => {
                 switchTeamWorkspace(workspace.team_workspace_id);
                 setMobileNavigationOpen(false);
@@ -2742,6 +2777,7 @@ function App() {
             <button
               className={`project-link ${project?.project_id === item.project_id ? "selected" : ""}`}
               key={item.project_id}
+              aria-current={project?.project_id === item.project_id ? "page" : undefined}
               onClick={() => {
                 const memberWorkspace = teamWorkspaces.find(
                   (workspace) => workspace.team_workspace_id === item.team_workspace_id,
@@ -2880,29 +2916,29 @@ function App() {
                 projectName={project.project_name}
               />
             )}
-            {channelWorkspaceId && (
+            <div className="topbar-secondary-actions">
+              {channelWorkspaceId && (
+                <button
+                  className="icon-button topbar-action"
+                  title="Team channels"
+                  aria-label="Team channels"
+                  onClick={() => setShowTeamChannels(true)}
+                >
+                  <MessageSquareText size={16} />
+                  <span className="topbar-action-label">Channels</span>
+                </button>
+              )}
               <button
                 className="icon-button topbar-action"
-                title="Team channels"
-                aria-label="Team channels"
-                onClick={() => setShowTeamChannels(true)}
+                title="Team workspaces"
+                aria-label="Team workspaces"
+                onClick={() => setShowTeamWorkspaces(true)}
               >
-                <MessageSquareText size={16} />
-                <span className="topbar-action-label">Channels</span>
+                <Users size={16} />
+                <span className="topbar-action-label">Teams</span>
               </button>
-            )}
-            <button
-              className="icon-button topbar-action"
-              title="Team workspaces"
-              aria-label="Team workspaces"
-              onClick={() => setShowTeamWorkspaces(true)}
-            >
-              <Users size={16} />
-              <span className="topbar-action-label">Teams</span>
-            </button>
-            {project && view !== "search" && (
-              <>
-                {user && project.user_id === user.user_id && (
+              {project && view !== "search" && user?.user_id === project.user_id && (
+                <>
                   <button
                     className="icon-button topbar-action"
                     title="Share project"
@@ -2911,8 +2947,6 @@ function App() {
                   >
                     <Share2 size={16} /><span className="topbar-action-label">Share</span>
                   </button>
-                )}
-                {user && project.user_id === user.user_id && (
                   <button
                     className="icon-button topbar-action danger-hover"
                     title="Delete project"
@@ -2921,9 +2955,71 @@ function App() {
                   >
                     <Trash2 size={16} /><span className="topbar-action-label">Delete</span>
                   </button>
-                )}
-              </>
-            )}
+                </>
+              )}
+            </div>
+            <div className="topbar-more" ref={topbarMoreRef}>
+              <button
+                className="topbar-more-toggle"
+                type="button"
+                aria-expanded={topbarMoreOpen}
+                aria-controls="topbar-more-menu"
+                onClick={() => setTopbarMoreOpen((open) => !open)}
+              >
+                <MoreHorizontal size={17} />
+                <span>More</span>
+              </button>
+              {topbarMoreOpen && (
+                <div className="topbar-more-menu" id="topbar-more-menu" role="group" aria-label="More actions">
+                  {channelWorkspaceId && (
+                    <button
+                      className="topbar-menu-action"
+                      type="button"
+                      onClick={() => {
+                        setTopbarMoreOpen(false);
+                        setShowTeamChannels(true);
+                      }}
+                    >
+                      <MessageSquareText size={16} /> Team channels
+                    </button>
+                  )}
+                  <button
+                    className="topbar-menu-action"
+                    type="button"
+                    onClick={() => {
+                      setTopbarMoreOpen(false);
+                      setShowTeamWorkspaces(true);
+                    }}
+                  >
+                    <Users size={16} /> Team workspaces
+                  </button>
+                  {project && view !== "search" && user?.user_id === project.user_id && (
+                    <>
+                      <button
+                        className="topbar-menu-action"
+                        type="button"
+                        onClick={() => {
+                          setTopbarMoreOpen(false);
+                          setShowShareProject(true);
+                        }}
+                      >
+                        <Share2 size={16} /> Share project
+                      </button>
+                      <button
+                        className="topbar-menu-action danger"
+                        type="button"
+                        onClick={() => {
+                          setTopbarMoreOpen(false);
+                          deleteProject();
+                        }}
+                      >
+                        <Trash2 size={16} /> Delete project
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -3506,14 +3602,31 @@ function App() {
                 </div>
               </section>
 
+              <label className="mobile-section-picker">
+                <span>Project section</span>
+                <select
+                  aria-label="Project section"
+                  value={view}
+                  onChange={(event) => {
+                    const selected = PROJECT_SECTION_OPTIONS.find(
+                      (option) => option.view === event.currentTarget.value,
+                    );
+                    if (selected) setView(selected.view);
+                  }}
+                >
+                  {PROJECT_SECTION_OPTIONS.map((option) => (
+                    <option key={option.view} value={option.view}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
               <div className="tab-bar" role="tablist" aria-label="Project sections">
-                <TabButton active={view === "home"} onClick={() => setView("home")} shortcut="Ctrl/Cmd+Alt+1" ariaKeyShortcuts="Control+Alt+1 Meta+Alt+1" icon={<LayoutDashboard size={16} />}>Home</TabButton>
+                <TabButton active={view === "home"} onClick={() => setView("home")} shortcut="Ctrl/Cmd+Alt+1" ariaKeyShortcuts="Control+Alt+1 Meta+Alt+1" icon={<LayoutDashboard size={16} />}>Overview</TabButton>
                 <TabButton active={view === "documents"} onClick={() => setView("documents")} shortcut="Ctrl/Cmd+Alt+2" ariaKeyShortcuts="Control+Alt+2 Meta+Alt+2" icon={<FileText size={16} />}>Documents</TabButton>
                 <TabButton active={view === "papers"} onClick={() => setView("papers")} shortcut="Ctrl/Cmd+Alt+3" ariaKeyShortcuts="Control+Alt+3 Meta+Alt+3" icon={<Library size={16} />}>Literature</TabButton>
                 <TabButton active={view === "collections"} onClick={() => setView("collections")} shortcut="Ctrl/Cmd+Alt+4" ariaKeyShortcuts="Control+Alt+4 Meta+Alt+4" icon={<FolderPlus size={16} />}>Collections</TabButton>
                 <TabButton active={view === "notes"} onClick={() => setView("notes")} shortcut="Ctrl/Cmd+Alt+5" ariaKeyShortcuts="Control+Alt+5 Meta+Alt+5" icon={<BookOpen size={16} />}>Notes</TabButton>
-                <TabButton active={view === "latex"} onClick={() => setView("latex")} shortcut="Ctrl/Cmd+Alt+6" ariaKeyShortcuts="Control+Alt+6 Meta+Alt+6" icon={<FileCode2 size={16} />}>Main document</TabButton>
-                <TabButton active={view === "assistant"} onClick={() => setView("assistant")} shortcut="Ctrl/Cmd+Alt+7" ariaKeyShortcuts="Control+Alt+7 Meta+Alt+7" icon={<MessageSquareText size={16} />}>Ask & explore</TabButton>
+                <TabButton active={view === "latex"} onClick={() => setView("latex")} shortcut="Ctrl/Cmd+Alt+6" ariaKeyShortcuts="Control+Alt+6 Meta+Alt+6" icon={<FileCode2 size={16} />}>Writing &amp; analysis</TabButton>
+                <TabButton active={view === "assistant"} onClick={() => setView("assistant")} shortcut="Ctrl/Cmd+Alt+7" ariaKeyShortcuts="Control+Alt+7 Meta+Alt+7" icon={<MessageSquareText size={16} />}>AI assistant</TabButton>
               </div>
 
               <div className={view === "latex" ? "" : "latex-workspace-hidden"} aria-hidden={view !== "latex"}>
@@ -3532,6 +3645,9 @@ function App() {
                   key={`${user?.user_id}:${project.project_id}`}
                   projectId={project.project_id}
                   documents={documents}
+                  papersCount={papers.length}
+                  canEditProject={Boolean(canEditProject)}
+                  sourceDataLoaded={projectDataLoadedId === project.project_id}
                   recentSources={
                     recentSources.userId === user?.user_id
                     && recentSources.projectId === project.project_id
@@ -3545,6 +3661,8 @@ function App() {
                       : ""
                   }
                   request={request}
+                  onOpenSection={setView}
+                  onUploadDocuments={() => uploadInputRef.current?.click()}
                   onOpenSource={openProjectSource}
                 />
               )}
