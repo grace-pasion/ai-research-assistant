@@ -739,6 +739,13 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-usage { border-bottom: 0; padding-bottom: 0; }
 .settings-usage-panel { margin: 0; padding: 13px; }
 .settings-usage-panel .ai-usage-metrics { gap: 15px; }
+.settings-notifications { padding: 17px 0 0; }
+.notification-preference-list { border-top: 1px solid #edf0ed; margin: 15px 0; }
+.notification-preference { align-items: center; border-bottom: 1px solid #edf0ed; display: flex; gap: 14px; justify-content: space-between; padding: 12px 2px; }
+.notification-preference > span { display: flex; flex-direction: column; gap: 4px; }
+.notification-preference strong { color: #46534b; font-size: 11px; }
+.notification-preference small, .notification-preferences-loading { color: #89938b; font-size: 10px; line-height: 1.5; }
+.notification-preference input { accent-color: #4b8062; flex: 0 0 auto; height: 15px; width: 15px; }
 .settings-password .stack-form { margin-top: 14px; }
 .password-input-wrap { display: flex; position: relative; }
 .password-input-wrap input { padding-right: 42px; width: 100%; }

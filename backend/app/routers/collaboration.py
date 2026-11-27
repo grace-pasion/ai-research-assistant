@@ -28,6 +28,7 @@ from app.schemas import (
 )
 from app.security import get_current_user, require_project_access, require_project_owner
 from app.services.audit import record_activity
+from app.services.notification_preferences import add_notification_if_enabled
 from app.services.project_collaboration import list_project_collaborators
 
 router = APIRouter(tags=["collaboration"])
@@ -139,14 +140,15 @@ def invite_to_project(
             .values(read_at=now)
         )
 
-    db.add(
+    add_notification_if_enabled(
+        db,
         Notification(
             recipient_id=invitee.user_id,
             actor_id=user.user_id,
             kind="project_invitation",
             project_id=project_id,
             invitation_id=invitation.invitation_id,
-        )
+        ),
     )
     record_activity(db, user.user_id, "project.invited")
     try:
@@ -294,14 +296,15 @@ def respond_to_invitation(
         )
         .values(read_at=now)
     )
-    db.add(
+    add_notification_if_enabled(
+        db,
         Notification(
             recipient_id=invitation.inviter_id,
             actor_id=user.user_id,
             kind="invitation_response",
             project_id=invitation.project_id,
             invitation_id=invitation.invitation_id,
-        )
+        ),
     )
     record_activity(db, user.user_id, f"project.invitation_{payload.response}")
     db.commit()
@@ -541,13 +544,14 @@ def send_direct_message(
     )
     db.add(message)
     db.flush()
-    db.add(
+    add_notification_if_enabled(
+        db,
         Notification(
             recipient_id=other_user_id,
             actor_id=user.user_id,
             kind="message",
             message_id=message.message_id,
-        )
+        ),
     )
     record_activity(db, user.user_id, "message.sent")
     db.commit()

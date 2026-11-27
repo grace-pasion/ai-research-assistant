@@ -73,6 +73,7 @@ from app.services.academic_search import (
     upsert_paper,
 )
 from app.services.audit import record_activity
+from app.services.notification_preferences import add_notification_if_enabled
 from app.services.project_collaboration import list_project_collaborators
 from app.services.bibliography import (
     Reference,
@@ -889,7 +890,8 @@ def _run_saved_paper_search(
     saved_search.seen_external_ids = sorted(seen_ids | current_ids)
     notifications_created = 0
     if saved_search.alert_enabled and new_result_count:
-        db.add(
+        if add_notification_if_enabled(
+            db,
             Notification(
                 recipient_id=user.user_id,
                 actor_id=user.user_id,
@@ -900,9 +902,9 @@ def _run_saved_paper_search(
                     "provider": saved_search.api_provider,
                     "new_result_count": new_result_count,
                 },
-            )
-        )
-        notifications_created = 1
+            ),
+        ):
+            notifications_created = 1
     db.commit()
     return result, new_result_count, notifications_created
 

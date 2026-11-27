@@ -18,6 +18,7 @@ from app.models import (
 from app.schemas import ProjectTaskCreate, ProjectTaskResponse, ProjectTaskUpdate
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
+from app.services.notification_preferences import add_notification_if_enabled
 from app.services.project_collaboration import list_project_collaborators
 
 router = APIRouter(tags=["project tasks"])
@@ -208,7 +209,8 @@ def create_project_task(
     db.flush()
     record_activity(db, user.user_id, "project_task.created", project_id=project_id)
     if payload.assignee_id != user.user_id:
-        db.add(
+        add_notification_if_enabled(
+            db,
             Notification(
                 recipient_id=payload.assignee_id,
                 actor_id=user.user_id,
@@ -221,7 +223,7 @@ def create_project_task(
                     "source_id": str(payload.source_id),
                     "source_title": document.filename if document is not None else paper.title,
                 },
-            )
+            ),
         )
     db.commit()
     db.refresh(task)
@@ -283,7 +285,8 @@ def update_project_task(
         and task.assignee_id != previous_assignee_id
         and task.assignee_id != user.user_id
     ):
-        db.add(
+        add_notification_if_enabled(
+            db,
             Notification(
                 recipient_id=task.assignee_id,
                 actor_id=user.user_id,
@@ -296,7 +299,7 @@ def update_project_task(
                     "source_id": str(task.document_id or task.paper_id),
                     "source_title": source_title,
                 },
-            )
+            ),
         )
     record_activity(db, user.user_id, "project_task.updated", project_id=project_id)
     db.commit()

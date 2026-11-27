@@ -9,6 +9,7 @@ from app.database import ensure_project_team_workspace_column, get_db
 from app.models import (
     DirectMessage,
     Notification,
+    NotificationPreference,
     ProjectActivity,
     ProjectInvitation,
     ResearchProject,
@@ -36,6 +37,7 @@ def team_database(tmp_path):
         ProjectInvitation,
         DirectMessage,
         Notification,
+        NotificationPreference,
         TeamChannel,
         TeamChannelMessage,
         UserActivity,

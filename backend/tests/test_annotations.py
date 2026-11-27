@@ -15,6 +15,7 @@ from app.models import (
     Annotation,
     Document,
     Notification,
+    NotificationPreference,
     Paper,
     ProjectActivity,
     ProjectInvitation,
@@ -44,6 +45,7 @@ def annotation_databases(tmp_path):
         ProjectPaper,
         Annotation,
         Notification,
+        NotificationPreference,
     ):
         model.__table__.create(research_engine)
     Paper.__table__.create(literature_engine)

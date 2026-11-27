@@ -93,6 +93,7 @@ import type {
   DocumentSearchResult,
   Draft,
   Message,
+  NotificationPreferences,
   PaperImportResponse,
   Paper,
   PaperScreeningAssignment,
@@ -4614,13 +4615,79 @@ function AccountSettingsDialog({
   const [name, setName] = useState(user.name);
   const [username, setUsername] = useState(user.username ?? "");
   const [profilePicture, setProfilePicture] = useState(user.profile_picture);
-  const [settingsPage, setSettingsPage] = useState<"profile" | "ai-usage">("profile");
+  const [settingsPage, setSettingsPage] = useState<"profile" | "ai-usage" | "notifications">("profile");
   const [showPasswordEditor, setShowPasswordEditor] = useState(false);
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
+  const [notificationPreferencesLoading, setNotificationPreferencesLoading] = useState(true);
+  const [notificationPreferencesLoadFailed, setNotificationPreferencesLoadFailed] = useState(false);
+  const [notificationLoadAttempt, setNotificationLoadAttempt] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setNotificationPreferencesLoading(true);
+    request<NotificationPreferences>("/api/notifications/preferences")
+      .then((preferences) => {
+        if (active) {
+          setNotificationPreferences(preferences);
+          setNotificationPreferencesLoadFailed(false);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setNotificationPreferencesLoadFailed(true);
+          setError(cause instanceof Error
+            ? cause.message
+            : "Could not load notification preferences.");
+        }
+      })
+      .finally(() => {
+        if (active) setNotificationPreferencesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [request, notificationLoadAttempt]);
+
+  async function saveNotificationPreferences(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!notificationPreferences) return;
+    setNotificationBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await request<NotificationPreferences>("/api/notifications/preferences", {
+        method: "PUT",
+        body: jsonBody(notificationPreferences),
+      });
+      setNotificationPreferences(saved);
+      setNotice("Notification preferences saved.");
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "Could not save notification preferences.");
+    } finally {
+      setNotificationBusy(false);
+    }
+  }
+
+  const notificationOptions: Array<{
+    key: keyof NotificationPreferences;
+    label: string;
+    description: string;
+  }> = [
+    { key: "project_invitations", label: "Project invitations", description: "When someone invites you to a project." },
+    { key: "invitation_responses", label: "Invitation responses", description: "When a collaborator accepts or declines your invitation." },
+    { key: "direct_messages", label: "Direct messages", description: "When someone sends you a private message." },
+    { key: "saved_search_alerts", label: "Saved-search alerts", description: "When a saved literature search finds new results." },
+    { key: "annotation_mentions", label: "Note mentions", description: "When a collaborator mentions you in a project note." },
+    { key: "task_assignments", label: "Task assignments", description: "When a collaborator assigns or reassigns a task to you." },
+  ];
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4713,6 +4780,14 @@ function AccountSettingsDialog({
               onClick={() => setSettingsPage("ai-usage")}
             >
               AI usage
+            </button>
+            <button
+              className={settingsPage === "notifications" ? "active" : ""}
+              type="button"
+              aria-current={settingsPage === "notifications" ? "page" : undefined}
+              onClick={() => setSettingsPage("notifications")}
+            >
+              Notifications
             </button>
           </nav>
           <div className="settings-page">
@@ -4834,7 +4909,7 @@ function AccountSettingsDialog({
           )}
         </section>
           </>
-        ) : (
+        ) : settingsPage === "ai-usage" ? (
         <section className="settings-usage">
           <div className="settings-section-heading">
             <h3>AI usage</h3>
@@ -4873,6 +4948,64 @@ function AccountSettingsDialog({
             </p>
           </div>
         </section>
+        ) : (
+        <form
+          className="settings-notifications"
+          onSubmit={(event) => void saveNotificationPreferences(event)}
+          aria-busy={notificationPreferences === null || notificationBusy}
+        >
+          <div className="settings-section-heading">
+            <h3>In-app notifications</h3>
+            <p>Choose which project events appear in your inbox. Existing notifications are not removed.</p>
+          </div>
+          {notificationPreferences ? (
+            <>
+              <div className="notification-preference-list">
+                {notificationOptions.map((option) => (
+                  <label className="notification-preference" key={option.key}>
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={notificationPreferences[option.key]}
+                      disabled={notificationBusy}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setNotificationPreferences((current) => current
+                          ? { ...current, [option.key]: checked }
+                          : current);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <button className="button primary small-button" disabled={notificationBusy}>
+                {notificationBusy ? "Saving…" : "Save notification preferences"}
+              </button>
+            </>
+          ) : (
+            notificationPreferencesLoading ? (
+              <p className="notification-preferences-loading">Loading notification preferences…</p>
+            ) : notificationPreferencesLoadFailed ? (
+              <div className="notification-preferences-loading">
+                <p>Notification preferences could not be loaded.</p>
+                <button
+                  type="button"
+                  className="button secondary small-button"
+                  onClick={() => {
+                    setError("");
+                    setNotificationPreferencesLoading(true);
+                    setNotificationLoadAttempt((attempt) => attempt + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : null
+          )}
+        </form>
         )}
           </div>
         </div>

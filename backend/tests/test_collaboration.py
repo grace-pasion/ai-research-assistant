@@ -18,6 +18,7 @@ from app.models import (
     Document,
     LatexWorkspace,
     Notification,
+    NotificationPreference,
     ProjectActivity,
     ProjectFileVersion,
     ProjectInvitation,
@@ -39,7 +40,7 @@ from app.routers.collaboration import (
     unread_count,
     update_project_invitation_role,
 )
-from app.routers import collaboration, documents, latex, projects
+from app.routers import collaboration, documents, latex, notifications, projects
 from app.routers.projects import list_projects
 from app.schemas import (
     DirectMessageCreate,
@@ -48,6 +49,7 @@ from app.schemas import (
     ProjectInvitationRoleUpdate,
 )
 from app.security import bearer_scheme, get_current_user, require_project_access
+from app.services.notification_preferences import add_notification_if_enabled
 
 
 @pytest.fixture
@@ -64,6 +66,7 @@ def collaboration_db(tmp_path):
         LatexWorkspace,
         ProjectFileVersion,
         Notification,
+        NotificationPreference,
         UserActivity,
         ProjectActivity,
     ):
@@ -318,6 +321,43 @@ def test_direct_messages_are_private_and_read_state_updates(collaboration_db):
     assert get_message_thread(sender.user_id, db, outsider) == []
 
 
+@pytest.mark.parametrize(
+    ("kind", "preference_field"),
+    [
+        ("project_invitation", "project_invitations"),
+        ("invitation_response", "invitation_responses"),
+        ("message", "direct_messages"),
+        ("saved_search_alert", "saved_search_alerts"),
+        ("annotation_mention", "annotation_mentions"),
+        ("task_assigned", "task_assignments"),
+    ],
+)
+def test_disabled_notification_preferences_suppress_only_the_selected_kind(
+    collaboration_db,
+    kind,
+    preference_field,
+):
+    db, owner, recipient, _, _ = collaboration_db
+    preferences = NotificationPreference(user_id=recipient.user_id)
+    setattr(preferences, preference_field, False)
+    db.add(preferences)
+    db.commit()
+
+    notification = Notification(
+        recipient_id=recipient.user_id,
+        actor_id=owner.user_id,
+        kind=kind,
+    )
+    assert not add_notification_if_enabled(db, notification)
+    db.commit()
+    assert db.query(Notification).filter_by(recipient_id=recipient.user_id).count() == 0
+
+    setattr(preferences, preference_field, True)
+    assert add_notification_if_enabled(db, notification)
+    db.commit()
+    assert db.query(Notification).filter_by(recipient_id=recipient.user_id).count() == 1
+
+
 def test_username_migration_backfills_existing_accounts(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy.sqlite'}")
     user_id = uuid.uuid4()
@@ -396,6 +436,7 @@ def test_collaboration_http_flow_and_realtime_workspace_access(collaboration_db)
     app = FastAPI()
     app.include_router(projects.router)
     app.include_router(collaboration.router)
+    app.include_router(notifications.router)
     app.include_router(latex.router)
 
     def test_db():
@@ -416,12 +457,30 @@ def test_collaboration_http_flow_and_realtime_workspace_access(collaboration_db)
     invitee_headers = {"Authorization": "Bearer invitee-token"}
 
     with TestClient(app) as client:
+        defaults = client.get("/api/notifications/preferences", headers=invitee_headers)
+        assert defaults.status_code == 200
+        assert all(defaults.json().values())
+        invitee_preferences = defaults.json()
+        invitee_preferences["project_invitations"] = False
+        saved_preferences = client.put(
+            "/api/notifications/preferences",
+            headers=invitee_headers,
+            json=invitee_preferences,
+        )
+        assert saved_preferences.status_code == 200
+        assert saved_preferences.json()["project_invitations"] is False
+
         invite = client.post(
             f"/api/projects/{project.project_id}/invitations",
             headers=owner_headers,
             json={"identifier": invitee.username},
         )
         assert invite.status_code == 201
+        db.expire_all()
+        assert db.query(Notification).filter_by(
+            recipient_id=invitee.user_id,
+            kind="project_invitation",
+        ).count() == 0
         invitation_id = invite.json()["invitation_id"]
         assert client.get("/api/projects", headers=invitee_headers).json() == []
 
@@ -432,6 +491,10 @@ def test_collaboration_http_flow_and_realtime_workspace_access(collaboration_db)
         )
         assert accepted.status_code == 200
         assert client.get("/api/projects", headers=invitee_headers).json()[0]["user_id"] == str(owner.user_id)
+        assert client.get(
+            "/api/notifications/preferences",
+            headers=invitee_headers,
+        ).json()["project_invitations"] is False
 
         initial = client.get(
             f"/api/projects/{project.project_id}/latex",
@@ -453,6 +516,16 @@ def test_collaboration_http_flow_and_realtime_workspace_access(collaboration_db)
             headers=owner_headers,
         ).json()["main_tex"] == "Shared draft"
 
+        owner_preferences = client.get(
+            "/api/notifications/preferences",
+            headers=owner_headers,
+        ).json()
+        owner_preferences["direct_messages"] = False
+        assert client.put(
+            "/api/notifications/preferences",
+            headers=owner_headers,
+            json=owner_preferences,
+        ).status_code == 200
         message = client.post(
             f"/api/messages/{owner.user_id}",
             headers=invitee_headers,
@@ -466,6 +539,11 @@ def test_collaboration_http_flow_and_realtime_workspace_access(collaboration_db)
         assert thread.status_code == 200
         assert thread.json()[0]["content"] == "Please review the shared draft."
         assert thread.json()[0]["read_at"] is not None
+        db.expire_all()
+        assert db.query(Notification).filter_by(
+            recipient_id=owner.user_id,
+            kind="message",
+        ).count() == 0
 
         owner_edit = client.patch(
             f"/api/projects/{project.project_id}",

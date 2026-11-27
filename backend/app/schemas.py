@@ -388,6 +388,24 @@ class NotificationResponse(BaseModel):
     read_at: datetime | None
 
 
+class NotificationPreferencesUpdate(BaseModel):
+    project_invitations: bool
+    invitation_responses: bool
+    direct_messages: bool
+    saved_search_alerts: bool
+    annotation_mentions: bool
+    task_assignments: bool
+
+
+class NotificationPreferencesResponse(BaseModel):
+    project_invitations: bool
+    invitation_responses: bool
+    direct_messages: bool
+    saved_search_alerts: bool
+    annotation_mentions: bool
+    task_assignments: bool
+
+
 class LatexWorkspaceUpdate(BaseModel):
     main_tex: str = Field(max_length=1_000_000)
     references_bib: str = Field(max_length=500_000)

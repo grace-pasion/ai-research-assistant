@@ -12,6 +12,7 @@ from app.database import (
 from app.models import (
     DirectMessage,
     Notification,
+    NotificationPreference,
     Paper,
     ProjectInvitation,
     ResearchProject,
@@ -43,6 +44,7 @@ def saved_search_databases(tmp_path):
         ProjectInvitation,
         DirectMessage,
         Notification,
+        NotificationPreference,
         SearchQuery,
         SearchQueryResult,
         SavedPaperSearch,

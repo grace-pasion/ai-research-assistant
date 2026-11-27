@@ -459,3 +459,12 @@ export type Notification = {
   created_at: string;
   read_at: string | null;
 };
+
+export type NotificationPreferences = {
+  project_invitations: boolean;
+  invitation_responses: boolean;
+  direct_messages: boolean;
+  saved_search_alerts: boolean;
+  annotation_mentions: boolean;
+  task_assignments: boolean;
+};

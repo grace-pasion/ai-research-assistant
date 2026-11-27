@@ -17,6 +17,7 @@ from app.schemas import (
 )
 from app.security import get_current_user, require_project_access
 from app.services.audit import record_activity
+from app.services.notification_preferences import add_notification_if_enabled
 from app.services.project_collaboration import (
     extract_mentioned_usernames,
     list_project_collaborators,
@@ -152,7 +153,8 @@ def _notify_new_mentions(
         recipient = users_by_username[username]
         if recipient.user_id == actor.user_id:
             continue
-        db.add(
+        add_notification_if_enabled(
+            db,
             Notification(
                 recipient_id=recipient.user_id,
                 actor_id=actor.user_id,
@@ -164,7 +166,7 @@ def _notify_new_mentions(
                     "source_id": str(source_id),
                     "source_title": source_title,
                 },
-            )
+            ),
         )
 
 
