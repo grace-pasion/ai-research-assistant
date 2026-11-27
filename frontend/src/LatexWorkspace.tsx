@@ -33,6 +33,7 @@ import {
   updateLatexBibliographyStyle,
 } from "./latexCitations";
 import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
+import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
 import { findLatexSourceLocation, sourceOffsetForLine } from "./latexDiagnostics";
 import {
@@ -61,6 +62,8 @@ type WorkspaceVersion = {
   created_at: string;
   author_name: string | null;
 };
+
+type WorkspaceVersionDetails = WorkspaceVersion & { content: string };
 
 type Props = {
   project: Project;
@@ -152,8 +155,11 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [compileError, setCompileError] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
+  const [comparison, setComparison] = useState<WorkspaceVersionDetails | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [comparisonLoading, setComparisonLoading] = useState<string | null>(null);
+  const [comparisonError, setComparisonError] = useState("");
   const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
@@ -182,6 +188,22 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       setHistoryError(cause instanceof Error ? cause.message : "Could not load file history.");
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  async function compareVersion(version: WorkspaceVersion) {
+    setComparisonLoading(version.version_id);
+    setComparison(null);
+    setComparisonError("");
+    try {
+      const details = await request<WorkspaceVersionDetails>(
+        `/api/projects/${project.project_id}/latex/history/${version.version_id}`,
+      );
+      setComparison(details);
+    } catch (cause) {
+      setComparisonError(cause instanceof Error ? cause.message : "Could not load this file version.");
+    } finally {
+      setComparisonLoading(null);
     }
   }
 
@@ -648,10 +670,10 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
           <aside className="latex-sources">
             <div className="latex-files">
               <span className="latex-label">PROJECT FILES</span>
-              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
+              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setComparison(null); setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
                 <FileCode2 size={15} /> main.tex
               </button>
-              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
+              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setComparison(null); setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
                 <BookOpen size={15} /> references.bib
               </button>
             </div>
@@ -784,6 +806,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                   </div>
                   <p>Up to 20 changed versions are kept per file. Restoring a version creates a new revision.</p>
                   {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+                  {comparisonError && <p className="inline-error" role="alert">{comparisonError}</p>}
                   {historyLoading ? (
                     <p className="latex-empty">Loading history…</p>
                   ) : historyVersions.length ? historyVersions.map((version) => (
@@ -795,6 +818,14 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                       <button
                         type="button"
                         className="button secondary small-button"
+                        onClick={() => void compareVersion(version)}
+                        disabled={comparisonLoading !== null || restoringVersion !== null}
+                      >
+                        {comparisonLoading === version.version_id ? "Loading…" : "Compare"}
+                      </button>
+                      <button
+                        type="button"
+                        className="button secondary small-button"
                         onClick={() => void restoreVersion(version)}
                         disabled={!canEdit || restoringVersion !== null}
                       >
@@ -803,6 +834,20 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                     </div>
                   )) : <p className="latex-empty">No saved versions for this file yet.</p>}
                 </section>
+              )}
+              {comparison && comparison.filename === activeFile && (
+                <WorkspaceVersionComparison
+                  filename={comparison.filename}
+                  versionNumber={comparison.version_number}
+                  createdAt={comparison.created_at}
+                  previousContent={comparison.content}
+                  currentContent={
+                    comparison.filename === "main.tex"
+                      ? workspace.main_tex
+                      : workspace.references_bib
+                  }
+                  onClose={() => setComparison(null)}
+                />
               )}
               <div className="latex-citation-tools">
                 <label htmlFor="latex-citation-style">Bibliography style</label>

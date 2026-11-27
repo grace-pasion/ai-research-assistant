@@ -25,6 +25,7 @@ from app.routers.latex import (
     compile_latex_workspace,
     get_latex_workspace,
     get_latex_workspace_history,
+    get_latex_workspace_version,
     restore_latex_workspace_version,
     save_latex_workspace,
 )
@@ -208,6 +209,66 @@ def test_latex_history_deduplicates_saves_and_restore_creates_a_new_version(late
             owner,
         )
     assert stale.value.status_code == 409
+
+
+def test_latex_history_comparison_returns_content_and_rejects_other_workspace_versions(
+    latex_database,
+):
+    db, owner, project = latex_database
+    workspace = get_latex_workspace(project.project_id, db, owner)
+    first = save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex="Earlier draft",
+            references_bib="",
+            expected_updated_at=workspace.updated_at,
+        ),
+        db,
+        owner,
+    )
+    saved = save_latex_workspace(
+        project.project_id,
+        LatexWorkspaceUpdate(
+            main_tex="Current draft",
+            references_bib="",
+            expected_updated_at=first.updated_at,
+        ),
+        db,
+        owner,
+    )
+    version = next(
+        version for version in get_latex_workspace_history(project.project_id, db, owner)
+        if version.filename == "main.tex" and version.version_number == 2
+    )
+    python_version = ProjectFileVersion(
+        project_id=project.project_id,
+        workspace_type="python",
+        filename="main.py",
+        version_number=1,
+        content="print('not a LaTeX version')",
+        created_by=owner.user_id,
+        created_at=version.created_at,
+    )
+    db.add(python_version)
+    db.commit()
+
+    api = FastAPI()
+    api.include_router(latex.router)
+    api.dependency_overrides[get_db] = lambda: db
+    api.dependency_overrides[get_current_user] = lambda: owner
+    with TestClient(api) as client:
+        detail = client.get(
+            f"/api/projects/{project.project_id}/latex/history/{version.version_id}"
+        )
+        wrong_workspace = client.get(
+            f"/api/projects/{project.project_id}/latex/history/{python_version.version_id}"
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["content"] == "Earlier draft"
+    assert detail.json()["author_name"] == owner.name
+    assert wrong_workspace.status_code == 404
+    assert saved.main_tex == "Current draft"
 
 
 def test_latex_history_retains_only_the_latest_twenty_versions(latex_database):

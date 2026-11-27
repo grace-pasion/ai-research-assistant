@@ -1,5 +1,6 @@
 import base64
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -248,6 +249,9 @@ def test_python_history_restores_deleted_scripts_and_rejects_stale_restore(tmp_p
                 version for version in history if version["filename"] == "helpers.py"
             ]
             assert [version["version_number"] for version in helper_history] == [2, 1]
+            detail = client.get(f"{path}/history/{helper_history[0]['version_id']}")
+            assert detail.status_code == 200
+            assert detail.json()["content"] == "VALUE = 2"
 
             restored = client.post(
                 f"{path}/history/{helper_history[0]['version_id']}/restore",
@@ -273,6 +277,32 @@ def test_python_history_restores_deleted_scripts_and_rejects_stale_restore(tmp_p
                 json={"expected_updated_at": deleted["updated_at"]},
             )
             assert stale.status_code == 409
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_python_history_comparison_rejects_latex_versions(tmp_path):
+    engine, db, owner, project = _database(tmp_path)
+    try:
+        latex_version = ProjectFileVersion(
+            project_id=project.project_id,
+            workspace_type="latex",
+            filename="main.tex",
+            version_number=1,
+            content=r"\section{Not Python}",
+            created_by=owner.user_id,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(latex_version)
+        db.commit()
+
+        with _client(db, owner) as client:
+            response = client.get(
+                f"/api/projects/{project.project_id}/python/history/{latex_version.version_id}"
+            )
+
+        assert response.status_code == 404
     finally:
         db.close()
         engine.dispose()

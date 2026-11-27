@@ -408,6 +408,10 @@ class WorkspaceVersionMetadata(BaseModel):
     author_name: str | None = None
 
 
+class WorkspaceVersionDetails(WorkspaceVersionMetadata):
+    content: str
+
+
 class WorkspaceRestoreRequest(BaseModel):
     expected_updated_at: datetime | None
 

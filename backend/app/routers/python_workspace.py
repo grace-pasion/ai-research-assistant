@@ -23,6 +23,7 @@ from app.schemas import (
     PythonWorkspaceResponse,
     PythonWorkspaceUpdate,
     WorkspaceRestoreRequest,
+    WorkspaceVersionDetails,
     WorkspaceVersionMetadata,
 )
 from app.security import get_current_user, require_project_access
@@ -35,7 +36,11 @@ from app.services.python_workspace import (
     validate_artifact_name,
     validate_python_source_files,
 )
-from app.services.workspace_history import list_file_versions, record_file_version
+from app.services.workspace_history import (
+    get_file_version,
+    list_file_versions,
+    record_file_version,
+)
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/python",
@@ -144,6 +149,28 @@ def get_python_workspace_history(
         )
         for version, author_name in list_file_versions(db, project_id, "python")
     ]
+
+
+@router.get("/history/{version_id}", response_model=WorkspaceVersionDetails)
+def get_python_workspace_version(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    result = get_file_version(db, project_id, "python", version_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Python file version not found.")
+    version, author_name = result
+    return WorkspaceVersionDetails(
+        version_id=version.version_id,
+        filename=version.filename,
+        version_number=version.version_number,
+        created_at=version.created_at,
+        author_name=author_name,
+        content=version.content,
+    )
 
 
 @router.post("/history/{version_id}/restore", response_model=PythonWorkspaceResponse)

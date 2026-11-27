@@ -88,3 +88,20 @@ def list_file_versions(
         )
     ).all()
     return [(version, author_name) for version, author_name in rows]
+
+
+def get_file_version(
+    db: Session,
+    project_id: uuid.UUID,
+    workspace_type: WorkspaceType,
+    version_id: uuid.UUID,
+) -> tuple[ProjectFileVersion, str | None] | None:
+    return db.execute(
+        select(ProjectFileVersion, User.name)
+        .outerjoin(User, User.user_id == ProjectFileVersion.created_by)
+        .where(
+            ProjectFileVersion.version_id == version_id,
+            ProjectFileVersion.project_id == project_id,
+            ProjectFileVersion.workspace_type == workspace_type,
+        )
+    ).first()

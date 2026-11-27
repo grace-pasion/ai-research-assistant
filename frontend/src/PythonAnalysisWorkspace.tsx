@@ -19,6 +19,7 @@ import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import CodeMirror from "@uiw/react-codemirror";
 import { downloadFile, fetchFileBlob } from "./api";
+import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import {
   MAX_INPUT_FILE_COUNT,
   MAX_PYTHON_SOURCE_FILE_COUNT,
@@ -44,6 +45,8 @@ type WorkspaceVersion = {
   created_at: string;
   author_name: string | null;
 };
+
+type WorkspaceVersionDetails = WorkspaceVersion & { content: string };
 
 type PythonWorkspaceData = {
   code: string;
@@ -112,9 +115,12 @@ export function PythonAnalysisWorkspace({
   const [newFilename, setNewFilename] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
+  const [comparison, setComparison] = useState<WorkspaceVersionDetails | null>(null);
   const [historyFilename, setHistoryFilename] = useState(selectedFilename);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [comparisonLoading, setComparisonLoading] = useState<string | null>(null);
+  const [comparisonError, setComparisonError] = useState("");
   const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const savedFilesRef = useRef("");
@@ -249,6 +255,22 @@ export function PythonAnalysisWorkspace({
       setHistoryError(cause instanceof Error ? cause.message : "Could not load Python file history.");
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  async function compareVersion(version: WorkspaceVersion) {
+    setComparisonLoading(version.version_id);
+    setComparison(null);
+    setComparisonError("");
+    try {
+      const details = await request<WorkspaceVersionDetails>(
+        `${path}/history/${version.version_id}`,
+      );
+      setComparison(details);
+    } catch (cause) {
+      setComparisonError(cause instanceof Error ? cause.message : "Could not load this Python file version.");
+    } finally {
+      setComparisonLoading(null);
     }
   }
 
@@ -548,12 +570,17 @@ export function PythonAnalysisWorkspace({
           </div>
           <p>Up to 20 changed versions are kept per file. Restoring a version creates a new revision.</p>
           {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+          {comparisonError && <p className="inline-error" role="alert">{comparisonError}</p>}
           {historyVersions.length > 0 && (
             <label className="python-history-file">
               File
               <select
                 value={historyFilename}
-                onChange={(event) => setHistoryFilename(event.target.value)}
+                onChange={(event) => {
+                  setHistoryFilename(event.target.value);
+                  setComparison(null);
+                  setComparisonError("");
+                }}
               >
                 {Array.from(new Set(historyVersions.map((version) => version.filename))).sort()
                   .map((filename) => <option value={filename} key={filename}>{filename}</option>)}
@@ -573,6 +600,14 @@ export function PythonAnalysisWorkspace({
                 <button
                   type="button"
                   className="button secondary small-button"
+                  onClick={() => void compareVersion(version)}
+                  disabled={comparisonLoading !== null || restoringVersion !== null}
+                >
+                  {comparisonLoading === version.version_id ? "Loading…" : "Compare"}
+                </button>
+                <button
+                  type="button"
+                  className="button secondary small-button"
                   onClick={() => void restoreVersion(version)}
                   disabled={!canEdit || saving || running || restoringVersion !== null}
                 >
@@ -581,6 +616,18 @@ export function PythonAnalysisWorkspace({
               </div>
             )) : <p className="latex-empty">No saved Python versions yet.</p>}
         </section>
+      )}
+      {comparison && (
+        <WorkspaceVersionComparison
+          filename={comparison.filename}
+          versionNumber={comparison.version_number}
+          createdAt={comparison.created_at}
+          previousContent={comparison.content}
+          currentContent={
+            workspace.files?.find((file) => file.filename === comparison.filename)?.code ?? null
+          }
+          onClose={() => setComparison(null)}
+        />
       )}
       {error.includes("changed in another session") && (
         <button type="button" className="button secondary small-button" onClick={() => void reloadWorkspace()}>
