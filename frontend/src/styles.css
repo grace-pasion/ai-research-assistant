@@ -90,6 +90,31 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .topbar-right { align-items: center; display: flex; gap: 5px; }
 .topbar-action { gap: 7px; padding: 0 9px; width: auto; }
 .topbar-action-label { font-size: 12px; font-weight: 550; white-space: nowrap; }
+.work-status-control { position: relative; }
+.work-status-button { gap: 6px; position: relative; width: auto; }
+.work-status-button-label { font-size: 12px; font-weight: 550; }
+.work-status-count, .work-status-attention-count { align-items: center; border-radius: 999px; display: inline-flex; font-size: 9px; font-weight: 700; height: 17px; justify-content: center; min-width: 17px; padding: 0 4px; }
+.work-status-count { background: #eaf3ed; color: #2f6d59; }
+.work-status-attention-count { background: #f9e9e6; color: #a64e47; }
+.work-status-popover { background: #fff; border: 1px solid #e3e9e3; border-radius: 11px; box-shadow: 0 12px 30px rgba(34, 50, 38, .16); max-height: min(70vh, 500px); overflow-y: auto; position: absolute; right: 0; top: calc(100% + 9px); width: min(390px, calc(100vw - 24px)); z-index: 55; }
+.work-status-heading { align-items: flex-start; background: #f8faf8; border-bottom: 1px solid #edf0ed; display: flex; gap: 12px; justify-content: space-between; padding: 12px 14px; }
+.work-status-heading > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.work-status-heading > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-status-heading strong { color: #44534a; font-size: 12px; }
+.work-status-heading span { color: #87918a; font-size: 10px; }
+.work-status-heading > span { flex: 0 0 auto; text-align: right; }
+.work-status-list { list-style: none; margin: 0; padding: 0; }
+.work-status-item { align-items: flex-start; border-bottom: 1px solid #f0f2f0; display: flex; gap: 9px; padding: 10px 14px; }
+.work-status-item:last-child { border-bottom: 0; }
+.work-status-item-icon { color: #76847a; display: inline-flex; flex: 0 0 auto; margin-top: 2px; }
+.work-status-item.active .work-status-item-icon { color: #927344; }
+.work-status-item.attention .work-status-item-icon { color: #a64e47; }
+.work-status-item.complete .work-status-item-icon { color: #3f795a; }
+.work-status-item-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.work-status-item-copy strong { color: #46534b; font-size: 11px; overflow-wrap: anywhere; }
+.work-status-item-copy > span { color: #748078; font-size: 9px; }
+.work-status-item-copy p { color: #87918a; font-size: 10px; line-height: 1.45; margin: 1px 0 0; overflow-wrap: anywhere; }
+.work-status-more { color: #7c887f; font-size: 10px; margin: 0; padding: 9px 14px 12px; }
 .mobile-nav-backdrop { display: none; }
 .private-badge { align-items: center; background: #f0f5f0; border-radius: 20px; color: #52715e; display: flex; font-size: 10px; gap: 5px; padding: 6px 9px; }
 .content-area { flex: 1; margin: 0 auto; max-width: 1210px; padding: 45px 54px 58px; width: 100%; }
@@ -864,6 +889,7 @@ h1, h2, h3, p { margin-top: 0; }
   .assistant-layout { grid-template-columns: 180px minmax(0, 1fr); }
   .topbar { padding: 0 28px; }
   .topbar-action-label { display: none; }
+  .work-status-button-label { display: none; }
   .latex-layout { grid-template-columns: 210px minmax(0, 1fr); }
   .latex-view-toggle button { padding: 5px; }
   .latex-view-toggle button span { display: none; }
@@ -910,6 +936,7 @@ h1, h2, h3, p { margin-top: 0; }
   .crumb-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar-right { gap: 1px; }
   .topbar-action { padding: 0; width: 34px; }
+  .work-status-button { gap: 3px; padding: 0 3px; width: auto; }
   .private-badge { display: none; }
   .inbox-modal { height: 85vh; min-height: 350px; padding: 17px; }
   .inbox-messages { grid-template-columns: minmax(125px, 38%) minmax(0, 1fr); }

@@ -41,6 +41,7 @@ import {
   pythonOutputInsertion,
   pythonOutputPackage,
 } from "./pythonWorkspace";
+import type { LatexCompileActivity } from "./workStatus";
 
 const PythonAnalysisWorkspace = lazy(async () => {
   const module = await import("./PythonAnalysisWorkspace");
@@ -70,6 +71,7 @@ type Props = {
   documents: DocumentRecord[];
   papers: Paper[];
   request: WorkspaceRequest;
+  onCompileStatusChange: (activity: LatexCompileActivity) => void;
 };
 
 type EditorFile = "main.tex" | "references.bib";
@@ -135,7 +137,13 @@ function downloadText(filename: string, content: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function LatexWorkspace({ project, documents, papers, request }: Props) {
+export function LatexWorkspace({
+  project,
+  documents,
+  papers,
+  request,
+  onCompileStatusChange,
+}: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceFiles>(EMPTY_WORKSPACE);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -548,10 +556,13 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   async function compilePdf() {
     setCompiling(true);
     setCompileError("");
+    onCompileStatusChange({ status: "compiling", message: null });
     try {
       const saved = await persist(workspaceRef.current);
       if (!saved) {
-        setCompileError("Save the latest changes before compiling.");
+        const message = "Save the latest changes before compiling.";
+        if (mountedRef.current) setCompileError(message);
+        onCompileStatusChange({ status: "failed", message });
         return;
       }
       const nextUrl = await fetchPdfObjectUrl(
@@ -560,16 +571,20 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
       );
       if (!mountedRef.current) {
         URL.revokeObjectURL(nextUrl);
+        onCompileStatusChange({ status: "completed", message: null });
         return;
       }
       if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
       pdfUrlRef.current = nextUrl;
       setPdfUrl(nextUrl);
       setPaneMode("pdf");
+      onCompileStatusChange({ status: "completed", message: null });
     } catch (cause) {
-      setCompileError(cause instanceof Error ? cause.message : "Could not compile this document.");
+      const message = cause instanceof Error ? cause.message : "Could not compile this document.";
+      if (mountedRef.current) setCompileError(message);
+      onCompileStatusChange({ status: "failed", message });
     } finally {
-      setCompiling(false);
+      if (mountedRef.current) setCompiling(false);
     }
   }
 

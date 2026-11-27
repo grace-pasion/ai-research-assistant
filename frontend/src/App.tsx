@@ -42,6 +42,12 @@ import { getMentionQuery, insertMention } from "./mentions";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
 import { ProjectHome } from "./ProjectHome.tsx";
+import { WorkStatusPanel } from "./WorkStatusPanel";
+import {
+  buildWorkStatusItems,
+  type LatexCompileActivity,
+  type WorkStatusUpload,
+} from "./workStatus";
 import { StudyExtractionTable } from "./StudyExtractionTable";
 import { addRecentProjectSource, parseRecentProjectSources } from "./projectHome";
 import {
@@ -118,7 +124,7 @@ type UploadQueueItem = {
   projectId: string;
   file: File;
   filename: string;
-  status: string;
+  status: WorkStatusUpload["status"];
   documentId: string | null;
   error: string | null;
 };
@@ -167,6 +173,9 @@ function App() {
   const [aiUsage, setAiUsage] = useState<AIUsageResponse | null>(null);
   const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [latexCompileActivities, setLatexCompileActivities] = useState<
+    Record<string, LatexCompileActivity>
+  >({});
   const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
   const [citationPage, setCitationPage] = useState<number | null>(null);
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
@@ -651,6 +660,24 @@ function App() {
     quotaExceeded: documents.filter((document) => document.processing_status === "quota_exceeded").length,
     needsApiKey: documents.filter((document) => document.processing_status === "needs_api_key").length,
   }), [documents]);
+  const workStatusItems = useMemo(
+    () => project
+      ? buildWorkStatusItems(
+        project.project_id,
+        bulkUploads,
+        documents,
+        latexCompileActivities[project.project_id] ?? null,
+      )
+      : [],
+    [bulkUploads, documents, latexCompileActivities, project?.project_id],
+  );
+  const reportLatexCompileActivity = useCallback((activity: LatexCompileActivity) => {
+    if (!project) return;
+    setLatexCompileActivities((current) => ({
+      ...current,
+      [project.project_id]: activity,
+    }));
+  }, [project]);
   const screeningCounts = useMemo(() => ({
     unread: papers.filter((paper) => paper.screening_status === "unread").length,
     undecided: papers.filter((paper) => paper.screening_status === "undecided").length,
@@ -1613,12 +1640,12 @@ function App() {
       setError(`Choose no more than ${MAX_BULK_UPLOAD_COUNT} files at once.`);
       return;
     }
-    const queued = files.map((file) => ({
+    const queued: UploadQueueItem[] = files.map((file) => ({
       key: crypto.randomUUID(),
       projectId: project.project_id,
       file,
       filename: file.name,
-      status: "uploading",
+      status: "uploading" as const,
       documentId: null,
       error: null,
     }));
@@ -2612,6 +2639,13 @@ function App() {
               <span className="topbar-action-label">Inbox</span>
               {unreadCount > 0 && <span className="unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
             </button>
+            {project && (
+              <WorkStatusPanel
+                key={project.project_id}
+                items={workStatusItems}
+                projectName={project.project_name}
+              />
+            )}
             {channelWorkspaceId && (
               <button
                 className="icon-button topbar-action"
@@ -3255,6 +3289,7 @@ function App() {
                   documents={documents}
                   papers={papers}
                   request={request}
+                  onCompileStatusChange={reportLatexCompileActivity}
                 />
               </div>
 
