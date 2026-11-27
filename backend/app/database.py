@@ -145,6 +145,32 @@ def ensure_python_artifact_provenance_columns(engine) -> None:
             )
 
 
+def ensure_python_artifact_run_columns(engine) -> None:
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("python_workspace_artifacts")
+    }
+    uuid_type = "CHAR(32)" if engine.dialect.name == "sqlite" else "UUID"
+    timestamp_type = "DATETIME" if engine.dialect.name == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+    with engine.begin() as connection:
+        if "run_id" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE python_workspace_artifacts ADD COLUMN run_id "
+                    f"{uuid_type} REFERENCES python_analysis_runs(run_id) ON DELETE SET NULL"
+                )
+            )
+        if "run_at" not in columns:
+            connection.execute(
+                text(f"ALTER TABLE python_workspace_artifacts ADD COLUMN run_at {timestamp_type}")
+            )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_python_workspace_artifacts_run "
+                "ON python_workspace_artifacts (run_id)"
+            )
+        )
+
+
 def ensure_search_query_reproducibility_columns(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("search_queries")}
     with engine.begin() as connection:

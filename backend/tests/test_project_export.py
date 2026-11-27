@@ -1,7 +1,9 @@
+import base64
 import io
 import json
 import uuid
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -24,6 +26,7 @@ from app.models import (
     PaperStudyExtraction,
     ProjectInvitation,
     ProjectPaper,
+    PythonAnalysisRun,
     PythonWorkspace,
     PythonWorkspaceArtifact,
     ResearchProject,
@@ -51,6 +54,7 @@ def project_export_databases(tmp_path):
         Annotation,
         LatexWorkspace,
         PythonWorkspace,
+        PythonAnalysisRun,
         PythonWorkspaceArtifact,
         SystematicReviewWorkspace,
         Conversation,
@@ -155,6 +159,25 @@ def project_export_databases(tmp_path):
                 ],
             )
         )
+        run = PythonAnalysisRun(
+            project_id=project.project_id,
+            script_filename="main.py",
+            source_files=[
+                {"filename": "main.py", "code": "print('portable')"},
+                {"filename": "helpers.py", "code": "def summarize(): return 1"},
+            ],
+            input_files=[
+                {
+                    "filename": "study.csv",
+                    "byte_size": len(b"sample,value\nA,42\n"),
+                    "content_base64": base64.b64encode(b"sample,value\nA,42\n").decode("ascii"),
+                },
+            ],
+            run_at=datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc),
+            created_by=owner.user_id,
+        )
+        db.add(run)
+        db.flush()
         db.add(
             PythonWorkspaceArtifact(
                 project_id=project.project_id,
@@ -162,6 +185,10 @@ def project_export_databases(tmp_path):
                 content_type="image/png",
                 content=b"\x89PNG\r\n\x1a\nfigure",
                 byte_size=14,
+                script_filename="main.py",
+                input_filenames=["study.csv"],
+                run_id=run.run_id,
+                run_at=run.run_at,
             )
         )
         owner_conversation = Conversation(
@@ -246,6 +273,8 @@ def test_project_export_contains_shared_content_but_omits_optional_private_data_
     assert response.headers["content-type"] == "application/zip"
     assert response.headers["content-disposition"] == 'attachment; filename="project-backup.zip"'
     with _read_archive(response.content) as archive:
+        run_id = db.scalar(select(PythonAnalysisRun.run_id))
+        assert run_id is not None
         names = set(archive.namelist())
         assert {
             "README.txt",
@@ -262,6 +291,11 @@ def test_project_export_contains_shared_content_but_omits_optional_private_data_
             "writing/python/analysis.py",
             "writing/python/helpers.py",
             "writing/python-output/figure.png",
+            "writing/python-output/manifest.json",
+            f"writing/python-runs/{run_id}/provenance.json",
+            f"writing/python-runs/{run_id}/source/main.py",
+            f"writing/python-runs/{run_id}/source/helpers.py",
+            f"writing/python-runs/{run_id}/inputs/study.csv",
             "review/systematic_review.json",
         }.issubset(names)
         assert not any(name.startswith("original_documents/") for name in names)
@@ -291,8 +325,14 @@ def test_project_export_contains_shared_content_but_omits_optional_private_data_
         assert archive.read("writing/python/main.py").decode("utf-8") == "print('portable')"
         assert archive.read("writing/python/analysis.py").decode("utf-8") == "from helpers import summarize"
         assert archive.read("writing/python-output/figure.png") == b"\x89PNG\r\n\x1a\nfigure"
+        output_manifest = json.loads(archive.read("writing/python-output/manifest.json"))
+        assert output_manifest[0]["run_id"] == str(run_id)
+        run_manifest = json.loads(archive.read(f"writing/python-runs/{run_id}/provenance.json"))
+        assert run_manifest["source_files"][1]["filename"] == "helpers.py"
+        assert archive.read(f"writing/python-runs/{run_id}/inputs/study.csv") == b"sample,value\nA,42\n"
         assert manifest["python_workspace_saved"] is True
         assert manifest["python_artifact_count"] == 1
+        assert manifest["python_run_count"] == 1
 
 
 def test_optional_export_includes_original_bytes_and_only_requesters_conversations(

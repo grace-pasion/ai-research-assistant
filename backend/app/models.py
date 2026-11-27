@@ -319,11 +319,28 @@ class PythonWorkspace(ResearchBase):
     )
 
 
+class PythonAnalysisRun(ResearchBase):
+    __tablename__ = "python_analysis_runs"
+
+    run_id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_projects.project_id", ondelete="CASCADE"), index=True
+    )
+    script_filename: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_files: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False)
+    input_files: Mapped[list[dict[str, str | int]]] = mapped_column(JSON, nullable=False)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class PythonWorkspaceArtifact(ResearchBase):
     __tablename__ = "python_workspace_artifacts"
     __table_args__ = (
         UniqueConstraint("project_id", "filename"),
         Index("ix_python_workspace_artifacts_project", "project_id"),
+        Index("ix_python_workspace_artifacts_run", "run_id"),
     )
 
     artifact_id: Mapped[uuid.UUID] = uuid_column()
@@ -338,6 +355,10 @@ class PythonWorkspaceArtifact(ResearchBase):
     input_filenames: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("python_analysis_runs.run_id", ondelete="SET NULL"), nullable=True
+    )
+    run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

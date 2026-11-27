@@ -1,4 +1,5 @@
 import base64
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -10,6 +11,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import (
+    ensure_python_artifact_run_columns,
     ensure_python_artifact_provenance_columns,
     ensure_python_workspace_files_column,
     get_db,
@@ -19,6 +21,7 @@ from app.models import (
     ProjectActivity,
     ProjectInvitation,
     ProjectFileVersion,
+    PythonAnalysisRun,
     PythonWorkspace,
     PythonWorkspaceArtifact,
     ResearchProject,
@@ -74,12 +77,17 @@ def test_python_artifact_provenance_migration_is_additive_and_idempotent(tmp_pat
                 "updated_at DATETIME)"
             ))
             connection.execute(text(
+                "CREATE TABLE python_analysis_runs (run_id CHAR(32) PRIMARY KEY)"
+            ))
+            connection.execute(text(
                 "INSERT INTO python_workspace_artifacts "
                 "(artifact_id, filename, content_type, content, byte_size) "
                 "VALUES ('artifact-1', 'legacy.png', 'image/png', X'01', 1)"
             ))
         ensure_python_artifact_provenance_columns(engine)
+        ensure_python_artifact_run_columns(engine)
         ensure_python_artifact_provenance_columns(engine)
+        ensure_python_artifact_run_columns(engine)
         columns = {
             column["name"]
             for column in inspect(engine).get_columns("python_workspace_artifacts")
@@ -88,7 +96,7 @@ def test_python_artifact_provenance_migration_is_additive_and_idempotent(tmp_pat
             values = connection.execute(
                 text("SELECT script_filename, input_filenames FROM python_workspace_artifacts")
             ).all()
-        assert {"script_filename", "input_filenames"} <= columns
+        assert {"script_filename", "input_filenames", "run_id", "run_at"} <= columns
         assert values == [(None, "[]")]
     finally:
         engine.dispose()
@@ -118,6 +126,7 @@ def _database(tmp_path):
         ProjectActivity,
         LatexWorkspace,
         PythonWorkspace,
+        PythonAnalysisRun,
         PythonWorkspaceArtifact,
     ):
         model.__table__.create(engine)
@@ -478,6 +487,142 @@ def test_saved_python_outputs_include_run_script_and_input_filenames(tmp_path):
             )
             assert invalid_inputs.status_code == 422
             assert invalid_script.status_code == 422
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_python_outputs_persist_and_serve_exact_run_snapshots(tmp_path):
+    engine, db, owner, project = _database(tmp_path)
+    path = f"/api/projects/{project.project_id}/python"
+    run_at = "2026-11-26T19:00:00.000Z"
+    sources = [
+        {"filename": "main.py", "code": "from helpers import value\nprint(value())"},
+        {"filename": "helpers.py", "code": "def value(): return 42"},
+    ]
+    input_content = b"sample,value\nA,42\n"
+    try:
+        with _client(db, owner) as client:
+            saved = client.put(
+                path,
+                json={"files": sources, "expected_updated_at": None},
+            )
+            assert saved.status_code == 200
+            response = client.put(
+                f"{path}/artifacts",
+                data={
+                    "script_filename": "main.py",
+                    "input_filenames": '["study.csv"]',
+                    "source_files": json.dumps(sources),
+                    "run_at": run_at,
+                },
+                files=[
+                    ("files", _upload("figure.png")["files"]),
+                    ("files", ("summary.csv", b"sample,value\nA,42\n", "text/csv")),
+                    ("inputs", ("study.csv", input_content, "text/csv")),
+                ],
+            )
+            assert response.status_code == 200
+            artifacts = response.json()
+            artifact = next(item for item in artifacts if item["filename"] == "figure.png")
+            assert artifact["run_id"]
+            assert {item["run_id"] for item in artifacts} == {artifact["run_id"]}
+            assert datetime.fromisoformat(artifact["run_at"].replace("Z", "+00:00")).replace(
+                tzinfo=timezone.utc
+            ) == datetime.fromisoformat(run_at)
+            assert artifact["script_filename"] == "main.py"
+            assert artifact["input_filenames"] == ["study.csv"]
+
+            later = client.put(
+                path,
+                json={
+                    "files": [{"filename": "main.py", "code": "print('changed')"}],
+                    "expected_updated_at": saved.json()["updated_at"],
+                },
+            )
+            assert later.status_code == 200
+            provenance = client.get(f"{path}/runs/{artifact['run_id']}")
+            assert provenance.status_code == 200
+            assert provenance.json()["source_files"] == sources
+            assert provenance.json()["inputs"] == [
+                {"filename": "study.csv", "byte_size": len(input_content)},
+            ]
+            downloaded = client.get(
+                f"{path}/runs/{artifact['run_id']}/inputs/study.csv"
+            )
+            assert downloaded.status_code == 200
+            assert downloaded.content == input_content
+            assert downloaded.headers["content-disposition"] == 'attachment; filename="study.csv"'
+            assert client.get(path).json()["artifacts"][0]["run_id"] == artifact["run_id"]
+            assert client.delete(f"{path}/artifacts/figure.png").status_code == 204
+            assert client.get(f"{path}/runs/{artifact['run_id']}").status_code == 200
+            assert client.delete(f"{path}/artifacts/summary.csv").status_code == 204
+            assert client.get(f"{path}/runs/{artifact['run_id']}").status_code == 404
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_python_run_snapshot_validation_is_atomic_and_project_scoped(tmp_path, monkeypatch):
+    engine, db, owner, project = _database(tmp_path)
+    path = f"/api/projects/{project.project_id}/python/artifacts"
+    try:
+        with _client(db, owner) as client:
+            incomplete = client.put(
+                path,
+                data={
+                    "script_filename": "main.py",
+                    "source_files": json.dumps([{"filename": "main.py", "code": "print(1)"}]),
+                },
+                files=[("files", _upload("figure.png")["files"])],
+            )
+            invalid_inputs = client.put(
+                path,
+                data={
+                    "script_filename": "main.py",
+                    "source_files": json.dumps([{"filename": "main.py", "code": "print(1)"}]),
+                    "run_at": "2026-11-26T19:00:00+00:00",
+                    "input_filenames": '["../private.csv"]',
+                },
+                files=[
+                    ("files", _upload("figure.png")["files"]),
+                    ("inputs", ("../private.csv", b"x", "text/csv")),
+                ],
+            )
+            assert incomplete.status_code == 422
+            assert invalid_inputs.status_code == 422
+            assert client.get(f"/api/projects/{project.project_id}/python").json()["artifacts"] == []
+
+            valid = client.put(
+                path,
+                data={
+                    "script_filename": "main.py",
+                    "source_files": json.dumps([{"filename": "main.py", "code": "print(1)"}]),
+                    "run_at": "2026-11-26T19:00:00+00:00",
+                    "input_filenames": "[]",
+                },
+                files=[("files", _upload("figure.png")["files"])],
+            )
+            run_id = valid.json()[0]["run_id"]
+            assert run_id
+            other_project_path = f"/api/projects/{uuid.uuid4()}/python"
+            assert client.get(f"{other_project_path}/runs/{run_id}").status_code == 404
+
+            monkeypatch.setattr(python_workspace, "MAX_RUN_SNAPSHOT_TOTAL_BYTES", 1)
+            over_quota = client.put(
+                path,
+                data={
+                    "script_filename": "main.py",
+                    "source_files": json.dumps([{"filename": "main.py", "code": "print(2)"}]),
+                    "run_at": "2026-11-26T19:01:00+00:00",
+                    "input_filenames": "[]",
+                },
+                files=[("files", _upload("figure.png")["files"])],
+            )
+            assert over_quota.status_code == 413
+            assert [item["filename"] for item in client.get(
+                f"/api/projects/{project.project_id}/python"
+            ).json()["artifacts"]] == ["figure.png"]
     finally:
         db.close()
         engine.dispose()

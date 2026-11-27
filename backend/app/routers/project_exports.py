@@ -2,6 +2,7 @@ import json
 import tempfile
 import uuid
 import zipfile
+import base64
 from datetime import datetime, timezone
 from typing import Iterator
 
@@ -17,6 +18,7 @@ from app.models import (
     Document,
     LatexWorkspace,
     Message,
+    PythonAnalysisRun,
     PythonWorkspace,
     PythonWorkspaceArtifact,
     ResearchProject,
@@ -46,6 +48,12 @@ def _write_json(archive: zipfile.ZipFile, name: str, value: object) -> None:
 def _safe_document_filename(filename: str) -> str:
     basename = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
     return basename if basename not in {"", ".", ".."} else "document"
+
+
+def _isoformat_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def _stream_archive(archive_file) -> Iterator[bytes]:
@@ -83,6 +91,19 @@ def export_project_bundle(
             .where(PythonWorkspaceArtifact.project_id == project_id)
             .order_by(PythonWorkspaceArtifact.filename)
         ).all()
+    )
+    run_ids = {artifact.run_id for artifact in python_artifacts if artifact.run_id is not None}
+    python_runs = (
+        list(
+            db.scalars(
+                select(PythonAnalysisRun)
+                .where(PythonAnalysisRun.project_id == project_id)
+                .where(PythonAnalysisRun.run_id.in_(run_ids))
+                .order_by(PythonAnalysisRun.run_at, PythonAnalysisRun.run_id)
+            ).all()
+        )
+        if run_ids
+        else []
     )
     review = db.get(SystematicReviewWorkspace, project_id)
     conversations = (
@@ -138,7 +159,7 @@ def export_project_bundle(
     }
     manifest = {
         "format": "fieldnotes-project-export",
-        "format_version": 1,
+        "format_version": 2,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "exported_by": str(user.user_id),
         "options": {
@@ -155,6 +176,7 @@ def export_project_bundle(
         "latex_workspace_saved": workspace is not None,
         "python_workspace_saved": python_workspace is not None,
         "python_artifact_count": len(python_artifacts),
+        "python_run_count": len(python_runs),
         "systematic_review_saved": review is not None,
     }
     archive_file = tempfile.SpooledTemporaryFile(max_size=SPOOL_MAX_BYTES, mode="w+b")
@@ -174,7 +196,8 @@ def export_project_bundle(
                     "project.json contains project metadata. References are provided as "
                     "JSON, RIS, and BibTeX; notes and review details are JSON; writing "
                     "files are plain text. Python source and generated outputs are "
-                    "included under writing/python/ and writing/python-output/.\n"
+                    "included under writing/python/ and writing/python-output/. Reproducible "
+                    "run snapshots are included under writing/python-runs/.\n"
                     "documents/index.json lists project documents. Original files are "
                     "included only when selected in the export options.\n"
                     "When conversations are selected, the archive contains only "
@@ -221,6 +244,56 @@ def export_project_bundle(
                     f"writing/python-output/{artifact.filename}",
                     artifact.content,
                 )
+            _write_json(
+                archive,
+                "writing/python-output/manifest.json",
+                [
+                    {
+                        "filename": artifact.filename,
+                        "run_id": str(artifact.run_id) if artifact.run_id else None,
+                        "run_at": _isoformat_utc(artifact.run_at) if artifact.run_at else None,
+                        "script_filename": artifact.script_filename,
+                        "input_filenames": artifact.input_filenames,
+                    }
+                    for artifact in python_artifacts
+                ],
+            )
+            for run in python_runs:
+                run_root = f"writing/python-runs/{run.run_id}"
+                _write_json(
+                    archive,
+                    f"{run_root}/provenance.json",
+                    {
+                        "run_id": str(run.run_id),
+                        "run_at": _isoformat_utc(run.run_at),
+                        "script_filename": run.script_filename,
+                        "source_files": [
+                            {
+                                "filename": source["filename"],
+                                "path": f"{run_root}/source/{source['filename']}",
+                            }
+                            for source in run.source_files
+                        ],
+                        "inputs": [
+                            {
+                                "filename": str(input_file["filename"]),
+                                "byte_size": int(input_file["byte_size"]),
+                                "path": f"{run_root}/inputs/{input_file['filename']}",
+                            }
+                            for input_file in run.input_files
+                        ],
+                    },
+                )
+                for source in run.source_files:
+                    archive.writestr(
+                        f"{run_root}/source/{source['filename']}",
+                        source["code"],
+                    )
+                for input_file in run.input_files:
+                    archive.writestr(
+                        f"{run_root}/inputs/{input_file['filename']}",
+                        base64.b64decode(str(input_file["content_base64"]), validate=True),
+                    )
             _write_json(
                 archive,
                 "review/systematic_review.json",

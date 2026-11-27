@@ -36,6 +36,16 @@ type PythonArtifact = {
   updated_at: string;
   script_filename: string | null;
   input_filenames: string[];
+  run_id: string | null;
+  run_at: string | null;
+};
+
+type PythonRunProvenance = {
+  run_id: string;
+  run_at: string;
+  script_filename: string;
+  source_files: PythonSourceFile[];
+  inputs: Array<{ filename: string; byte_size: number }>;
 };
 
 type WorkspaceVersion = {
@@ -80,6 +90,13 @@ type WorkerReply = {
   outputs: PythonOutput[];
 };
 
+type RunSnapshot = {
+  runAt: string;
+  scriptFilename: string;
+  sourceFiles: PythonSourceFile[];
+  inputFiles: File[];
+};
+
 const RUN_TIMEOUT_MS = 180_000;
 const MAX_CODE_LENGTH = 100_000;
 const PYTHON_EXTENSIONS = [python()];
@@ -122,6 +139,10 @@ export function PythonAnalysisWorkspace({
   const [comparisonLoading, setComparisonLoading] = useState<string | null>(null);
   const [comparisonError, setComparisonError] = useState("");
   const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
+  const [expandedArtifact, setExpandedArtifact] = useState<string | null>(null);
+  const [runProvenance, setRunProvenance] = useState<Record<string, PythonRunProvenance>>({});
+  const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  const [runProvenanceError, setRunProvenanceError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const savedFilesRef = useRef("");
   const updatedAtRef = useRef<string | null>(null);
@@ -367,10 +388,12 @@ export function PythonAnalysisWorkspace({
 
   async function runCode() {
     if (!canEdit || running || loading || !loaded || restoringVersion !== null) return;
+    const scriptFilename = selectedFilename;
+    const selectedInputs = [...inputFiles];
     setError("");
     setInputError("");
     setPreviewError("");
-    const validation = validatePythonInputs(inputFiles);
+    const validation = validatePythonInputs(selectedInputs);
     if (validation) {
       setInputError(validation);
       return;
@@ -380,11 +403,24 @@ export function PythonAnalysisWorkspace({
     setRunOutput("Loading Python and running your analysis…");
     const filesToRun = workspaceRef.current.files ?? [];
     try {
-      const inputs = await Promise.all(inputFiles.map(async (file) => ({
+      const inputs = await Promise.all(selectedInputs.map(async (file) => ({
         name: file.name,
         content: await file.arrayBuffer(),
       })));
       if (!mountedRef.current) return;
+      const sourceFiles = (workspaceRef.current.files ?? []).map((file) => ({ ...file }));
+      if (!sourceFiles.some((file) => file.filename === scriptFilename)) {
+        setRunning(false);
+        setError("The selected Python script is no longer available.");
+        setRunOutput("");
+        return;
+      }
+      const runSnapshot: RunSnapshot = {
+        runAt: new Date().toISOString(),
+        scriptFilename,
+        sourceFiles,
+        inputFiles: selectedInputs,
+      };
       const worker = workerRef.current ?? new Worker(
         new URL("./pythonRunner.worker.ts", import.meta.url),
         { type: "module" },
@@ -397,7 +433,7 @@ export function PythonAnalysisWorkspace({
         if (event.data.requestId !== requestId) return;
         if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
-        void handleWorkerReply(event.data);
+        void handleWorkerReply(event.data, runSnapshot);
       };
       worker.onerror = (event) => {
         if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
@@ -418,7 +454,7 @@ export function PythonAnalysisWorkspace({
         setRunOutput("");
       }, RUN_TIMEOUT_MS);
       worker.postMessage(
-        { requestId, entrypoint: selectedFilename, files: filesToRun, inputs },
+        { requestId, entrypoint: scriptFilename, files: filesToRun, inputs },
         inputs.map((input) => input.content),
       );
     } catch (cause) {
@@ -428,7 +464,7 @@ export function PythonAnalysisWorkspace({
     }
   }
 
-  async function handleWorkerReply(reply: WorkerReply) {
+  async function handleWorkerReply(reply: WorkerReply, snapshot: RunSnapshot) {
     if (!mountedRef.current) return;
     setRunOutput(reply.stdout || "");
     if (reply.error) {
@@ -439,8 +475,11 @@ export function PythonAnalysisWorkspace({
     try {
       if (reply.outputs.length) {
         const form = new FormData();
-        form.append("script_filename", selectedFilename);
-        form.append("input_filenames", JSON.stringify(inputFiles.map((file) => file.name)));
+        form.append("script_filename", snapshot.scriptFilename);
+        form.append("input_filenames", JSON.stringify(snapshot.inputFiles.map((file) => file.name)));
+        form.append("source_files", JSON.stringify(snapshot.sourceFiles));
+        form.append("run_at", snapshot.runAt);
+        for (const input of snapshot.inputFiles) form.append("inputs", input, input.name);
         for (const output of reply.outputs) {
           form.append("files", new Blob([output.content]), output.name);
         }
@@ -497,6 +536,40 @@ export function PythonAnalysisWorkspace({
       }
     } catch (cause) {
       setPreviewError(cause instanceof Error ? cause.message : "Could not preview this output.");
+    }
+  }
+
+  async function toggleRunProvenance(artifact: PythonArtifact) {
+    const runId = artifact.run_id;
+    if (!runId) return;
+    if (expandedArtifact === artifact.filename) {
+      setExpandedArtifact(null);
+      setRunProvenanceError("");
+      return;
+    }
+    setExpandedArtifact(artifact.filename);
+    setRunProvenanceError("");
+    if (runProvenance[runId]) return;
+    setLoadingRunId(runId);
+    try {
+      const details = await request<PythonRunProvenance>(`${path}/runs/${runId}`);
+      setRunProvenance((current) => ({ ...current, [runId]: details }));
+    } catch (cause) {
+      setRunProvenanceError(cause instanceof Error ? cause.message : "Could not load this run record.");
+    } finally {
+      setLoadingRunId(null);
+    }
+  }
+
+  async function downloadRunInput(runId: string, filename: string) {
+    setError("");
+    try {
+      await downloadFile(
+        `${path}/runs/${runId}/inputs/${encodeURIComponent(filename)}`,
+        filename,
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not download this run input.");
     }
   }
 
@@ -786,7 +859,7 @@ export function PythonAnalysisWorkspace({
                   setInputError("");
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
-                disabled={running}
+                disabled={saving || running}
               >
                 Clear inputs
               </button>
@@ -794,8 +867,10 @@ export function PythonAnalysisWorkspace({
           )}
           {inputError && <p className="inline-error latex-error" role="alert">{inputError}</p>}
           <p className="python-workspace-note">
-            Input files stay in this browser. In Python, read them from <code>/inputs</code> and save supported
-            outputs to <code>/outputs</code>. The first run downloads the Python runtime and data-science packages.
+            Inputs stay in this browser unless a run creates outputs. Saving outputs uploads the exact scripts and
+            selected input files to this project so collaborators can inspect and download the run record. In Python,
+            read inputs from <code>/inputs</code> and save supported outputs to <code>/outputs</code>.
+            The first run downloads the Python runtime and data-science packages.
           </p>
           {runOutput && <pre className="python-run-output" aria-label="Python output">{runOutput}</pre>}
           <div className="python-artifacts">
@@ -806,16 +881,62 @@ export function PythonAnalysisWorkspace({
             </div>
             {workspace.artifacts.length ? workspace.artifacts.map((artifact) => {
               const insertionAvailable = /\.(png|tex)$/i.test(artifact.filename);
+              const runId = artifact.run_id;
               return (
                 <article className="python-artifact" key={artifact.filename}>
                   {artifact.content_type === "image/png" ? <FileImage size={14} /> : <FileSpreadsheet size={14} />}
                   <span className="python-artifact-name">{artifact.filename}</span>
                   <small>{(artifact.byte_size / 1024).toFixed(1)} KB</small>
                   <small className="python-artifact-provenance">
-                    Script: {artifact.script_filename ?? "Unknown"} · Selected inputs: {artifact.input_filenames.length
+                    Run: {artifact.run_at ? new Date(artifact.run_at).toLocaleString() : "Time not recorded"} ·
+                    {" "}Script: {artifact.script_filename ?? "Unknown"} · Inputs: {artifact.input_filenames.length
                       ? artifact.input_filenames.join(", ")
                       : "None"}
                   </small>
+                  {runId && (
+                    <button
+                      type="button"
+                      aria-expanded={expandedArtifact === artifact.filename}
+                      onClick={() => void toggleRunProvenance(artifact)}
+                    >
+                      {loadingRunId === runId
+                        ? "Loading run record…"
+                        : expandedArtifact === artifact.filename ? "Hide run record" : "Run record"}
+                    </button>
+                  )}
+                  {expandedArtifact === artifact.filename && runId && (
+                    <div className="python-artifact-run-record">
+                      {runProvenanceError && <p className="inline-error" role="alert">{runProvenanceError}</p>}
+                      {runProvenance[runId] && (
+                        <>
+                          <p>Run time: {new Date(runProvenance[runId].run_at).toLocaleString()}</p>
+                          <details>
+                            <summary>Source snapshot ({runProvenance[runId].source_files.length} files)</summary>
+                            {runProvenance[runId].source_files.map((source) => (
+                              <details key={source.filename}>
+                                <summary>{source.filename}</summary>
+                                <pre>{source.code}</pre>
+                              </details>
+                            ))}
+                          </details>
+                          <div>
+                            <strong>Input snapshots</strong>
+                            {runProvenance[runId].inputs.length ? (
+                              runProvenance[runId].inputs.map((input) => (
+                                <button
+                                  type="button"
+                                  key={input.filename}
+                                  onClick={() => void downloadRunInput(runId, input.filename)}
+                                >
+                                  <Download size={12} /> {input.filename} ({(input.byte_size / 1024).toFixed(1)} KB)
+                                </button>
+                              ))
+                            ) : <p>No input files were used.</p>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <button type="button" onClick={() => void previewArtifact(artifact)}>Preview</button>
                   <button
                     type="button"

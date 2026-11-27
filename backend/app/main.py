@@ -15,6 +15,7 @@ from app.database import (
     ensure_project_paper_screening_columns,
     ensure_project_team_workspace_column,
     ensure_python_artifact_provenance_columns,
+    ensure_python_artifact_run_columns,
     ensure_python_workspace_files_column,
     ensure_search_query_reproducibility_columns,
     ensure_user_profile_picture_column,
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
     ensure_annotation_synthesis_columns(research_engine)
     ensure_python_workspace_files_column(research_engine)
     ensure_python_artifact_provenance_columns(research_engine)
+    ensure_python_artifact_run_columns(research_engine)
     ensure_search_query_reproducibility_columns(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield

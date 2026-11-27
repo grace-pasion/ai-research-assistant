@@ -1,5 +1,6 @@
+import base64
+import binascii
 import json
-import re
 import uuid
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     ProjectFileVersion,
+    PythonAnalysisRun,
     PythonWorkspace,
     PythonWorkspaceArtifact,
     ResearchProject,
@@ -22,6 +24,8 @@ from app.schemas import (
     PythonWorkspaceFile,
     PythonWorkspaceResponse,
     PythonWorkspaceUpdate,
+    PythonRunInputMetadata,
+    PythonRunProvenance,
     WorkspaceRestoreRequest,
     WorkspaceVersionDetails,
     WorkspaceVersionMetadata,
@@ -32,6 +36,11 @@ from app.services.python_workspace import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     MAX_ARTIFACT_TOTAL_BYTES,
+    INPUT_FILENAME_PATTERN,
+    MAX_INPUT_FILE_BYTES,
+    MAX_INPUT_FILE_COUNT,
+    MAX_INPUT_TOTAL_BYTES,
+    MAX_RUN_SNAPSHOT_TOTAL_BYTES,
     validate_artifact,
     validate_artifact_name,
     validate_python_source_files,
@@ -55,10 +64,6 @@ import matplotlib.pyplot as plt
 # Example:
 # data = pd.read_csv("/inputs/study.csv")
 """
-MAX_INPUT_FILE_COUNT = 10
-INPUT_FILENAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-
-
 def _artifact_metadata(artifact: PythonWorkspaceArtifact) -> PythonArtifactMetadata:
     return PythonArtifactMetadata(
         filename=artifact.filename,
@@ -67,6 +72,8 @@ def _artifact_metadata(artifact: PythonWorkspaceArtifact) -> PythonArtifactMetad
         updated_at=artifact.updated_at,
         script_filename=artifact.script_filename,
         input_filenames=artifact.input_filenames,
+        run_id=artifact.run_id,
+        run_at=_normalize_timestamp(artifact.run_at),
     )
 
 
@@ -106,6 +113,29 @@ def _artifacts(db: Session, project_id: uuid.UUID) -> list[PythonWorkspaceArtifa
             .order_by(PythonWorkspaceArtifact.filename)
         ).all()
     )
+
+
+def _delete_unreferenced_runs(db: Session, project_id: uuid.UUID) -> None:
+    referenced_ids = set(
+        db.scalars(
+            select(PythonWorkspaceArtifact.run_id).where(
+                PythonWorkspaceArtifact.project_id == project_id,
+                PythonWorkspaceArtifact.run_id.is_not(None),
+            )
+        ).all()
+    )
+    runs = db.scalars(
+        select(PythonAnalysisRun).where(PythonAnalysisRun.project_id == project_id)
+    ).all()
+    for run in runs:
+        if run.run_id not in referenced_ids:
+            db.delete(run)
+
+
+def _run_snapshot_size(run: PythonAnalysisRun) -> int:
+    source_bytes = sum(len(source["code"].encode("utf-8")) for source in run.source_files)
+    input_bytes = sum(int(input_file["byte_size"]) for input_file in run.input_files)
+    return source_bytes + input_bytes
 
 
 def _normalize_timestamp(value: datetime | None) -> datetime | None:
@@ -412,13 +442,16 @@ async def save_python_artifacts(
     request: Request,
     files: list[UploadFile] = File(...),
     script_filename: str | None = Form(default=None),
-    input_filenames: str = Form(default="[]"),
+    input_filenames: str | None = Form(default=None),
+    source_files: str | None = Form(default=None),
+    run_at: datetime | None = Form(default=None),
+    inputs: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, user.user_id, "edit")
     try:
-        parsed_input_filenames = json.loads(input_filenames)
+        parsed_input_filenames = json.loads(input_filenames or "[]")
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=422, detail="Input filenames must be valid JSON.") from exc
     if (
@@ -438,6 +471,91 @@ async def save_python_artifacts(
     folded_inputs = [filename.casefold() for filename in parsed_input_filenames]
     if len(set(folded_inputs)) != len(folded_inputs):
         raise HTTPException(status_code=422, detail="Input filenames must be unique.")
+
+    parsed_source_files = None
+    if source_files is not None:
+        try:
+            decoded_source_files = json.loads(source_files)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="Source snapshot must be valid JSON.") from exc
+        if (
+            not isinstance(decoded_source_files, list)
+            or any(
+                not isinstance(source, dict)
+                or not isinstance(source.get("filename"), str)
+                or not isinstance(source.get("code"), str)
+                for source in decoded_source_files
+            )
+        ):
+            raise HTTPException(status_code=422, detail="Source snapshot must contain Python files.")
+        try:
+            parsed_source_files = validate_python_source_files(decoded_source_files)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    has_run_snapshot = source_files is not None or run_at is not None or bool(inputs)
+    parsed_run_inputs: list[dict[str, str | int]] = []
+    if has_run_snapshot:
+        if parsed_source_files is None or run_at is None or script_filename is None:
+            raise HTTPException(
+                status_code=422,
+                detail="A reproducible run requires its source snapshot, script filename, and run time.",
+            )
+        if run_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="Run time must include a timezone.")
+        if not any(source["filename"] == script_filename for source in parsed_source_files):
+            raise HTTPException(
+                status_code=422,
+                detail="The run script must be included in the source snapshot.",
+            )
+        if len(inputs) > MAX_INPUT_FILE_COUNT:
+            raise HTTPException(
+                status_code=413,
+                detail=f"A run can include up to {MAX_INPUT_FILE_COUNT} input files.",
+            )
+        total_input_bytes = 0
+        seen_input_names: set[str] = set()
+        for input_file in inputs:
+            filename = input_file.filename or ""
+            if (
+                not INPUT_FILENAME_PATTERN.fullmatch(filename)
+                or not filename.casefold().endswith((".csv", ".tsv"))
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Input files must have simple CSV or TSV filenames.",
+                )
+            folded_name = filename.casefold()
+            if folded_name in seen_input_names:
+                raise HTTPException(status_code=422, detail="Input filenames must be unique.")
+            seen_input_names.add(folded_name)
+            content = await input_file.read(MAX_INPUT_FILE_BYTES + 1)
+            if not content:
+                raise HTTPException(status_code=422, detail=f"{filename} is empty.")
+            if len(content) > MAX_INPUT_FILE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"{filename} exceeds the 5 MB input-file limit.",
+                )
+            total_input_bytes += len(content)
+            if total_input_bytes > MAX_INPUT_TOTAL_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Input files exceed the 20 MB per-run limit.",
+                )
+            parsed_run_inputs.append({
+                "filename": filename,
+                "byte_size": len(content),
+                "content_base64": base64.b64encode(content).decode("ascii"),
+            })
+        actual_input_names = [str(input_file["filename"]) for input_file in parsed_run_inputs]
+        if input_filenames is not None and [name.casefold() for name in actual_input_names] != folded_inputs:
+            raise HTTPException(
+                status_code=422,
+                detail="Input filenames must match the uploaded input-file snapshots.",
+            )
+        parsed_input_filenames = actual_input_names
+
     if script_filename is not None:
         source_files = _workspace_response(_workspace(db, project_id), []).files
         if not any(source.filename == script_filename for source in source_files):
@@ -447,8 +565,14 @@ async def save_python_artifacts(
             )
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit():
-        if int(content_length) > MAX_ARTIFACT_TOTAL_BYTES + 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Generated outputs exceed the 20 MB limit.")
+        maximum_request_bytes = (
+            MAX_ARTIFACT_TOTAL_BYTES + MAX_INPUT_TOTAL_BYTES + 8 * 1024 * 1024
+        )
+        if int(content_length) > maximum_request_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail="Generated outputs and input snapshots exceed the request-size limit.",
+            )
     if not files:
         raise HTTPException(status_code=422, detail="Select at least one generated output.")
     if len(files) > MAX_ARTIFACT_COUNT:
@@ -513,6 +637,45 @@ async def save_python_artifacts(
             detail=f"Generated outputs exceed the {MAX_ARTIFACT_TOTAL_BYTES // (1024 * 1024)} MB project limit.",
         )
 
+    run = None
+    normalized_run_at = run_at.astimezone(timezone.utc) if has_run_snapshot and run_at else None
+    if has_run_snapshot:
+        retained_run_ids = {
+            artifact.run_id
+            for artifact in existing
+            if artifact.run_id is not None
+            and artifact.filename.casefold() not in pending_names
+        }
+        retained_runs = (
+            db.scalars(
+                select(PythonAnalysisRun).where(
+                    PythonAnalysisRun.project_id == project_id,
+                    PythonAnalysisRun.run_id.in_(retained_run_ids),
+                )
+            ).all()
+            if retained_run_ids
+            else []
+        )
+        new_run_size = sum(
+            len(source["code"].encode("utf-8")) for source in parsed_source_files or []
+        ) + sum(int(input_file["byte_size"]) for input_file in parsed_run_inputs)
+        retained_snapshot_bytes = sum(_run_snapshot_size(existing_run) for existing_run in retained_runs)
+        if retained_snapshot_bytes + new_run_size > MAX_RUN_SNAPSHOT_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Saved Python run snapshots exceed the 100 MB per-project limit.",
+            )
+        run = PythonAnalysisRun(
+            project_id=project_id,
+            script_filename=script_filename,
+            source_files=parsed_source_files,
+            input_files=parsed_run_inputs,
+            run_at=normalized_run_at,
+            created_by=user.user_id,
+        )
+        db.add(run)
+        db.flush()
+
     by_name = {artifact.filename.casefold(): artifact for artifact in existing}
     for filename, content_type, content in pending:
         artifact = by_name.get(filename.casefold())
@@ -525,6 +688,8 @@ async def save_python_artifacts(
                 byte_size=len(content),
                 script_filename=script_filename,
                 input_filenames=parsed_input_filenames,
+                run_id=run.run_id if run else None,
+                run_at=normalized_run_at,
             )
             db.add(artifact)
             by_name[filename.casefold()] = artifact
@@ -535,6 +700,8 @@ async def save_python_artifacts(
             artifact.byte_size = len(content)
             artifact.script_filename = script_filename
             artifact.input_filenames = parsed_input_filenames
+            artifact.run_id = run.run_id if run else None
+            artifact.run_at = normalized_run_at
             artifact.updated_at = datetime.now(timezone.utc)
     record_activity(
         db,
@@ -544,6 +711,8 @@ async def save_python_artifacts(
         project_id=project_id,
     )
     try:
+        db.flush()
+        _delete_unreferenced_runs(db, project_id)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -552,6 +721,74 @@ async def save_python_artifacts(
             detail="Generated outputs changed in another session. Reload and run again.",
         ) from exc
     return [_artifact_metadata(artifact) for artifact in _artifacts(db, project_id)]
+
+
+@router.get("/runs/{run_id}", response_model=PythonRunProvenance)
+def get_python_run_provenance(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    run = db.scalar(
+        select(PythonAnalysisRun).where(
+            PythonAnalysisRun.project_id == project_id,
+            PythonAnalysisRun.run_id == run_id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Python run provenance not found.")
+    return PythonRunProvenance(
+        run_id=run.run_id,
+        run_at=_normalize_timestamp(run.run_at),
+        script_filename=run.script_filename,
+        source_files=run.source_files,
+        inputs=[
+            PythonRunInputMetadata(filename=str(item["filename"]), byte_size=int(item["byte_size"]))
+            for item in run.input_files
+        ],
+    )
+
+
+@router.get("/runs/{run_id}/inputs/{filename}")
+def download_python_run_input(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    filename: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    if not INPUT_FILENAME_PATTERN.fullmatch(filename):
+        raise HTTPException(status_code=422, detail="Input filename is invalid.")
+    run = db.scalar(
+        select(PythonAnalysisRun).where(
+            PythonAnalysisRun.project_id == project_id,
+            PythonAnalysisRun.run_id == run_id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Python run provenance not found.")
+    input_file = next(
+        (item for item in run.input_files if item["filename"] == filename),
+        None,
+    )
+    if input_file is None:
+        raise HTTPException(status_code=404, detail="Run input file not found.")
+    try:
+        content = base64.b64decode(str(input_file["content_base64"]), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Stored run input is invalid.") from exc
+    content_type = "text/csv" if filename.casefold().endswith(".csv") else "text/tab-separated-values"
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/artifacts/{filename}")
@@ -612,5 +849,7 @@ def delete_python_artifact(
         {"filename": filename},
         project_id=project_id,
     )
+    db.flush()
+    _delete_unreferenced_runs(db, project_id)
     db.commit()
     return Response(status_code=204)

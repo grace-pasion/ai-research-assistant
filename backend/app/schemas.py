@@ -440,6 +440,21 @@ class PythonArtifactMetadata(BaseModel):
     updated_at: datetime
     script_filename: str | None = None
     input_filenames: list[str] = Field(default_factory=list)
+    run_id: uuid.UUID | None = None
+    run_at: datetime | None = None
+
+
+class PythonRunInputMetadata(BaseModel):
+    filename: str
+    byte_size: int
+
+
+class PythonRunProvenance(BaseModel):
+    run_id: uuid.UUID
+    run_at: datetime
+    script_filename: str
+    source_files: list[PythonWorkspaceFile]
+    inputs: list[PythonRunInputMetadata]
 
 
 class PythonWorkspaceResponse(BaseModel):
