@@ -16,7 +16,7 @@ The browser API client retries network-level failures for idempotent GET request
 
 | Layer | Technology/service | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, cross-project search and per-user search history, project Literature search history, the project Home dashboard, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, and project backup bundles. |
+| Web client | React 18, TypeScript, Vite, CodeMirror 6 | Login and registration, account profile/settings and AI usage, personal and organization team workspaces, role-based project sharing, workspace/project channels and direct messages, cross-project search and per-user search history, project Literature search history, the project Home dashboard, document and paper views, taggable/pinnable project notes with related-source links and cached AI summaries, LaTeX editor/PDF compilation, a project-files Python analysis editor, assistant review UI, cited research brief export, selectable research-packet exports, and project backup bundles. |
 | Static web hosting | GitHub Pages | Serves the built frontend at `https://grace-pasion.github.io/ai-research-assistant/`. It does not host the API, database, or documents. |
 | Build and publish | GitHub Actions | Installs frontend dependencies, runs Vitest, builds the static site, and publishes it to Pages on pushes to `main` or a manual workflow run. `VITE_API_URL` can be overridden with a repository Actions variable; otherwise the workflow uses the configured Render API URL. |
 | Admin portal | Separate React view at `?portal=admin` | Uses the same frontend bundle, but a separate login screen and isolated browser token. The backend grants administrator access only to existing accounts listed in `ADMIN_EMAILS`. |
@@ -41,7 +41,7 @@ flowchart LR
 ### Backend organization
 
 - `backend/app/main.py` creates the FastAPI application, CORS policy, database engines/session factories, startup schema initialization, and route registration.
-- `backend/app/routers/` implements authentication, administrator, projects, collaboration and messaging, documents, papers, annotations, source-linked tasks, LaTeX and Python writing workspaces, usage, and assistant endpoints.
+- `backend/app/routers/` implements authentication, administrator, projects, collaboration and messaging, documents, papers, annotations, source-linked tasks, LaTeX and Python writing workspaces, project and research-packet exports, usage, and assistant endpoints.
 - `backend/app/services/` implements academic search, extraction/chunking, document processing, local/Supabase file storage, Python output validation, AI retrieval/generation, activity recording, and atomic sign-in/daily prompt limits.
 - `backend/app/models.py` defines separate SQLAlchemy metadata for research data and literature data. The literature models use their own session factory even when both URLs point at the same physical PostgreSQL database.
 - `backend/app/config.py` loads backend settings from environment variables (and `.env` for local development). OpenAI, database, JWT, and Supabase credentials belong on the backend, never in the frontend.
@@ -200,6 +200,12 @@ The verifier is another model call and can still make mistakes; evidence checkin
 2. Original uploaded files and assistant conversations are independent opt-in options, both off by default. When selected, originals are read by the API from private storage and safely placed under `original_documents/`; any storage failure aborts the export instead of returning a partial archive.
 3. Conversation exports are limited to conversations authored by the requesting user. Source links are restricted to documents and papers in the exported project, so collaborator histories and unrelated project sources remain private. The manifest records the options and counts. The ZIP is a portable data export, not an automatic restore file.
 
+### Export a selected research packet
+
+1. A collaborator with project read access opens **Research packet** in the project header and selects up to 100 saved papers, 500 project notes, and 100 of their own approved assistant responses. The selection is submitted to the API; no packet records are persisted.
+2. The API verifies every selected item belongs to the project. Assistant responses must be reviewed, have an approval ID, and belong to a conversation authored by the requesting user. An unavailable item or citation causes an explicit error rather than a partial archive.
+3. The ZIP contains a manifest, selected paper metadata, selected notes with tags/pin state/related-source links, and approved response JSON plus individual Markdown copies. It includes RIS and BibTeX references for selected papers and papers cited by selected responses or notes. Citation mappings include available document page numbers and paper bibliographic details. Collaborators' private conversations are never exposed.
+
 ## User feature inventory
 
 ### Accounts and workspace access
@@ -222,6 +228,7 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Create project-shared named collections of saved papers and documents, add or remove sources, rename or delete collections, and open each source in its original library. All collaborators can view collections; project editors and owners manage them.
 - Edit the project name and description.
 - Download a ZIP backup with project details, references, notes, writing files, review protocol, and document inventory. Original uploads and the requesting user's assistant conversations are optional; other collaborators' conversations are never included.
+- Select saved papers, notes, and the requesting user's own approved assistant responses for a focused research-packet ZIP with metadata, references, related-source links, and citation mappings.
 - Delete a project and its associated research data and stored document files after confirmation.
 
 ### Documents
@@ -313,6 +320,8 @@ Routes require a bearer token except health, registration, and login routes. The
 | `PATCH`, `DELETE` | `/api/projects/{project_id}` | Edit or delete an owned project. |
 | `GET` | `/api/projects/{project_id}/home/activity` | List up to 12 newest project activity items for the Home dashboard; requires project read access. |
 | `GET` | `/api/projects/{project_id}/export?include_original_documents=...&include_conversations=...` | Download a ZIP of project data; optional original files and only the requesting user's conversations. |
+| `GET` | `/api/projects/{project_id}/research-packet/assistant-outputs` | List only the requesting user's reviewed, approved assistant responses in this project for packet selection. |
+| `POST` | `/api/projects/{project_id}/research-packet` | Download a selected research-packet ZIP containing project papers, notes, references, and the requesting user's approved responses and citations. |
 | `POST` | `/api/projects/{project_id}/source-summaries` | Generate or reuse a project-shared, content-versioned AI summary for a ready project document or saved paper. |
 | `POST`, `GET` | `/api/projects/{project_id}/invitations` | Owner-only: invite a registered account with a `read`, `comment`, or `edit` role; list invitations and statuses. |
 | `DELETE` | `/api/projects/{project_id}/invitations/{invitation_id}` | Owner-only: revoke a pending invitation or accepted collaborator's access. |

@@ -807,6 +807,18 @@ h1, h2, h3, p { margin-top: 0; }
 .modal-heading h2 { color: #2d3932; font: 700 20px var(--serif); margin: 0 0 4px; }
 .project-export-modal { display: flex; flex-direction: column; gap: 15px; max-width: 520px; }
 .project-export-modal > .muted { font-size: 11px; line-height: 1.65; margin: 0; }
+.research-packet-modal { display: flex; flex-direction: column; gap: 13px; max-height: 90vh; max-width: 760px; overflow: auto; }
+.research-packet-modal > .muted { font-size: 11px; line-height: 1.65; margin: 0; }
+.research-packet-sections { display: grid; gap: 10px; max-height: 58vh; overflow: auto; }
+.research-packet-group { border: 1px solid #e5ebe6; border-radius: 8px; margin: 0; min-width: 0; padding: 9px; }
+.research-packet-group legend { color: #56615a; font-size: 11px; font-weight: 700; padding: 0 4px; }
+.research-packet-group > .muted { font-size: 10px; margin: 2px 3px 4px; }
+.research-packet-options { display: grid; gap: 6px; max-height: 180px; overflow: auto; }
+.research-packet-option { align-items: flex-start; background: #f8faf8; border: 1px solid #e8ede8; border-radius: 7px; cursor: pointer; display: flex; gap: 9px; min-width: 0; padding: 8px 9px; }
+.research-packet-option input { accent-color: #3a7459; flex: 0 0 auto; margin: 2px 0 0; }
+.research-packet-option span { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.research-packet-option strong { color: #46534b; font-size: 10px; overflow-wrap: anywhere; }
+.research-packet-option small { color: #839087; font-size: 9px; font-weight: 400; line-height: 1.4; overflow-wrap: anywhere; }
 .source-summary-modal { display: flex; flex-direction: column; gap: 16px; max-height: 90vh; max-width: 640px; overflow: auto; }
 .source-summary-modal .modal-heading h2 { overflow-wrap: anywhere; }
 .source-summary-loading { align-items: center; color: #647168; display: flex; font-size: 11px; gap: 8px; margin: 0; }

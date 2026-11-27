@@ -66,11 +66,18 @@ export function jsonBody(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export async function downloadFile(path: string, filename: string): Promise<void> {
-  const headers = new Headers();
+export async function downloadFile(
+  path: string,
+  filename: string,
+  options: RequestInit = {},
+): Promise<void> {
+  const headers = new Headers(options.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { headers });
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetchWithNetworkRetry(`${API_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     let message = `Download failed (${response.status})`;
     try {

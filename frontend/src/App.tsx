@@ -93,6 +93,7 @@ import type {
   ProjectCollaborator,
   ProjectTask,
   RecentProjectSource,
+  ResearchPacketAssistantOutputOption,
   ScreeningExclusionReason,
   SavedPaperSearch,
   SavedPaperSearchRun,
@@ -244,6 +245,20 @@ function App() {
   const [includeConversations, setIncludeConversations] = useState(false);
   const [projectExportBusy, setProjectExportBusy] = useState(false);
   const [projectExportError, setProjectExportError] = useState("");
+  const [showResearchPacket, setShowResearchPacket] = useState(false);
+  const [researchPacketLoading, setResearchPacketLoading] = useState(false);
+  const [researchPacketBusy, setResearchPacketBusy] = useState(false);
+  const [researchPacketError, setResearchPacketError] = useState("");
+  const [researchPacketPapers, setResearchPacketPapers] = useState<Paper[]>([]);
+  const [researchPacketNotes, setResearchPacketNotes] = useState<ProjectAnnotation[]>([]);
+  const [researchPacketOutputs, setResearchPacketOutputs] =
+    useState<ResearchPacketAssistantOutputOption[]>([]);
+  const [selectedResearchPacketPaperIds, setSelectedResearchPacketPaperIds] =
+    useState<Set<string>>(() => new Set());
+  const [selectedResearchPacketNoteIds, setSelectedResearchPacketNoteIds] =
+    useState<Set<string>>(() => new Set());
+  const [selectedResearchPacketOutputIds, setSelectedResearchPacketOutputIds] =
+    useState<Set<string>>(() => new Set());
   const [showInbox, setShowInbox] = useState(false);
   const [showTeamWorkspaces, setShowTeamWorkspaces] = useState(false);
   const [showTeamChannels, setShowTeamChannels] = useState(false);
@@ -449,6 +464,16 @@ function App() {
     setShowProjectExport(false);
     setProjectExportBusy(false);
     setProjectExportError("");
+    setShowResearchPacket(false);
+    setResearchPacketLoading(false);
+    setResearchPacketBusy(false);
+    setResearchPacketError("");
+    setResearchPacketPapers([]);
+    setResearchPacketNotes([]);
+    setResearchPacketOutputs([]);
+    setSelectedResearchPacketPaperIds(new Set());
+    setSelectedResearchPacketNoteIds(new Set());
+    setSelectedResearchPacketOutputIds(new Set());
     setProjectAnnotations([]);
     setProjectCollaborators([]);
     setProjectTasks([]);
@@ -1121,6 +1146,88 @@ function App() {
       setProjectExportError(cause instanceof Error ? cause.message : "Could not export this project.");
     } finally {
       if (selectedProjectIdRef.current === projectId) setProjectExportBusy(false);
+    }
+  }
+
+  async function openResearchPacket() {
+    if (!project || researchPacketLoading) return;
+    const projectId = project.project_id;
+    setShowResearchPacket(true);
+    setResearchPacketLoading(true);
+    setResearchPacketError("");
+    setError("");
+    setNotice("");
+    try {
+      const [loadedPapers, loadedNotes, loadedOutputs] = await Promise.all([
+        request<Paper[]>(`/api/projects/${projectId}/papers`),
+        request<ProjectAnnotation[]>(`/api/projects/${projectId}/annotations`),
+        request<ResearchPacketAssistantOutputOption[]>(
+          `/api/projects/${projectId}/research-packet/assistant-outputs`,
+        ),
+      ]);
+      if (selectedProjectIdRef.current !== projectId) return;
+      setResearchPacketPapers(loadedPapers);
+      setResearchPacketNotes(loadedNotes);
+      setResearchPacketOutputs(loadedOutputs);
+      setSelectedResearchPacketPaperIds(new Set(loadedPapers.map((paper) => paper.paper_id)));
+      setSelectedResearchPacketNoteIds(
+        new Set(loadedNotes.map((annotation) => annotation.annotation_id)),
+      );
+      setSelectedResearchPacketOutputIds(
+        new Set(loadedOutputs.map((output) => output.message_id)),
+      );
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== projectId) return;
+      setResearchPacketError(
+        cause instanceof Error ? cause.message : "Could not load research packet options.",
+      );
+    } finally {
+      if (selectedProjectIdRef.current === projectId) setResearchPacketLoading(false);
+    }
+  }
+
+  async function exportResearchPacket() {
+    if (!project || researchPacketBusy) return;
+    const projectId = project.project_id;
+    const body = {
+      paper_ids: [...selectedResearchPacketPaperIds],
+      annotation_ids: [...selectedResearchPacketNoteIds],
+      assistant_message_ids: [...selectedResearchPacketOutputIds],
+    };
+    if (
+      body.paper_ids.length > 100
+      || body.annotation_ids.length > 500
+      || body.assistant_message_ids.length > 100
+    ) {
+      setResearchPacketError(
+        "A packet can contain up to 100 papers, 500 notes, and 100 approved responses.",
+      );
+      return;
+    }
+    if (!body.paper_ids.length && !body.annotation_ids.length && !body.assistant_message_ids.length) {
+      setResearchPacketError("Select at least one paper, note, or approved assistant output.");
+      return;
+    }
+    setResearchPacketBusy(true);
+    setResearchPacketError("");
+    setError("");
+    setNotice("");
+    try {
+      await downloadFile(
+        `/api/projects/${projectId}/research-packet`,
+        "research-packet.zip",
+        { method: "POST", body: jsonBody(body) },
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setShowResearchPacket(false);
+      setNotice("Research packet downloaded.");
+    } catch (cause) {
+      if (selectedProjectIdRef.current !== projectId) return;
+      setResearchPacketError(
+        cause instanceof Error ? cause.message : "Could not export this research packet.",
+      );
+    } finally {
+      if (selectedProjectIdRef.current === projectId) setResearchPacketBusy(false);
     }
   }
 
@@ -2571,6 +2678,161 @@ function App() {
               </section>
             </div>
           )}
+          {showResearchPacket && project && (
+            <div className="modal-backdrop" onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !researchPacketBusy) {
+                setShowResearchPacket(false);
+              }
+            }}>
+              <section
+                className="modal-card research-packet-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="research-packet-title"
+                aria-busy={researchPacketLoading || researchPacketBusy}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">SELECTED PROJECT MATERIALS</p>
+                    <h2 id="research-packet-title">Export research packet</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setShowResearchPacket(false)}
+                    aria-label="Close"
+                    disabled={researchPacketBusy}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="muted">
+                  Choose papers, notes, and approved assistant responses. The ZIP includes
+                  reference files and citations for selected responses; only your own approved
+                  outputs are available. Each packet supports up to 100 papers, 500 notes, and
+                  100 approved responses.
+                </p>
+                {researchPacketError && (
+                  <p className="project-export-error" role="alert">{researchPacketError}</p>
+                )}
+                {researchPacketLoading ? (
+                  <p className="source-summary-loading">
+                    <LoaderCircle className="spin" size={14} /> Loading packet options…
+                  </p>
+                ) : (
+                  <div className="research-packet-sections">
+                    <fieldset className="research-packet-group">
+                      <legend>Saved papers ({researchPacketPapers.length})</legend>
+                      {researchPacketPapers.length ? (
+                        <div className="research-packet-options">
+                          {researchPacketPapers.map((paper) => (
+                            <label className="research-packet-option" key={paper.paper_id}>
+                              <input
+                                type="checkbox"
+                                checked={selectedResearchPacketPaperIds.has(paper.paper_id)}
+                                disabled={researchPacketBusy}
+                                onChange={() => setSelectedResearchPacketPaperIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(paper.paper_id)) next.delete(paper.paper_id);
+                                  else next.add(paper.paper_id);
+                                  return next;
+                                })}
+                              />
+                              <span>
+                                <strong>{paper.title}</strong>
+                                <small>
+                                  {paper.authors.slice(0, 3).map((author) => author.author_name).join(", ")
+                                    || "Author unavailable"}
+                                  {paper.publication_year ? ` · ${paper.publication_year}` : ""}
+                                </small>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : <p className="muted">No saved papers in this project.</p>}
+                    </fieldset>
+                    <fieldset className="research-packet-group">
+                      <legend>Project notes ({researchPacketNotes.length})</legend>
+                      {researchPacketNotes.length ? (
+                        <div className="research-packet-options">
+                          {researchPacketNotes.map((annotation) => (
+                            <label className="research-packet-option" key={annotation.annotation_id}>
+                              <input
+                                type="checkbox"
+                                checked={selectedResearchPacketNoteIds.has(annotation.annotation_id)}
+                                disabled={researchPacketBusy}
+                                onChange={() => setSelectedResearchPacketNoteIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(annotation.annotation_id)) next.delete(annotation.annotation_id);
+                                  else next.add(annotation.annotation_id);
+                                  return next;
+                                })}
+                              />
+                              <span>
+                                <strong>{annotation.source_title}</strong>
+                                <small>{annotation.note || annotation.quote || "Highlight"} · {annotation.tags.join(", ") || "Untagged"}</small>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : <p className="muted">No project notes are available.</p>}
+                    </fieldset>
+                    <fieldset className="research-packet-group">
+                      <legend>Approved assistant responses ({researchPacketOutputs.length})</legend>
+                      {researchPacketOutputs.length ? (
+                        <div className="research-packet-options">
+                          {researchPacketOutputs.map((output) => (
+                            <label className="research-packet-option" key={output.message_id}>
+                              <input
+                                type="checkbox"
+                                checked={selectedResearchPacketOutputIds.has(output.message_id)}
+                                disabled={researchPacketBusy}
+                                onChange={() => setSelectedResearchPacketOutputIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(output.message_id)) next.delete(output.message_id);
+                                  else next.add(output.message_id);
+                                  return next;
+                                })}
+                              />
+                              <span>
+                                <strong>{output.conversation_title} · {new Date(output.created_at).toLocaleDateString()}</strong>
+                                <small>{output.excerpt}</small>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : <p className="muted">No approved assistant responses are available.</p>}
+                    </fieldset>
+                  </div>
+                )}
+                <div className="project-export-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setShowResearchPacket(false)}
+                    disabled={researchPacketBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => void exportResearchPacket()}
+                    disabled={
+                      researchPacketLoading
+                      || researchPacketBusy
+                      || !(selectedResearchPacketPaperIds.size
+                        + selectedResearchPacketNoteIds.size
+                        + selectedResearchPacketOutputIds.size)
+                    }
+                  >
+                    <Download size={15} />
+                    {researchPacketBusy ? "Preparing packet…" : "Download research packet"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
           {sourceSummary && (
             <div className="modal-backdrop" onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeSourceSummary();
@@ -2706,6 +2968,9 @@ function App() {
                 <div className="project-heading-actions">
                   <button className="button secondary small-button" onClick={openProjectExport}>
                     <Download size={14} /> Export bundle
+                  </button>
+                  <button className="button secondary small-button" onClick={() => void openResearchPacket()}>
+                    <Download size={14} /> Research packet
                   </button>
                   {user && project.user_id === user.user_id && (
                     <button className="button secondary small-button edit-project" onClick={() => setShowEditProject(true)}>

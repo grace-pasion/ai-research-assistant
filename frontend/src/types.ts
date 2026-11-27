@@ -342,6 +342,14 @@ export type Conversation = {
   messages?: Message[];
 };
 
+export type ResearchPacketAssistantOutputOption = {
+  message_id: string;
+  conversation_id: string;
+  conversation_title: string;
+  created_at: string;
+  excerpt: string;
+};
+
 export type Colleague = {
   user_id: string;
   username: string;

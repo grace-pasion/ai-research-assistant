@@ -695,6 +695,29 @@ class ProjectAnnotationResponse(AnnotationResponse):
     source_title: str
 
 
+class ResearchPacketAssistantOutputOption(BaseModel):
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    conversation_title: str
+    created_at: datetime
+    excerpt: str
+
+
+class ResearchPacketRequest(BaseModel):
+    paper_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+    annotation_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+    assistant_message_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_selections(self):
+        selections = (self.paper_ids, self.annotation_ids, self.assistant_message_ids)
+        if not any(selections):
+            raise ValueError("Select at least one paper, note, or approved assistant output.")
+        if any(len(values) != len(set(values)) for values in selections):
+            raise ValueError("Research packet selections must not contain duplicates.")
+        return self
+
+
 class ProjectTaskCreate(BaseModel):
     source_type: Literal["document", "paper"]
     source_id: uuid.UUID
