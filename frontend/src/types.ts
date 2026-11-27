@@ -246,7 +246,28 @@ export type SearchResult = {
   query_id: string;
   provider: string;
   query: string;
+  searched_at: string;
+  filters: Record<string, string | number>;
+  result_count: number;
   results: Paper[];
+};
+
+export type SearchQueryHistoryRecord = {
+  query_id: string;
+  query_text: string;
+  api_provider: string;
+  searched_at: string;
+  search_filters: Record<string, string | number>;
+  result_count: number;
+};
+
+export type CrossProjectSearchRecord = {
+  record_id: string;
+  query_text: string;
+  provider: string;
+  searched_at: string;
+  filters: Record<string, string | number>;
+  result_count: number;
 };
 
 export type SavedPaperSearch = {

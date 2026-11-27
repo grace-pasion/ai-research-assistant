@@ -64,6 +64,7 @@ import {
   filterByLibraryMetadata,
   type LibraryMetadataFilters,
 } from "./libraryMetadata";
+import { literatureSearchRequest } from "./searchHistory";
 import type {
   AIUsageResponse,
   Annotation,
@@ -86,6 +87,7 @@ import type {
   ScreeningExclusionReason,
   SavedPaperSearch,
   SavedPaperSearchRun,
+  SearchQueryHistoryRecord,
   SearchResult,
   Source,
   SourceSummaryResponse,
@@ -206,6 +208,7 @@ function App() {
   const [bulkScreeningNote, setBulkScreeningNote] = useState("");
   const [screeningBusy, setScreeningBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+  const [searchHistory, setSearchHistory] = useState<SearchQueryHistoryRecord[]>([]);
   const [savedPaperSearches, setSavedPaperSearches] = useState<SavedPaperSearch[]>([]);
   const [saveSearchAlerts, setSaveSearchAlerts] = useState(false);
   const [savedSearchBusy, setSavedSearchBusy] = useState(false);
@@ -438,6 +441,8 @@ function App() {
     setTaskAnnotationSelection("");
     setTaskAssigneeSelection("");
     setSavedPaperSearches([]);
+    setSearchHistory([]);
+    setSearchResults(null);
     setConversations([]);
     setAiUsage(null);
     setAssistantSources(null);
@@ -477,6 +482,7 @@ function App() {
       setDocuments([]);
       setPapers([]);
       setSavedPaperSearches([]);
+      setSearchHistory([]);
       setConversations([]);
       setAiUsage(null);
       return;
@@ -527,6 +533,15 @@ function App() {
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : "Could not load saved searches.");
+      });
+    request<SearchQueryHistoryRecord[]>(
+      `/api/projects/${project.project_id}/papers/search-history?limit=20`,
+    )
+      .then((history) => {
+        if (active) setSearchHistory(history);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load search history.");
       });
     const checkAlerts = () => {
       request<{ checked_count: number; notifications_created: number }>(
@@ -1486,15 +1501,26 @@ function App() {
     }
   }
 
-  async function runPaperSearch(queryText: string, searchProvider: string) {
+  async function runPaperSearch(queryText: string, searchProvider: string, limit = 10) {
     if (!project || queryText.trim().length < 2 || busy) return;
     setBusy(true);
     setError("");
     try {
       const result = await request<SearchResult>(
-        `/api/projects/${project.project_id}/papers/search?q=${encodeURIComponent(queryText.trim())}&provider=${searchProvider}&limit=10`,
+        `/api/projects/${project.project_id}/papers/search?q=${encodeURIComponent(queryText.trim())}&provider=${searchProvider}&limit=${limit}`,
       );
       setSearchResults(result);
+      setSearchHistory((current) => [
+        {
+          query_id: result.query_id,
+          query_text: result.query,
+          api_provider: result.provider,
+          searched_at: result.searched_at,
+          search_filters: result.filters,
+          result_count: result.result_count,
+        },
+        ...current.filter((record) => record.query_id !== result.query_id),
+      ].slice(0, 20));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Academic search failed.");
     } finally {
@@ -1505,6 +1531,14 @@ function App() {
   async function searchPapers(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runPaperSearch(searchText, provider);
+  }
+
+  async function rerunSearchHistory(record: SearchQueryHistoryRecord) {
+    if (busy) return;
+    const search = literatureSearchRequest(record);
+    setSearchText(search.query);
+    setProvider(search.provider);
+    await runPaperSearch(search.query, search.provider, search.limit);
   }
 
   async function savePaperSearch(result: SearchResult) {
@@ -1544,6 +1578,17 @@ function App() {
         { method: "POST" },
       );
       setSearchResults(result);
+      setSearchHistory((current) => [
+        {
+          query_id: result.query_id,
+          query_text: result.query,
+          api_provider: result.provider,
+          searched_at: result.searched_at,
+          search_filters: result.filters,
+          result_count: result.result_count,
+        },
+        ...current.filter((record) => record.query_id !== result.query_id),
+      ].slice(0, 20));
       if (result.new_result_count > 0) {
         setNotice(`Found ${result.new_result_count} new result${result.new_result_count === 1 ? "" : "s"}.`);
         if (saved.alert_enabled) await refreshUnreadCount();
@@ -3192,6 +3237,38 @@ function App() {
                       ))}
                     </section>
                   )}
+                  {searchHistory.length > 0 && (
+                    <section className="saved-searches search-records">
+                      <div className="result-label">
+                        <span>Search history</span>
+                        <small>{searchHistory.length} records</small>
+                      </div>
+                      {searchHistory.map((record) => (
+                        <article className="saved-search-row" key={record.query_id}>
+                          <div className="saved-search-copy">
+                            <strong>{record.query_text}</strong>
+                            <small>
+                              {record.api_provider === "openalex" ? "OpenAlex" : "Crossref"} · {new Date(record.searched_at).toLocaleString()} · {record.result_count} results
+                            </small>
+                            <small>
+                              Filters: {Object.entries(record.search_filters)
+                                .map(([name, value]) => name === "limit"
+                                  ? `Maximum results: ${value}`
+                                  : `${name}: ${value}`)
+                                .join(" · ") || "Not recorded for this entry"}
+                            </small>
+                          </div>
+                          <button
+                            className="button secondary small-button"
+                            disabled={busy}
+                            onClick={() => void rerunSearchHistory(record)}
+                          >
+                            {busy ? "Searching…" : "Rerun"}
+                          </button>
+                        </article>
+                      ))}
+                    </section>
+                  )}
                   <form className="search-form" onSubmit={(event) => void searchPapers(event)}>
                     <Search size={18} />
                     <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search a topic, title, author, or DOI…" minLength={2} />
@@ -3205,7 +3282,7 @@ function App() {
                   </form>
                   {searchResults && (
                     <div className="result-group">
-                      <div className="result-label"><span>Search results</span><small>{searchResults.results.length} papers · {searchResults.provider}</small></div>
+                      <div className="result-label"><span>Search results</span><small>{searchResults.result_count} papers · {searchResults.provider}</small></div>
                       <div className="save-search-control">
                         <label>
                           <input

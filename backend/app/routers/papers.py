@@ -56,6 +56,7 @@ from app.schemas import (
     SavedPaperSearchRunResponse,
     SavedPaperSearchUpdate,
     PaperSearchResponse,
+    SearchQueryHistoryResponse,
 )
 from app.security import get_current_user, require_project_access
 from app.services.academic_search import (
@@ -587,7 +588,15 @@ def search(
             status_code=502, detail=f"Could not reach {provider}; check your network and retry."
         ) from exc
 
-    query = SearchQuery(project_id=project_id, query_text=q.strip(), api_provider=provider)
+    filters = {"limit": limit}
+    query = SearchQuery(
+        project_id=project_id,
+        query_text=q.strip(),
+        api_provider=provider,
+        search_filters=filters,
+        result_count=len(results),
+        searched_at=datetime.now(timezone.utc),
+    )
     db.add(query)
     record_activity(
         db,
@@ -599,6 +608,7 @@ def search(
     try:
         papers = [upsert_paper(literature_db, result) for result in results]
         literature_db.commit()
+        query.result_count = len(papers)
         db.flush()
         db.add_all(
             [
@@ -615,8 +625,27 @@ def search(
         query_id=query.query_id,
         provider=provider,
         query=q.strip(),
+        searched_at=query.searched_at,
+        filters=filters,
+        result_count=len(papers),
         results=[_paper_response(paper, literature_db) for paper in papers],
     )
+
+
+@router.get("/search-history", response_model=list[SearchQueryHistoryResponse])
+def list_search_history(
+    project_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    return db.scalars(
+        select(SearchQuery)
+        .where(SearchQuery.project_id == project_id)
+        .order_by(SearchQuery.searched_at.desc(), SearchQuery.query_id.desc())
+        .limit(limit)
+    ).all()
 
 
 def _saved_paper_search(

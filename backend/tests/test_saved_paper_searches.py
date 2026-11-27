@@ -5,7 +5,10 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.database import ensure_notification_details_column
+from app.database import (
+    ensure_notification_details_column,
+    ensure_search_query_reproducibility_columns,
+)
 from app.models import (
     DirectMessage,
     Notification,
@@ -25,6 +28,7 @@ from app.schemas import (
     PaperResponse,
     PaperSearchResponse,
     SavedPaperSearchCreate,
+    SearchQueryHistoryResponse,
 )
 
 
@@ -134,6 +138,9 @@ def test_due_alert_records_new_matches_once_and_respects_six_hour_cadence(
             query_id=uuid.uuid4(),
             provider=provider,
             query=query,
+            searched_at=datetime.now(timezone.utc),
+            filters={"limit": 10},
+            result_count=2,
             results=[_paper("W123"), _paper("W456")],
         ),
     )
@@ -173,4 +180,120 @@ def test_notification_details_column_is_added_to_existing_databases(tmp_path):
         columns = {row["name"] for row in connection.execute(text("PRAGMA table_info(notifications)")).mappings()}
         assert "details" in columns
         assert connection.execute(text("SELECT details FROM notifications")).scalar_one() == "{}"
+    engine.dispose()
+
+
+def test_literature_search_records_exact_parameters_and_lists_history(
+    saved_search_databases, monkeypatch
+):
+    db, literature_db, user, project, _query, _paper_record = saved_search_databases
+    monkeypatch.setattr(papers_router, "search_papers", lambda *_args: [])
+
+    result = papers_router.search(
+        project.project_id,
+        "  climate models  ",
+        "crossref",
+        7,
+        db,
+        literature_db,
+        user,
+    )
+    history = papers_router.list_search_history(project.project_id, 20, db, user)
+
+    assert result.query == "climate models"
+    assert result.provider == "crossref"
+    assert result.filters == {"limit": 7}
+    assert result.result_count == 0
+    assert result.searched_at
+    recorded = next(item for item in history if item.query_id == result.query_id)
+    assert recorded.query_text == "climate models"
+    assert recorded.api_provider == "crossref"
+    assert recorded.search_filters == {"limit": 7}
+    assert recorded.result_count == 0
+    assert recorded.searched_at.replace(tzinfo=timezone.utc) == result.searched_at
+    response_record = SearchQueryHistoryResponse.model_validate(recorded)
+    assert response_record.searched_at.utcoffset() == timedelta(0)
+
+
+def test_literature_search_records_provider_result_count(saved_search_databases, monkeypatch):
+    db, literature_db, user, project, _query, paper = saved_search_databases
+    monkeypatch.setattr(
+        papers_router,
+        "search_papers",
+        lambda *_args: [{"title": "A current study"}],
+    )
+    monkeypatch.setattr(papers_router, "upsert_paper", lambda _db, _result: paper)
+    monkeypatch.setattr(
+        papers_router,
+        "_paper_response",
+        lambda item, _literature_db: _paper(item.external_paper_id),
+    )
+
+    result = papers_router.search(
+        project.project_id,
+        "climate models",
+        "openalex",
+        10,
+        db,
+        literature_db,
+        user,
+    )
+    recorded = db.query(SearchQuery).filter(SearchQuery.query_id == result.query_id).one()
+
+    assert result.result_count == 1
+    assert recorded.result_count == 1
+    assert (
+        db.query(SearchQueryResult)
+        .filter(SearchQueryResult.query_id == result.query_id)
+        .count()
+        == 1
+    )
+
+
+def test_search_history_columns_are_added_and_existing_result_counts_backfilled(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-search.sqlite'}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE search_queries (query_id CHAR(32) PRIMARY KEY, "
+                "project_id CHAR(32), query_text TEXT, api_provider VARCHAR(32), "
+                "searched_at DATETIME)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE search_query_results (query_id CHAR(32), paper_id CHAR(32), "
+                "PRIMARY KEY (query_id, paper_id))"
+            )
+        )
+        connection.execute(
+            text("INSERT INTO search_queries (query_id) VALUES ('query-one'), ('query-two')")
+        )
+        connection.execute(
+            text(
+                "INSERT INTO search_query_results (query_id, paper_id) VALUES "
+                "('query-one', 'paper-one'), ('query-one', 'paper-two')"
+            )
+        )
+
+    ensure_search_query_reproducibility_columns(engine)
+    ensure_search_query_reproducibility_columns(engine)
+
+    with engine.connect() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute(text("PRAGMA table_info(search_queries)")).mappings()
+        }
+        counts = connection.execute(
+            text(
+                "SELECT query_id, search_filters, result_count "
+                "FROM search_queries ORDER BY query_id"
+            )
+        ).all()
+    assert {"search_filters", "result_count"} <= columns
+    assert [(row.query_id, row.result_count) for row in counts] == [
+        ("query-one", 2),
+        ("query-two", 0),
+    ]
+    assert [row.search_filters for row in counts] == ["{}", "{}"]
     engine.dispose()

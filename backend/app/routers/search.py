@@ -1,6 +1,7 @@
 import re
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, get_literature_db
 from app.models import (
     Author,
+    CrossProjectSearchRecord,
     Document,
     Paper,
     PaperAuthor,
@@ -19,7 +21,7 @@ from app.models import (
     TeamWorkspaceMembership,
     User,
 )
-from app.schemas import CrossProjectSearchResult
+from app.schemas import CrossProjectSearchRecordResponse, CrossProjectSearchResult
 from app.security import get_current_user
 
 router = APIRouter(tags=["search"])
@@ -27,6 +29,7 @@ MAX_SEARCH_RESULTS = 100
 SEARCH_DB_BATCH_SIZE = 500
 YEAR_METADATA_KEYS = {"year", "publication_year", "publication year"}
 AUTHOR_METADATA_KEYS = {"author", "authors", "creator"}
+PROJECT_LIBRARY_PROVIDER = "project_library"
 
 
 def _escaped_pattern(value: str) -> str:
@@ -77,6 +80,68 @@ def _batches(values: list[uuid.UUID]) -> Iterator[list[uuid.UUID]]:
         yield values[start : start + SEARCH_DB_BATCH_SIZE]
 
 
+def _search_record_filters(
+    project_id: uuid.UUID | None,
+    source_type: str | None,
+    author: str,
+    year: int | None,
+    tag: str,
+    limit: int,
+) -> dict[str, str | int]:
+    filters: dict[str, str | int] = {"limit": limit}
+    if project_id is not None:
+        filters["project_id"] = str(project_id)
+    if source_type is not None:
+        filters["source_type"] = source_type
+    if author:
+        filters["author"] = author
+    if year is not None:
+        filters["year"] = year
+    if tag:
+        filters["tag"] = tag
+    return filters
+
+
+def _save_cross_project_search(
+    db: Session,
+    user_id: uuid.UUID,
+    query: str,
+    filters: dict[str, str | int],
+    result_count: int,
+) -> None:
+    db.add(
+        CrossProjectSearchRecord(
+            user_id=user_id,
+            query_text=query,
+            provider=PROJECT_LIBRARY_PROVIDER,
+            filters=filters,
+            result_count=result_count,
+            searched_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+
+
+@router.get(
+    "/api/search/history",
+    response_model=list[CrossProjectSearchRecordResponse],
+)
+def list_cross_project_search_history(
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return db.scalars(
+        select(CrossProjectSearchRecord)
+        .where(CrossProjectSearchRecord.user_id == user.user_id)
+        .order_by(
+            CrossProjectSearchRecord.searched_at.desc(),
+            CrossProjectSearchRecord.record_id.desc(),
+        )
+        .limit(limit)
+    ).all()
+
+
 @router.get("/api/search", response_model=list[CrossProjectSearchResult])
 def search_across_projects(
     q: str = Query(min_length=2, max_length=200),
@@ -124,10 +189,15 @@ def search_across_projects(
     if project_id is not None and project_id not in project_names:
         raise HTTPException(status_code=404, detail="Research project not found.")
 
+    filters = _search_record_filters(
+        project_id, source_type, author_filter, year, tag_filter, limit
+    )
     visible_project_ids = (
         [project_id] if project_id is not None else list(project_names)
     )
     if not visible_project_ids:
+        if offset == 0:
+            _save_cross_project_search(db, user.user_id, query, filters, 0)
         return []
 
     pattern = _escaped_pattern(query)
@@ -286,4 +356,6 @@ def search_across_projects(
             str(result.source_id),
         )
     )
+    if offset == 0:
+        _save_cross_project_search(db, user.user_id, query, filters, len(results))
     return results[offset : offset + limit]

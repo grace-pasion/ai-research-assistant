@@ -544,6 +544,26 @@ class SearchQuery(ResearchBase):
     )
     query_text: Mapped[str] = mapped_column(Text)
     api_provider: Mapped[str] = mapped_column(String(32))
+    search_filters: Mapped[dict[str, str | int]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CrossProjectSearchRecord(ResearchBase):
+    __tablename__ = "cross_project_search_records"
+
+    record_id: Mapped[uuid.UUID] = uuid_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    query_text: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(32), default="project_library")
+    filters: Mapped[dict[str, str | int]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
     searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

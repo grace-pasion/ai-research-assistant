@@ -1,8 +1,17 @@
 import { AlertCircle, FileText, Library, Search } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import type { CrossProjectSearchResult, Project } from "./types";
+import { useEffect, useState, type FormEvent } from "react";
+import { crossProjectSearchParams } from "./searchHistory";
+import type { CrossProjectSearchRecord, CrossProjectSearchResult, Project } from "./types";
 
 const SEARCH_PAGE_SIZE = 50;
+const FILTER_LABELS: Record<string, string> = {
+  author: "Author",
+  limit: "Page size",
+  project_id: "Project",
+  source_type: "Source type",
+  tag: "Tag",
+  year: "Year",
+};
 
 type Props = {
   projects: Project[];
@@ -24,6 +33,28 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState("");
   const [activeSearchParams, setActiveSearchParams] = useState("");
+  const [history, setHistory] = useState<CrossProjectSearchRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    request<CrossProjectSearchRecord[]>("/api/search/history?limit=10")
+      .then((loaded) => {
+        if (active) setHistory(loaded);
+      })
+      .catch((cause) => {
+        if (active) {
+          setHistoryError(cause instanceof Error ? cause.message : "Could not load search history.");
+        }
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [request]);
 
   function buildSearchParams() {
     const params = new URLSearchParams({
@@ -56,6 +87,7 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
       const loaded = await request<CrossProjectSearchResult[]>(`/api/search?${params.toString()}`);
       setResults(loaded);
       setHasMore(loaded.length === SEARCH_PAGE_SIZE);
+      void refreshHistory();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not search across projects.");
       setResults([]);
@@ -79,6 +111,52 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
     } finally {
       setLoadingMore(false);
     }
+  }
+
+  async function refreshHistory() {
+    try {
+      const loaded = await request<CrossProjectSearchRecord[]>("/api/search/history?limit=10");
+      setHistory(loaded);
+      setHistoryError("");
+    } catch (cause) {
+      setHistoryError(cause instanceof Error ? cause.message : "Could not refresh search history.");
+    }
+  }
+
+  async function rerunHistory(record: CrossProjectSearchRecord) {
+    if (loading || loadingMore) return;
+    const params = crossProjectSearchParams(record);
+    setQuery(record.query_text);
+    setProjectId(String(record.filters.project_id ?? ""));
+    setSourceType(String(record.filters.source_type ?? ""));
+    setAuthor(String(record.filters.author ?? ""));
+    setYear(String(record.filters.year ?? ""));
+    setTag(String(record.filters.tag ?? ""));
+    setActiveSearchParams(params.toString());
+    setSearched(true);
+    setHasMore(false);
+    setLoading(true);
+    setError("");
+    try {
+      const loaded = await request<CrossProjectSearchResult[]>(`/api/search?${params.toString()}`);
+      setResults(loaded);
+      setHasMore(loaded.length === SEARCH_PAGE_SIZE);
+      void refreshHistory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not rerun this search.");
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function displayFilters(filters: CrossProjectSearchRecord["filters"]) {
+    return Object.entries(filters).map(([key, value]) => {
+      const displayValue = key === "project_id"
+        ? projects.find((project) => project.project_id === value)?.project_name ?? value
+        : value;
+      return `${FILTER_LABELS[key] ?? key}: ${displayValue}`;
+    }).join(" · ");
   }
 
   return (
@@ -209,6 +287,36 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
           )}
         </div>
       )}
+      <section className="cross-project-search-history" aria-labelledby="cross-project-history-title">
+        <div className="result-label">
+          <span id="cross-project-history-title">Recent search records</span>
+          <small>{history.length} saved</small>
+        </div>
+        {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+        {historyLoading ? (
+          <p className="muted compact" role="status">Loading search records…</p>
+        ) : history.length ? history.map((record) => (
+          <article className="saved-search-row cross-project-history-row" key={record.record_id}>
+            <div className="saved-search-copy">
+              <strong>{record.query_text}</strong>
+              <small>
+                {record.provider === "project_library" ? "Project library" : record.provider} · {new Date(record.searched_at).toLocaleString()} · {record.result_count} matches
+              </small>
+              <small>Filters: {displayFilters(record.filters) || "None"}</small>
+            </div>
+            <button
+              className="button secondary small-button"
+              type="button"
+              disabled={loading || loadingMore}
+              onClick={() => void rerunHistory(record)}
+            >
+              Rerun
+            </button>
+          </article>
+        )) : (
+          <p className="muted compact">Search records will appear here after your first search.</p>
+        )}
+      </section>
     </section>
   );
 }

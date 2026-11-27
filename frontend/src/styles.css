@@ -330,6 +330,7 @@ h1, h2, h3, p { margin-top: 0; }
 .cross-project-result-excerpt { color: #69756d; font-size: 10px; line-height: 1.6; margin: 6px 0; white-space: pre-wrap; }
 .cross-project-result-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .cross-project-result-tags span { background: #edf4ee; border-radius: 999px; color: #567460; font-size: 9px; padding: 4px 8px; }
+.cross-project-search-history { margin-top: 29px; }
 .result-group { margin-top: 29px; }
 .result-label { align-items: center; color: #46534b; display: flex; font-size: 12px; font-weight: 600; justify-content: space-between; margin-bottom: 11px; }
 .result-label small { color: #9aa29d; font-size: 10px; font-weight: 400; }

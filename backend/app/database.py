@@ -145,6 +145,29 @@ def ensure_python_artifact_provenance_columns(engine) -> None:
             )
 
 
+def ensure_search_query_reproducibility_columns(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("search_queries")}
+    with engine.begin() as connection:
+        if "search_filters" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE search_queries ADD COLUMN search_filters "
+                    "JSON NOT NULL DEFAULT '{}'"
+                )
+            )
+        if "result_count" not in columns:
+            connection.execute(
+                text("ALTER TABLE search_queries ADD COLUMN result_count INTEGER NOT NULL DEFAULT 0")
+            )
+            connection.execute(
+                text(
+                    "UPDATE search_queries SET result_count = "
+                    "(SELECT COUNT(*) FROM search_query_results "
+                    "WHERE search_query_results.query_id = search_queries.query_id)"
+                )
+            )
+
+
 def ensure_project_team_workspace_column(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("research_projects")}
     if "team_workspace_id" not in columns:

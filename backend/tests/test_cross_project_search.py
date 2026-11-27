@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, get_literature_db
 from app.models import (
     Author,
+    CrossProjectSearchRecord,
     Document,
     Paper,
     PaperAuthor,
@@ -27,6 +28,7 @@ def cross_project_search_client(tmp_path):
     literature_engine = create_engine(f"sqlite:///{tmp_path / 'literature.sqlite'}")
     for model in (
         User,
+        CrossProjectSearchRecord,
         TeamWorkspace,
         TeamWorkspaceMembership,
         ResearchProject,
@@ -173,14 +175,14 @@ def cross_project_search_client(tmp_path):
         app.dependency_overrides[get_literature_db] = lambda: literature_db
         app.dependency_overrides[get_current_user] = lambda: member
         with TestClient(app) as client:
-            yield client, invited_project, team_project, private_project
+            yield client, invited_project, team_project, private_project, outsider
 
     research_engine.dispose()
     literature_engine.dispose()
 
 
 def test_search_filters_sources_across_accessible_projects(cross_project_search_client):
-    client, invited_project, team_project, _ = cross_project_search_client
+    client, invited_project, team_project, _, _outsider = cross_project_search_client
 
     response = client.get(
         "/api/search",
@@ -202,11 +204,31 @@ def test_search_filters_sources_across_accessible_projects(cross_project_search_
     assert all(item["authors"] == ["Alice Smith"] for item in results)
     assert all(item["year"] == 2021 and item["tags"] == ["methods"] for item in results)
 
+    history_response = client.get("/api/search/history")
+    assert history_response.status_code == 200
+    record = history_response.json()[0]
+    assert record["query_text"] == "neural"
+    assert record["provider"] == "project_library"
+    assert record["filters"] == {
+        "limit": 50,
+        "author": "Alice",
+        "year": 2021,
+        "tag": "METHODS",
+    }
+    assert record["result_count"] == 3
+    assert record["searched_at"]
+
 
 def test_search_project_and_source_filters_and_access_boundaries(
     cross_project_search_client,
 ):
-    client, invited_project, team_project, private_project = cross_project_search_client
+    (
+        client,
+        invited_project,
+        team_project,
+        private_project,
+        _outsider,
+    ) = cross_project_search_client
 
     paper_response = client.get(
         "/api/search",
@@ -235,6 +257,7 @@ def test_search_project_and_source_filters_and_access_boundaries(
 
     all_results = client.get("/api/search", params={"q": "neural"}).json()
     assert all(item["project_id"] != str(private_project.project_id) for item in all_results)
+    history_before_page = client.get("/api/search/history").json()
 
     first_page = client.get(
         "/api/search",
@@ -246,3 +269,56 @@ def test_search_project_and_source_filters_and_access_boundaries(
     ).json()
     assert len(first_page) == len(second_page) == 1
     assert first_page[0]["source_id"] != second_page[0]["source_id"]
+    history = client.get("/api/search/history").json()
+    assert len(history) == len(history_before_page) + 1
+    page_record = next(record for record in history if record["filters"]["limit"] == 1)
+    assert page_record["result_count"] == 3
+
+
+def test_search_history_records_zero_results_and_normalized_filters(
+    cross_project_search_client,
+):
+    (
+        client,
+        invited_project,
+        _team_project,
+        _private_project,
+        _outsider,
+    ) = cross_project_search_client
+
+    response = client.get(
+        "/api/search",
+        params={
+            "q": "  no matching source  ",
+            "project_id": str(invited_project.project_id),
+            "author": " Alice Smith ",
+            "tag": " methods ",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    records = client.get("/api/search/history").json()
+    assert records[0]["query_text"] == "no matching source"
+    assert records[0]["filters"] == {
+        "limit": 50,
+        "project_id": str(invited_project.project_id),
+        "author": "Alice Smith",
+        "tag": "methods",
+    }
+    assert records[0]["result_count"] == 0
+
+
+def test_cross_project_search_history_is_private_to_the_user(cross_project_search_client):
+    (
+        client,
+        _invited_project,
+        _team_project,
+        _private_project,
+        outsider,
+    ) = cross_project_search_client
+    assert client.get("/api/search", params={"q": "neural"}).status_code == 200
+
+    client.app.dependency_overrides[get_current_user] = lambda: outsider
+
+    assert client.get("/api/search/history").json() == []

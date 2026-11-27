@@ -1,7 +1,7 @@
 import base64
 import binascii
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
@@ -898,11 +898,38 @@ class ProjectSourceSummaryResponse(BaseModel):
     cached: bool
 
 
-class PaperSearchResponse(BaseModel):
+class SearchRecordResponse(APIModel):
+    searched_at: datetime
+
+    @field_validator("searched_at")
+    @classmethod
+    def assume_utc_for_naive_timestamp(cls, value: datetime) -> datetime:
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+class PaperSearchResponse(SearchRecordResponse):
     query_id: uuid.UUID
     provider: str
     query: str
+    filters: dict[str, str | int]
+    result_count: int
     results: list[PaperResponse]
+
+
+class SearchQueryHistoryResponse(SearchRecordResponse):
+    query_id: uuid.UUID
+    query_text: str
+    api_provider: str
+    search_filters: dict[str, str | int]
+    result_count: int
+
+
+class CrossProjectSearchRecordResponse(SearchRecordResponse):
+    record_id: uuid.UUID
+    query_text: str
+    provider: str
+    filters: dict[str, str | int]
+    result_count: int
 
 
 class SavedPaperSearchCreate(BaseModel):
