@@ -26,8 +26,11 @@ import type { DocumentRecord, Paper, Project } from "./types";
 import { parseLatexPreview } from "./latexPreview";
 import {
   checkLatexCitationKeys,
+  filterCitationPapers,
   findLatexBibliographyStyle,
-  stripLatexComments,
+  hasBibtexCitationKey,
+  isValidLatexCitationStyleName,
+  updateLatexBibliographyStyle,
 } from "./latexCitations";
 import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { fetchPdfObjectUrl } from "./api";
@@ -69,6 +72,7 @@ type Props = {
 type EditorFile = "main.tex" | "references.bib";
 type PaneMode = "split" | "source" | "preview" | "pdf";
 type CitationStyle = "plainnat" | "abbrvnat" | "unsrtnat" | "apalike";
+const CUSTOM_CITATION_STYLE = "custom";
 
 const CITATION_STYLES: { value: CitationStyle; label: string }[] = [
   { value: "plainnat", label: "Natbib (author-year or numeric)" },
@@ -141,6 +145,10 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
   const [saveStatus, setSaveStatus] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
   const [workspaceError, setWorkspaceError] = useState("");
   const [sourceError, setSourceError] = useState("");
+  const [citationSearch, setCitationSearch] = useState("");
+  const [customCitationStyleDraft, setCustomCitationStyleDraft] = useState("");
+  const [customCitationStyleSelected, setCustomCitationStyleSelected] = useState(false);
+  const [citationStyleError, setCitationStyleError] = useState("");
   const [compileError, setCompileError] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
@@ -358,9 +366,23 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     [workspace.main_tex, workspace.references_bib],
   );
   const activeCitationStyle = findLatexBibliographyStyle(workspace.main_tex);
-  const citationStyle = CITATION_STYLES.find((style) => style.value === activeCitationStyle)?.value
-    ?? "plainnat";
+  const builtInCitationStyle = CITATION_STYLES.find((style) => style.value === activeCitationStyle);
+  const isBuiltInCitationStyle = Boolean(builtInCitationStyle);
+  const hasCustomCitationStyle = Boolean(activeCitationStyle && !isBuiltInCitationStyle);
+  const citationStyle = customCitationStyleSelected || hasCustomCitationStyle
+    ? CUSTOM_CITATION_STYLE
+    : builtInCitationStyle?.value ?? "plainnat";
+  const citationPapers = useMemo(
+    () => filterCitationPapers(papers, citationSearch),
+    [papers, citationSearch],
+  );
   const currentValue = activeFile === "main.tex" ? workspace.main_tex : workspace.references_bib;
+
+  useEffect(() => {
+    setCustomCitationStyleSelected(hasCustomCitationStyle);
+    setCustomCitationStyleDraft(hasCustomCitationStyle ? activeCitationStyle ?? "" : "");
+    setCitationStyleError("");
+  }, [activeCitationStyle, hasCustomCitationStyle]);
 
   function updateFile(value: string) {
     if (!canEdit || restoringVersion !== null) return;
@@ -433,7 +455,9 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     const key = citationKey(paper);
     const existing = workspaceRef.current.references_bib;
     const entry = bibtexEntry(paper);
-    const references = existing.includes(`{${key},`) ? existing : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${entry}\n`;
+    const references = hasBibtexCitationKey(existing, key)
+      ? existing
+      : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${entry}\n`;
     const abstract = paper.abstract?.replace(/<[^>]*>/g, "").trim();
     const citation = includeAbstract && abstract
       ? `\\begin{quote}\n${encodeLatex(abstract)}\n\\end{quote}\n\\cite{${key}}`
@@ -480,29 +504,23 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
     );
   }
 
-  function changeCitationStyle(style: CitationStyle) {
+  function changeCitationStyle(style: string) {
+    if (!isValidLatexCitationStyleName(style)) {
+      setCitationStyleError("Use letters, numbers, periods, underscores, or hyphens in the style name.");
+      return;
+    }
     if (!canEdit || restoringVersion !== null) return;
     const source = workspaceRef.current.main_tex;
-    const command = `\\bibliographystyle{${style}}`;
-    let updatedSource: string;
-    const activeStyle = stripLatexComments(source).match(/\\bibliographystyle\s*\{[^}]*\}/);
-    if (activeStyle?.index !== undefined) {
-      updatedSource = source.slice(0, activeStyle.index)
-        + command
-        + source.slice(activeStyle.index + activeStyle[0].length);
-    } else {
-      const uncommentedSource = stripLatexComments(source);
-      const bibliographyAt = uncommentedSource.lastIndexOf("\\bibliography");
-      const documentEndAt = uncommentedSource.lastIndexOf("\\end{document}");
-      const insertionAt = bibliographyAt >= 0
-        ? bibliographyAt
-        : documentEndAt >= 0 ? documentEndAt : source.length;
-      updatedSource = insertAtCursor(source, command, insertionAt).source;
-    }
+    const updatedSource = updateLatexBibliographyStyle(source, style);
     const updated = { ...workspaceRef.current, main_tex: updatedSource };
     workspaceRef.current = updated;
     setWorkspace(updated);
     setSaveStatus(JSON.stringify(updated) === savedContentRef.current ? "saved" : "unsaved");
+    setCitationStyleError("");
+  }
+
+  function applyCustomCitationStyle() {
+    changeCitationStyle(customCitationStyleDraft.trim());
   }
 
   async function compilePdf() {
@@ -665,7 +683,17 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
             </div>
             <div className="latex-source-group">
               <div className="latex-group-heading"><Library size={14} /><span>SAVED LITERATURE</span><small>{papers.length}</small></div>
-              {papers.length ? papers.map((paper) => (
+              {papers.length > 0 && (
+                <input
+                  type="search"
+                  className="latex-citation-search"
+                  aria-label="Search saved literature to cite"
+                  placeholder="Search title, author, year, DOI…"
+                  value={citationSearch}
+                  onChange={(event) => setCitationSearch(event.target.value)}
+                />
+              )}
+              {papers.length ? citationPapers.length ? citationPapers.map((paper) => (
                 <article className="latex-source-card" key={paper.paper_id}>
                   <strong>{paper.title}</strong>
                   <span>{paper.authors[0]?.author_name ?? "Unknown author"} · {paper.publication_year ?? "n.d."}</span>
@@ -680,7 +708,7 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                     )}
                   </div>
                 </article>
-              )) : <p className="latex-empty">Save papers in Literature to cite them here.</p>}
+              )) : <p className="latex-empty">No saved papers match that search.</p> : <p className="latex-empty">Save papers in Literature to cite them here.</p>}
             </div>
             <div className="latex-source-group">
               <div className="latex-group-heading"><FileText size={14} /><span>PROJECT DOCUMENTS</span><small>{documents.length}</small></div>
@@ -781,11 +809,48 @@ export function LatexWorkspace({ project, documents, papers, request }: Props) {
                 <select
                   id="latex-citation-style"
                   disabled={!canEdit}
-                  onChange={(event) => changeCitationStyle(event.target.value as CitationStyle)}
-                  value={CITATION_STYLES.some((style) => style.value === citationStyle) ? citationStyle : "plainnat"}
+                  onChange={(event) => {
+                    if (event.target.value === CUSTOM_CITATION_STYLE) {
+                      setCustomCitationStyleSelected(true);
+                      setCustomCitationStyleDraft(activeCitationStyle && !isBuiltInCitationStyle ? activeCitationStyle : "");
+                      setCitationStyleError("");
+                    } else {
+                      setCustomCitationStyleSelected(false);
+                      changeCitationStyle(event.target.value);
+                    }
+                  }}
+                  value={citationStyle}
                 >
                   {CITATION_STYLES.map((style) => <option value={style.value} key={style.value}>{style.label}</option>)}
+                  <option value={CUSTOM_CITATION_STYLE}>Custom installed style…</option>
                 </select>
+                {citationStyle === CUSTOM_CITATION_STYLE && (
+                  <>
+                    <label htmlFor="latex-custom-citation-style">Custom .bst name</label>
+                    <input
+                      id="latex-custom-citation-style"
+                      className="latex-custom-style-input"
+                      aria-describedby="latex-custom-style-help"
+                      value={customCitationStyleDraft}
+                      placeholder="e.g. ieee-like"
+                      disabled={!canEdit || restoringVersion !== null}
+                      onChange={(event) => {
+                        setCustomCitationStyleDraft(event.target.value);
+                        setCitationStyleError("");
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="latex-apply-style"
+                      onClick={applyCustomCitationStyle}
+                      disabled={!canEdit || restoringVersion !== null || !customCitationStyleDraft.trim()}
+                    >
+                      Apply
+                    </button>
+                    <small id="latex-custom-style-help">Use an installed style name without .bst.</small>
+                  </>
+                )}
+                {citationStyleError && <span className="latex-citation-warning" role="alert">{citationStyleError}</span>}
                 {!!citationIssues.missingKeys.length && (
                   <span className="latex-citation-warning" role="status">
                     Missing BibTeX entries: {citationIssues.missingKeys.join(", ")}

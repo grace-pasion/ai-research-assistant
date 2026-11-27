@@ -464,6 +464,11 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-citation-tools { align-items: center; background: #fff; border-bottom: 1px solid #e9ede9; color: #758078; display: flex; flex-wrap: wrap; font-size: 9px; gap: 8px; padding: 8px 12px; }
 .latex-citation-tools select { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #526057; font: inherit; max-width: 240px; padding: 5px 7px; }
 .latex-citation-tools select:disabled { opacity: .7; }
+.latex-citation-tools input, .latex-apply-style { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #526057; font: inherit; padding: 5px 7px; }
+.latex-citation-tools input { max-width: 150px; }
+.latex-citation-tools small { color: #849087; }
+.latex-apply-style { color: #52715e; cursor: pointer; }
+.latex-apply-style:disabled { cursor: default; opacity: .6; }
 .latex-citation-warning { color: #9c633c; }
 .latex-loading { align-items: center; color: #77837a; display: flex; font-size: 11px; gap: 8px; min-height: 250px; justify-content: center; }
 .latex-layout { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 650px; }
@@ -487,6 +492,8 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-source-card { border-top: 1px solid #eef1ee; padding: 10px 3px 8px; }
 .latex-source-card strong { color: #46534b; display: -webkit-box; font-size: 10px; font-weight: 600; line-height: 1.45; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .latex-source-card > span { color: #8c968e; display: block; font-size: 9px; line-height: 1.5; margin-top: 4px; }
+.latex-citation-search { background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; box-sizing: border-box; color: #526057; font: 10px var(--sans); margin: 0 3px 4px; padding: 7px; width: calc(100% - 6px); }
+.latex-citation-search:focus-visible, .latex-custom-style-input:focus-visible { outline: 2px solid #63816b; outline-offset: 1px; }
 .latex-source-actions { display: flex; gap: 6px; margin-top: 7px; }
 .latex-source-actions button, .latex-load-excerpt, .latex-insert-excerpt { align-items: center; background: #fff; border: 1px solid #e2e8e2; border-radius: 5px; color: #52715e; display: inline-flex; font-size: 9px; gap: 4px; padding: 5px 7px; }
 .latex-source-actions button:hover, .latex-load-excerpt:hover, .latex-insert-excerpt:hover { background: #edf4ee; }
