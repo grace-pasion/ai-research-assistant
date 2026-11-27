@@ -29,6 +29,7 @@ function paper(
     screening_note: "",
     screening_exclusion_reason: null,
     screening_decisions: [],
+    screening_assignments: [],
     screening_disagreement: false,
     tags: [],
     metadata: {},

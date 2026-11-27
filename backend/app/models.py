@@ -706,6 +706,25 @@ class PaperScreeningDecision(ResearchBase):
     )
 
 
+class PaperScreeningAssignment(ResearchBase):
+    __tablename__ = "paper_screening_assignments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "paper_id"],
+            ["project_papers.project_id", "project_papers.paper_id"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_paper_screening_assignments_project_user", "project_id", "user_id"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    paper_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PaperStudyExtraction(ResearchBase):
     __tablename__ = "paper_study_extractions"
     __table_args__ = (

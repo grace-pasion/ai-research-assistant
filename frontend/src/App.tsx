@@ -55,6 +55,7 @@ import {
   type ScreeningSort,
   type ScreeningStatusFilter,
 } from "./literatureScreening";
+import { summarizeScreeningAssignments } from "./screeningAssignments";
 import {
   filterProjectAnnotations,
   formatSelectedAnnotations,
@@ -84,6 +85,7 @@ import type {
   Message,
   PaperImportResponse,
   Paper,
+  PaperScreeningAssignment,
   PaperStudyExtraction,
   PaperScreeningDecision,
   ProjectAnnotation,
@@ -537,6 +539,25 @@ function App() {
   }, [project?.project_id, request, reviewReloadKey, token]);
 
   useEffect(() => {
+    if (!project || !token || view !== "papers") return;
+    let active = true;
+    request<ProjectCollaborator[]>(`/api/projects/${project.project_id}/collaborators`)
+      .then((loaded) => {
+        if (active) setProjectCollaborators(loaded);
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setError(cause instanceof Error
+            ? cause.message
+            : "Could not load reviewers for paper assignments.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [project?.project_id, request, token, view]);
+
+  useEffect(() => {
     if (!project || !token) return;
     let active = true;
     const path = `/api/projects/${project.project_id}/papers/saved-searches`;
@@ -600,6 +621,13 @@ function App() {
     (count, paper) => count + paper.screening_decisions.length,
     0,
   );
+  const screeningAssignmentProgress = useMemo(
+    () => summarizeScreeningAssignments(papers, projectCollaborators),
+    [papers, projectCollaborators],
+  );
+  const unassignedScreeningPaperCount = papers.filter(
+    (paper) => paper.screening_assignments.length === 0,
+  ).length;
   const screeningDisagreementCount = papers.filter(
     (paper) => paper.screening_disagreement,
   ).length;
@@ -1879,6 +1907,33 @@ function App() {
       return updated;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save your reviewer decision.");
+      throw cause;
+    }
+  }
+
+  async function updatePaperScreeningAssignments(
+    paper: Paper,
+    userIds: string[],
+  ): Promise<PaperScreeningAssignment[]> {
+    if (!project) throw new Error("Select a project to assign reviewers.");
+    setError("");
+    try {
+      const updated = await request<PaperScreeningAssignment[]>(
+        `/api/projects/${project.project_id}/papers/${paper.paper_id}/screening/assignments`,
+        {
+          method: "PUT",
+          body: jsonBody({ user_ids: userIds }),
+        },
+      );
+      setPapers((current) => current.map((item) =>
+        item.paper_id === paper.paper_id
+          ? { ...item, screening_assignments: updated }
+          : item,
+      ));
+      setNotice("Review assignments saved.");
+      return updated;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save review assignments.");
       throw cause;
     }
   }
@@ -3563,6 +3618,34 @@ function App() {
                         <span>{screeningDisagreementCount} disagreements</span>
                       </div>
                     </section>
+                    <section className="screening-assignee-progress" aria-label="Screening progress by reviewer">
+                      <div className="screening-progress-heading">
+                        <strong>Reviewer assignments</strong>
+                        <span>{unassignedScreeningPaperCount} papers unassigned</span>
+                      </div>
+                      {screeningAssignmentProgress.length ? (
+                        <div className="screening-assignee-list">
+                          {screeningAssignmentProgress.map((reviewer) => (
+                            <div className="screening-assignee-row" key={reviewer.userId}>
+                              <div className="screening-assignee-heading">
+                                <strong>{reviewer.userName}</strong>
+                                {!reviewer.eligible && <span>Access changed</span>}
+                                <small>
+                                  {reviewer.completedCount} of {reviewer.assignedCount} assigned papers screened
+                                </small>
+                              </div>
+                              <progress
+                                max={Math.max(reviewer.assignedCount, 1)}
+                                value={reviewer.completedCount}
+                                aria-label={`${reviewer.userName}: ${reviewer.completedCount} of ${reviewer.assignedCount} assigned papers screened`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted compact">No reviewers with commenting or editing access.</p>
+                      )}
+                    </section>
                     {papers.length > 0 && (
                       <div className="screening-workbench">
                         <div className="screening-controls screening-workbench-controls">
@@ -3706,8 +3789,15 @@ function App() {
                             : undefined}
                           currentUserId={user?.user_id ?? null}
                           onReviewerDecisionChange={canEditProject
+                            || canCommentOnProject && paper.screening_assignments.some(
+                              (assignment) => assignment.user_id === user?.user_id,
+                            )
                             ? (status, reason, note) =>
                               updateReviewerScreeningDecision(paper, status, reason, note)
+                            : undefined}
+                          collaborators={projectCollaborators}
+                          onScreeningAssignmentsChange={canEditProject
+                            ? (userIds) => updatePaperScreeningAssignments(paper, userIds)
                             : undefined}
                           onMetadataChange={canEditProject
                             ? (tags, metadata) => updatePaperMetadata(paper, tags, metadata)
@@ -4527,6 +4617,8 @@ function PaperCard({
   onScreeningChange,
   currentUserId,
   onReviewerDecisionChange,
+  collaborators = [],
+  onScreeningAssignmentsChange,
   onMetadataChange,
   selected = false,
   onSelectionChange,
@@ -4553,6 +4645,8 @@ function PaperCard({
     reason: ScreeningExclusionReason | null,
     note: string,
   ) => Promise<PaperScreeningDecision>;
+  collaborators?: ProjectCollaborator[];
+  onScreeningAssignmentsChange?: (userIds: string[]) => Promise<PaperScreeningAssignment[]>;
   onMetadataChange?: (tags: string[], metadata: Record<string, string>) => Promise<void>;
   selected?: boolean;
   onSelectionChange?: (selected: boolean) => void;
@@ -4570,13 +4664,45 @@ function PaperCard({
   const [reviewerDirty, setReviewerDirty] = useState(false);
   const [reviewerSaving, setReviewerSaving] = useState(false);
   const [reviewerError, setReviewerError] = useState("");
+  const [assignmentIds, setAssignmentIds] = useState(
+    paper.screening_assignments.map((assignment) => assignment.user_id),
+  );
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentError, setAssignmentError] = useState("");
   const myDecision = paper.screening_decisions.find((decision) => decision.user_id === currentUserId);
+  const assignmentOptions = useMemo(() => {
+    const options = collaborators.filter((collaborator) => collaborator.role !== "read");
+    const optionIds = new Set(options.map((collaborator) => collaborator.user_id));
+    for (const assignment of paper.screening_assignments) {
+      if (optionIds.has(assignment.user_id)) continue;
+      const currentCollaborator = collaborators.find(
+        (collaborator) => collaborator.user_id === assignment.user_id,
+      );
+      options.push({
+        user_id: assignment.user_id,
+        username: assignment.username ?? "",
+        name: currentCollaborator?.name ?? assignment.user_name,
+        role: "read",
+      });
+    }
+    return options;
+  }, [collaborators, paper.screening_assignments]);
+  const currentAssignmentIds = paper.screening_assignments
+    .map((assignment) => assignment.user_id)
+    .sort();
+  const selectedAssignmentIds = [...assignmentIds].sort();
+  const assignmentSelectionChanged = currentAssignmentIds.length !== selectedAssignmentIds.length
+    || currentAssignmentIds.some((userId, index) => userId !== selectedAssignmentIds[index]);
 
   useEffect(() => {
     setScreeningStatus(paper.screening_status);
     setScreeningNote(paper.screening_note);
     setScreeningReason(paper.screening_exclusion_reason ?? "");
   }, [paper.screening_status, paper.screening_note, paper.screening_exclusion_reason]);
+
+  useEffect(() => {
+    setAssignmentIds(paper.screening_assignments.map((assignment) => assignment.user_id));
+  }, [paper.screening_assignments]);
 
   useEffect(() => {
     if (reviewerDirty) return;
@@ -4614,6 +4740,19 @@ function PaperCard({
       setReviewerError(cause instanceof Error ? cause.message : "Could not save your decision.");
     } finally {
       setReviewerSaving(false);
+    }
+  }
+
+  async function saveScreeningAssignments() {
+    if (!onScreeningAssignmentsChange) return;
+    setAssignmentSaving(true);
+    setAssignmentError("");
+    try {
+      await onScreeningAssignmentsChange(assignmentIds);
+    } catch (cause) {
+      setAssignmentError(cause instanceof Error ? cause.message : "Could not save reviewer assignments.");
+    } finally {
+      setAssignmentSaving(false);
     }
   }
 
@@ -4705,6 +4844,63 @@ function PaperCard({
                   Save adjudication
                 </button>
               </div>
+            </section>
+            <section className="screening-review-panel screening-assignment-panel" aria-label="Paper review assignments">
+              <strong>Review assignments</strong>
+              {paper.screening_assignments.length ? (
+                <ul className="screening-assignment-status">
+                  {paper.screening_assignments.map((assignment) => {
+                    const decision = paper.screening_decisions.find(
+                      (item) => item.user_id === assignment.user_id,
+                    );
+                    return (
+                      <li key={assignment.user_id}>
+                        <span>{assignment.user_name}</span>
+                        <span>{decision ? `Screened · ${decision.screening_status}` : "Not screened"}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="muted compact">No reviewers assigned.</p>
+              )}
+              {onScreeningAssignmentsChange && (
+                <details className="screening-assignment-editor">
+                  <summary>Manage reviewers</summary>
+                  <div className="screening-assignment-options">
+                    {assignmentOptions.length ? assignmentOptions.map((collaborator) => (
+                      <label key={collaborator.user_id}>
+                        <input
+                          type="checkbox"
+                          checked={assignmentIds.includes(collaborator.user_id)}
+                          onChange={(event) => {
+                            setAssignmentIds((current) => event.target.checked
+                              ? [...current, collaborator.user_id]
+                              : current.filter((id) => id !== collaborator.user_id));
+                          }}
+                          disabled={assignmentSaving}
+                        />
+                        <span>{collaborator.name}</span>
+                        {collaborator.role === "read" && <small>Access changed</small>}
+                      </label>
+                    )) : (
+                      <span className="muted compact">No eligible project collaborators.</span>
+                    )}
+                  </div>
+                  <button
+                    className="button secondary small-button"
+                    onClick={() => void saveScreeningAssignments()}
+                    disabled={assignmentSaving || !assignmentSelectionChanged}
+                  >
+                    {assignmentSaving ? "Saving…" : "Save reviewers"}
+                  </button>
+                  {assignmentError && <p className="screening-form-error" role="alert">{assignmentError}</p>}
+                </details>
+              )}
+              {!canEditProject && canCommentOnProject &&
+                !paper.screening_assignments.some((assignment) => assignment.user_id === currentUserId) && (
+                  <p className="muted compact">An editor must assign you before you can submit an assessment.</p>
+                )}
             </section>
             <section className="screening-review-panel reviewer-decision-panel" aria-label="Independent reviewer assessment">
               <div className="reviewer-decision-heading">

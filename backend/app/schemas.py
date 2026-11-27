@@ -770,6 +770,13 @@ class PaperScreeningDecisionResponse(BaseModel):
     updated_at: datetime
 
 
+class PaperScreeningAssignmentResponse(BaseModel):
+    user_id: uuid.UUID
+    user_name: str
+    username: str | None
+    assigned_at: datetime
+
+
 class PaperStudyExtractionResponse(APIModel):
     population: str
     methods: str
@@ -803,6 +810,7 @@ class PaperResponse(BaseModel):
     screening_note: str = ""
     screening_exclusion_reason: ScreeningExclusionReason | None = None
     screening_decisions: list[PaperScreeningDecisionResponse] = Field(default_factory=list)
+    screening_assignments: list[PaperScreeningAssignmentResponse] = Field(default_factory=list)
     screening_disagreement: bool = False
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
@@ -863,6 +871,17 @@ class PaperScreeningDecisionUpdate(BaseModel):
             self.screening_status, self.exclusion_reason, self.screening_note
         )
         return self
+
+
+class PaperScreeningAssignmentsUpdate(BaseModel):
+    user_ids: list[uuid.UUID]
+
+    @field_validator("user_ids")
+    @classmethod
+    def reject_duplicate_assignees(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("A collaborator can only be assigned once to a paper.")
+        return value
 
 
 class PaperScreeningBulkUpdate(BaseModel):

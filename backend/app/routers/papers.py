@@ -23,6 +23,7 @@ from app.models import (
     DocumentPaper,
     Paper,
     PaperAuthor,
+    PaperScreeningAssignment,
     PaperScreeningDecision,
     PaperStudyExtraction,
     ProjectCollection,
@@ -44,6 +45,8 @@ from app.schemas import (
     PaperScreeningBulkResponse,
     PaperScreeningBulkUpdate,
     PaperScreeningCounts,
+    PaperScreeningAssignmentResponse,
+    PaperScreeningAssignmentsUpdate,
     PaperScreeningDecisionResponse,
     PaperScreeningDecisionUpdate,
     PaperScreeningUpdate,
@@ -70,6 +73,7 @@ from app.services.academic_search import (
     upsert_paper,
 )
 from app.services.audit import record_activity
+from app.services.project_collaboration import list_project_collaborators
 from app.services.bibliography import (
     Reference,
     format_references,
@@ -94,6 +98,7 @@ def _paper_response(
     screening_note: str = "",
     screening_exclusion_reason: str | None = None,
     screening_decisions: list[PaperScreeningDecisionResponse] | None = None,
+    screening_assignments: list[PaperScreeningAssignmentResponse] | None = None,
     screening_disagreement: bool | None = None,
     tags: list[str] | None = None,
     metadata: dict[str, str] | None = None,
@@ -123,6 +128,7 @@ def _paper_response(
         screening_note=screening_note,
         screening_exclusion_reason=screening_exclusion_reason,
         screening_decisions=screening_decisions,
+        screening_assignments=screening_assignments or [],
         screening_disagreement=(
             _has_screening_disagreement(screening_decisions)
             if screening_disagreement is None
@@ -175,6 +181,25 @@ def list_saved_papers(
                 updated_at=decision.updated_at,
             )
         )
+    assignment_rows = db.execute(
+        select(PaperScreeningAssignment, User.name, User.username)
+        .join(User, User.user_id == PaperScreeningAssignment.user_id)
+        .where(
+            PaperScreeningAssignment.project_id == project_id,
+            PaperScreeningAssignment.paper_id.in_(paper_ids),
+        )
+        .order_by(User.name, PaperScreeningAssignment.assigned_at)
+    ).all()
+    assignments_by_paper: dict[uuid.UUID, list[PaperScreeningAssignmentResponse]] = {}
+    for assignment, user_name, username in assignment_rows:
+        assignments_by_paper.setdefault(assignment.paper_id, []).append(
+            PaperScreeningAssignmentResponse(
+                user_id=assignment.user_id,
+                user_name=user_name,
+                username=username,
+                assigned_at=assignment.assigned_at,
+            )
+        )
     extraction_rows = db.execute(
         select(PaperStudyExtraction, User.name)
         .outerjoin(User, User.user_id == PaperStudyExtraction.updated_by)
@@ -205,6 +230,7 @@ def list_saved_papers(
             screening_note=screening[paper_id].screening_note,
             screening_exclusion_reason=screening[paper_id].screening_exclusion_reason,
             screening_decisions=decisions_by_paper.get(paper_id, []),
+            screening_assignments=assignments_by_paper.get(paper_id, []),
             tags=screening[paper_id].tags,
             metadata=screening[paper_id].custom_metadata,
             study_extraction=extractions_by_paper.get(paper_id),
@@ -1262,9 +1288,17 @@ def update_reviewer_screening_decision(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    require_project_access(db, project_id, user.user_id, "edit")
+    require_project_access(db, project_id, user.user_id, "comment")
     if db.get(ProjectPaper, (project_id, paper_id)) is None:
         raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+    try:
+        require_project_access(db, project_id, user.user_id, "edit")
+    except HTTPException as access_error:
+        if (
+            access_error.status_code != 403
+            or db.get(PaperScreeningAssignment, (project_id, paper_id, user.user_id)) is None
+        ):
+            raise
 
     decision = db.get(PaperScreeningDecision, (project_id, paper_id, user.user_id))
     if decision is None:
@@ -1316,6 +1350,84 @@ def update_reviewer_screening_decision(
         created_at=decision.created_at,
         updated_at=decision.updated_at,
     )
+
+
+@router.put(
+    "/{paper_id}/screening/assignments",
+    response_model=list[PaperScreeningAssignmentResponse],
+)
+def update_paper_screening_assignments(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    payload: PaperScreeningAssignmentsUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = require_project_access(db, project_id, user.user_id, "edit")
+    if db.get(ProjectPaper, (project_id, paper_id)) is None:
+        raise HTTPException(status_code=404, detail="Saved paper not found in this project.")
+
+    collaborator_roles = {
+        collaborator.user_id: role
+        for collaborator, role in list_project_collaborators(db, project)
+    }
+    if any(
+        user_id not in collaborator_roles
+        or collaborator_roles[user_id] not in {"owner", "comment", "edit"}
+        for user_id in payload.user_ids
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Reviewers must be project collaborators with commenting or editing access.",
+        )
+
+    requested_ids = set(payload.user_ids)
+    existing_assignments = db.scalars(
+        select(PaperScreeningAssignment).where(
+            PaperScreeningAssignment.project_id == project_id,
+            PaperScreeningAssignment.paper_id == paper_id,
+        )
+    ).all()
+    existing_ids = {assignment.user_id for assignment in existing_assignments}
+    for assignment in existing_assignments:
+        if assignment.user_id not in requested_ids:
+            db.delete(assignment)
+    for assignee_id in requested_ids - existing_ids:
+        db.add(
+            PaperScreeningAssignment(
+                project_id=project_id,
+                paper_id=paper_id,
+                user_id=assignee_id,
+            )
+        )
+
+    if requested_ids != existing_ids:
+        record_activity(
+            db,
+            user.user_id,
+            "paper.screening.assignments.updated",
+            {"assignee_count": len(requested_ids)},
+            project_id=project_id,
+        )
+        db.commit()
+    assignment_rows = db.execute(
+        select(PaperScreeningAssignment, User.name, User.username)
+        .join(User, User.user_id == PaperScreeningAssignment.user_id)
+        .where(
+            PaperScreeningAssignment.project_id == project_id,
+            PaperScreeningAssignment.paper_id == paper_id,
+        )
+        .order_by(User.name, PaperScreeningAssignment.assigned_at)
+    ).all()
+    return [
+        PaperScreeningAssignmentResponse(
+            user_id=assignment.user_id,
+            user_name=user_name,
+            username=username,
+            assigned_at=assignment.assigned_at,
+        )
+        for assignment, user_name, username in assignment_rows
+    ]
 
 
 @router.post("/screening/bulk", response_model=PaperScreeningBulkResponse)

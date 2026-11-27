@@ -164,6 +164,7 @@ export type Paper = {
   screening_note: string;
   screening_exclusion_reason: ScreeningExclusionReason | null;
   screening_decisions: PaperScreeningDecision[];
+  screening_assignments: PaperScreeningAssignment[];
   screening_disagreement: boolean;
   tags: string[];
   metadata: Record<string, string>;
@@ -218,6 +219,13 @@ export type PaperScreeningDecision = {
   screening_note: string;
   created_at: string;
   updated_at: string;
+};
+
+export type PaperScreeningAssignment = {
+  user_id: string;
+  user_name: string;
+  username: string | null;
+  assigned_at: string;
 };
 
 export type SystematicReview = {

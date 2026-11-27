@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.database import ensure_project_paper_screening_columns, get_db, get_literature_db
@@ -15,6 +15,7 @@ from app.models import (
     Author,
     Paper,
     PaperAuthor,
+    PaperScreeningAssignment,
     PaperScreeningDecision,
     PaperStudyExtraction,
     ProjectActivity,
@@ -36,11 +37,13 @@ from app.routers.papers import (
     save_paper,
     save_systematic_review,
     update_paper_screening,
+    update_paper_screening_assignments,
     update_reviewer_screening_decision,
 )
 from app.schemas import (
     PaperScreeningBulkUpdate,
     PaperScreeningDecisionUpdate,
+    PaperScreeningAssignmentsUpdate,
     PaperScreeningUpdate,
     PaperStudyExtractionUpdate,
     SystematicReviewUpdate,
@@ -59,6 +62,7 @@ def screening_databases(tmp_path):
         ResearchProject,
         ProjectInvitation,
         ProjectPaper,
+        PaperScreeningAssignment,
         PaperScreeningDecision,
         PaperStudyExtraction,
         SystematicReviewWorkspace,
@@ -430,6 +434,179 @@ def test_reviewer_decisions_keep_identity_and_flag_status_and_reason_disagreemen
     assert db.get(ProjectPaper, (project.project_id, paper.paper_id)).screening_status == "unread"
 
 
+def test_multiple_reviewers_can_be_assigned_and_progress_is_returned(screening_databases):
+    db, literature_db, owner, project, paper = screening_databases
+    commenter = User(
+        email="commenter@example.com",
+        username="commenter",
+        name="Comment reviewer",
+        password_hash="hashed",
+    )
+    editor = User(
+        email="editor@example.com",
+        username="editor",
+        name="Editor reviewer",
+        password_hash="hashed",
+    )
+    db.add_all((commenter, editor))
+    db.flush()
+    db.add_all(
+        (
+            ProjectInvitation(
+                project_id=project.project_id,
+                inviter_id=owner.user_id,
+                invitee_id=commenter.user_id,
+                status="accepted",
+                role="comment",
+            ),
+            ProjectInvitation(
+                project_id=project.project_id,
+                inviter_id=owner.user_id,
+                invitee_id=editor.user_id,
+                status="accepted",
+                role="edit",
+            ),
+        )
+    )
+    db.commit()
+
+    assigned = update_paper_screening_assignments(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningAssignmentsUpdate(user_ids=[commenter.user_id, editor.user_id]),
+        db,
+        owner,
+    )
+    assert {item.user_id for item in assigned} == {commenter.user_id, editor.user_id}
+    assert {item.username for item in assigned} == {"commenter", "editor"}
+
+    update_reviewer_screening_decision(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningDecisionUpdate(screening_status="undecided"),
+        db,
+        commenter,
+    )
+    listed = list_saved_papers(project.project_id, db, literature_db, owner)[0]
+    assert {item.user_id for item in listed.screening_assignments} == {
+        commenter.user_id,
+        editor.user_id,
+    }
+    assert [item.user_id for item in listed.screening_decisions] == [commenter.user_id]
+
+    replaced = update_paper_screening_assignments(
+        project.project_id,
+        paper.paper_id,
+        PaperScreeningAssignmentsUpdate(user_ids=[editor.user_id]),
+        db,
+        owner,
+    )
+    assert [item.user_id for item in replaced] == [editor.user_id]
+    assert db.get(PaperScreeningAssignment, (project.project_id, paper.paper_id, commenter.user_id)) is None
+    assert db.get(PaperScreeningDecision, (project.project_id, paper.paper_id, commenter.user_id)) is not None
+
+
+def test_screening_assignment_rejects_non_reviewers_without_partial_changes(screening_databases):
+    db, _literature_db, owner, project, paper = screening_databases
+    reader = User(
+        email="reader-only@example.com",
+        name="Reader only",
+        password_hash="hashed",
+    )
+    outsider = User(
+        email="outsider@example.com",
+        name="Outsider",
+        password_hash="hashed",
+    )
+    db.add_all((reader, outsider))
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=reader.user_id,
+            status="accepted",
+            role="read",
+        )
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as reader_assignment:
+        update_paper_screening_assignments(
+            project.project_id,
+            paper.paper_id,
+            PaperScreeningAssignmentsUpdate(user_ids=[reader.user_id]),
+            db,
+            owner,
+        )
+    assert reader_assignment.value.status_code == 422
+
+    with pytest.raises(HTTPException) as outsider_assignment:
+        update_paper_screening_assignments(
+            project.project_id,
+            paper.paper_id,
+            PaperScreeningAssignmentsUpdate(user_ids=[owner.user_id, outsider.user_id]),
+            db,
+            owner,
+        )
+    assert outsider_assignment.value.status_code == 422
+    assert db.scalars(
+        select(PaperScreeningAssignment).where(
+            PaperScreeningAssignment.project_id == project.project_id,
+            PaperScreeningAssignment.paper_id == paper.paper_id,
+        )
+    ).all() == []
+
+
+def test_unassigned_commenter_cannot_screen_and_cannot_manage_assignments(screening_databases):
+    db, _literature_db, owner, project, paper = screening_databases
+    commenter = User(
+        email="unassigned@example.com",
+        name="Unassigned reviewer",
+        password_hash="hashed",
+    )
+    db.add(commenter)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=commenter.user_id,
+            status="accepted",
+            role="comment",
+        )
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as decision_error:
+        update_reviewer_screening_decision(
+            project.project_id,
+            paper.paper_id,
+            PaperScreeningDecisionUpdate(screening_status="include"),
+            db,
+            commenter,
+        )
+    assert decision_error.value.status_code == 403
+
+    with pytest.raises(HTTPException) as assignment_error:
+        update_paper_screening_assignments(
+            project.project_id,
+            paper.paper_id,
+            PaperScreeningAssignmentsUpdate(user_ids=[commenter.user_id]),
+            db,
+            commenter,
+        )
+    assert assignment_error.value.status_code == 403
+
+
+def test_screening_assignments_reject_duplicate_user_ids(screening_databases):
+    _db, _literature_db, _owner, _project, _paper = screening_databases
+    reviewer_id = uuid.uuid4()
+
+    with pytest.raises(ValidationError):
+        PaperScreeningAssignmentsUpdate(user_ids=[reviewer_id, reviewer_id])
+
+
 def test_bulk_screening_updates_saved_papers_and_preserves_notes_by_default(screening_databases):
     db, literature_db, user, project, paper = screening_databases
     second_paper = Paper(
@@ -764,10 +941,17 @@ def test_systematic_review_http_routes_round_trip_and_export(screening_databases
         assert reviewer_decision.json()["user_name"] == "Reader"
         assert reviewer_decision.json()["exclusion_reason"] == "wrong_study_design"
         assert reviewer_decision.json()["updated_at"]
+        assignment_response = client.put(
+            f"/api/projects/{project.project_id}/papers/{paper.paper_id}/screening/assignments",
+            json={"user_ids": [str(user.user_id)]},
+        )
+        assert assignment_response.status_code == 200
+        assert assignment_response.json()[0]["user_id"] == str(user.user_id)
         listed = client.get(f"/api/projects/{project.project_id}/papers")
         assert listed.status_code == 200
         assert listed.json()[0]["screening_status"] == "unread"
         assert listed.json()[0]["screening_decisions"][0]["user_id"] == str(user.user_id)
+        assert listed.json()[0]["screening_assignments"][0]["user_id"] == str(user.user_id)
 
         extraction_path = f"/api/projects/{project.project_id}/papers/{paper.paper_id}/extraction"
         extraction = client.put(
