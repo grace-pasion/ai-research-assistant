@@ -66,6 +66,10 @@ import {
   type LibraryMetadataFilters,
 } from "./libraryMetadata";
 import { literatureSearchRequest } from "./searchHistory";
+import {
+  findPaperSimilarityMatches,
+  type PaperSimilarityMatch,
+} from "./paperSimilarity";
 import type { StudyExtractionValues } from "./studyExtraction";
 import type {
   AIUsageResponse,
@@ -114,6 +118,11 @@ type UploadQueueItem = {
 type ProjectAnnotationUpdate = Partial<
   Pick<Annotation, "note" | "tags" | "is_pinned" | "related_sources">
 >;
+type PendingPaperSave = {
+  projectId: string;
+  paper: Paper;
+  matches: PaperSimilarityMatch[];
+};
 
 function retainProjectSelection(current: Project | null, loaded: Project[]): Project | null {
   if (!current) return loaded[0] ?? null;
@@ -211,6 +220,7 @@ function App() {
   const [bulkScreeningNote, setBulkScreeningNote] = useState("");
   const [screeningBusy, setScreeningBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+  const [pendingPaperSave, setPendingPaperSave] = useState<PendingPaperSave | null>(null);
   const [searchHistory, setSearchHistory] = useState<SearchQueryHistoryRecord[]>([]);
   const [savedPaperSearches, setSavedPaperSearches] = useState<SavedPaperSearch[]>([]);
   const [saveSearchAlerts, setSaveSearchAlerts] = useState(false);
@@ -1736,6 +1746,23 @@ function App() {
     }
   }
 
+  function reviewPaperBeforeSave(paper: Paper) {
+    if (!project || !canEditProject) return;
+    const matches = findPaperSimilarityMatches(paper, papers);
+    if (matches.length) {
+      setPendingPaperSave({ projectId: project.project_id, paper, matches });
+      return;
+    }
+    void savePaper(paper);
+  }
+
+  function confirmPaperSave() {
+    const pending = pendingPaperSave;
+    setPendingPaperSave(null);
+    if (!pending || project?.project_id !== pending.projectId) return;
+    void savePaper(pending.paper);
+  }
+
   async function unsavePaper(paper: Paper) {
     if (!project) return;
     setError("");
@@ -2309,6 +2336,81 @@ function App() {
         <div className="content-area">
           {error && <Notice kind="error" text={error} onClose={() => setError("")} />}
           {notice && <Notice kind="success" text={notice} onClose={() => setNotice("")} />}
+          {pendingPaperSave && project?.project_id === pendingPaperSave.projectId && (
+            <div className="modal-backdrop" onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setPendingPaperSave(null);
+            }}>
+              <section
+                className="modal-card paper-match-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="paper-match-title"
+                aria-describedby="paper-match-description"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setPendingPaperSave(null);
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">CHECK YOUR LIBRARY</p>
+                    <h2 id="paper-match-title">Possible duplicates or related papers</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setPendingPaperSave(null)}
+                    aria-label="Close"
+                    autoFocus
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <p id="paper-match-description" className="paper-match-intro">
+                  These saved papers have a matching DOI or a similar title. Metadata can differ,
+                  and papers without a DOI can still match. Review them before adding{" "}
+                  <strong>{pendingPaperSave.paper.title}</strong>.
+                </p>
+                <ul className="paper-match-list">
+                  {pendingPaperSave.matches.map((match) => (
+                    <li key={match.paper.paper_id} className="paper-match-item">
+                      <div className="paper-match-heading">
+                        <strong>{match.paper.title}</strong>
+                        <span className={`paper-match-badge ${match.kind}`}>
+                          {match.kind === "possible_duplicate" ? "Possible duplicate" : "Related"}
+                        </span>
+                      </div>
+                      <p>{match.reason}</p>
+                      <small>
+                        {[
+                          match.paper.authors.map((author) => author.author_name).join(", "),
+                          match.paper.publication_year,
+                          match.paper.doi ? `DOI: ${match.paper.doi}` : null,
+                        ].filter(Boolean).join(" · ") || "No additional metadata"}
+                      </small>
+                      {match.paper.paper_url && (
+                        <a href={match.paper.paper_url} target="_blank" rel="noreferrer">
+                          Open saved paper
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="paper-match-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setPendingPaperSave(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="button" className="button primary" onClick={confirmPaperSave}>
+                    Save anyway
+                  </button>
+                </div>
+                <p className="paper-match-footnote">Saving anyway keeps both records in the project.</p>
+              </section>
+            </div>
+          )}
           {showNewProject && (
             <div className="modal-backdrop" onMouseDown={(event) => {
               if (event.target === event.currentTarget) setShowNewProject(false);
@@ -3339,7 +3441,8 @@ function App() {
                           paper={paper}
                           canEditProject={canEditProject}
                           canCommentOnProject={canCommentOnProject}
-                          onSave={() => void savePaper(paper)}
+                          alreadySaved={paper.saved}
+                          onSave={() => reviewPaperBeforeSave(paper)}
                         />
                       )) : <EmptyState icon={<Search size={21} />} title="No results found" text="Try a broader query or use the other search provider." />}
                     </div>
@@ -4414,6 +4517,7 @@ function StatusPill({ status }: { status: string }) {
 function PaperCard({
   paper,
   saved = false,
+  alreadySaved = false,
   canEditProject,
   canCommentOnProject,
   onSave,
@@ -4431,6 +4535,7 @@ function PaperCard({
 }: {
   paper: Paper;
   saved?: boolean;
+  alreadySaved?: boolean;
   canEditProject: boolean;
   canCommentOnProject: boolean;
   onSave?: () => void;
@@ -4723,7 +4828,14 @@ function PaperCard({
             {onRemove && <button className="button secondary small-button" onClick={onRemove}><X size={14} /> Remove</button>}
           </>
         ) : (
-          <button className="button secondary small-button" onClick={onSave} disabled={!canEditProject}><Plus size={15} /> Save</button>
+          <button
+            className="button secondary small-button"
+            onClick={onSave}
+            disabled={!canEditProject || alreadySaved}
+          >
+            {alreadySaved ? <Check size={15} /> : <Plus size={15} />}
+            {alreadySaved ? "Saved" : "Save"}
+          </button>
         )}
       </div>
     </article>
