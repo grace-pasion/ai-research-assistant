@@ -15,12 +15,19 @@ const FILTER_LABELS: Record<string, string> = {
 
 type Props = {
   projects: Project[];
+  query: string;
+  onQueryChange: (query: string) => void;
   request: <T,>(path: string, options?: RequestInit) => Promise<T>;
   onOpen: (result: CrossProjectSearchResult) => void;
 };
 
-export function CrossProjectSearch({ projects, request, onOpen }: Props) {
-  const [query, setQuery] = useState("");
+export function CrossProjectSearch({
+  projects,
+  query,
+  onQueryChange,
+  request,
+  onOpen,
+}: Props) {
   const [projectId, setProjectId] = useState("");
   const [sourceType, setSourceType] = useState("");
   const [author, setAuthor] = useState("");
@@ -126,7 +133,7 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
   async function rerunHistory(record: CrossProjectSearchRecord) {
     if (loading || loadingMore) return;
     const params = crossProjectSearchParams(record);
-    setQuery(record.query_text);
+    onQueryChange(record.query_text);
     setProjectId(String(record.filters.project_id ?? ""));
     setSourceType(String(record.filters.source_type ?? ""));
     setAuthor(String(record.filters.author ?? ""));
@@ -173,7 +180,7 @@ export function CrossProjectSearch({ projects, request, onOpen }: Props) {
           Search terms
           <input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             placeholder="Title, abstract, document text, or DOI…"
             minLength={2}
             maxLength={200}

@@ -355,6 +355,7 @@ function App() {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [searchText, setSearchText] = useState("");
+  const [crossProjectSearchQuery, setCrossProjectSearchQuery] = useState("");
   const [provider, setProvider] = useState("openalex");
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [briefExportingMessageId, setBriefExportingMessageId] = useState<string | null>(null);
@@ -708,6 +709,7 @@ function App() {
         setAuthToken(null);
         setToken(null);
         setPendingDocumentUpload(null);
+        setCrossProjectSearchQuery("");
         setError(cause instanceof Error ? cause.message : "Could not restore your session.");
       });
     return () => {
@@ -2901,6 +2903,7 @@ function App() {
     setAuthToken(null);
     setUser(null);
     setPendingDocumentUpload(null);
+    setCrossProjectSearchQuery("");
     setProjects([]);
     setTeamWorkspaces([]);
     setSelectedTeamWorkspaceId(null);
@@ -3892,6 +3895,8 @@ function App() {
           {view === "search" ? (
             <CrossProjectSearch
               projects={projects}
+              query={crossProjectSearchQuery}
+              onQueryChange={setCrossProjectSearchQuery}
               request={request}
               onOpen={openCrossProjectSearchResult}
             />
