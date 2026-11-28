@@ -23,6 +23,7 @@ import {
   Plus,
   Pencil,
   Pin,
+  RotateCcw,
   Search,
   Send,
   Settings,
@@ -295,6 +296,7 @@ function App() {
   const [conversationRenameBusy, setConversationRenameBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [draftQuestion, setDraftQuestion] = useState("");
+  const [draftMode, setDraftMode] = useState<"question" | "compare" | "directions">("question");
   const [assistantSources, setAssistantSources] = useState<AssistantSourceSelection | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -2613,8 +2615,40 @@ function App() {
       });
       setDraft(generated);
       setDraftQuestion(submittedQuestion);
+      setDraftMode(askMode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not generate an answer.");
+    } finally {
+      setBusy(false);
+      void refreshUsage();
+    }
+  }
+
+  async function retryDraft() {
+    if (!project || !draft || busy) return;
+    const projectId = project.project_id;
+    const previousDraft = draft;
+    const previousQuestion = draftQuestion;
+    const previousMode = draftMode;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const retried = await request<Draft>(
+        `/api/projects/${projectId}/assistant/draft/retry`,
+        { method: "POST", body: jsonBody({ approval_token: previousDraft.approval_token }) },
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setDraft(retried);
+      setDraftQuestion(previousQuestion);
+      setDraftMode(previousMode);
+      setQuestion(previousQuestion);
+      setAskMode(previousMode);
+      setNotice("Another answer was generated using the same sources. Review it before saving.");
+    } catch (cause) {
+      if (selectedProjectIdRef.current === projectId) {
+        setError(cause instanceof Error ? cause.message : "Could not retry this answer.");
+      }
     } finally {
       setBusy(false);
       void refreshUsage();
@@ -5042,8 +5076,11 @@ function App() {
                             />
                           )}
                           <div className="review-actions">
-                            <button className="button secondary" onClick={() => setDraft(null)} disabled={busy}><X size={16} /> Discard</button>
-                            <button className="button approve" onClick={() => void approveDraft()} disabled={busy}>
+                            <button type="button" className="button secondary" onClick={() => setDraft(null)} disabled={busy}><X size={16} /> Discard</button>
+                            <button type="button" className="button secondary" onClick={() => void retryDraft()} disabled={busy}>
+                              {busy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} Try another answer
+                            </button>
+                            <button type="button" className="button approve" onClick={() => void approveDraft()} disabled={busy}>
                               {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} Approve & save
                             </button>
                           </div>

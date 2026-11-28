@@ -1125,6 +1125,10 @@ class ApproveRequest(BaseModel):
     approval_token: str
 
 
+class RetryDraftRequest(BaseModel):
+    approval_token: str
+
+
 class ConversationTitleUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 

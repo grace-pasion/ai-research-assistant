@@ -1,6 +1,7 @@
 import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
@@ -32,6 +33,7 @@ from app.schemas import (
     ConversationMessageResponse,
     ConversationSummaryResponse,
     ConversationTitleUpdate,
+    RetryDraftRequest,
     SourceResponse,
 )
 from app.security import get_current_user, require_project_access
@@ -52,6 +54,53 @@ APPROVAL_SALT = "approved-research-answer-v1"
 def _approval_serializer() -> URLSafeTimedSerializer:
     secret = get_settings().jwt_secret.get_secret_value()
     return URLSafeTimedSerializer(secret, salt=APPROVAL_SALT)
+
+
+def _load_approval_draft(
+    approval_token: str, user_id: uuid.UUID, project_id: uuid.UUID
+) -> dict[str, Any]:
+    try:
+        draft = _approval_serializer().loads(
+            approval_token,
+            max_age=get_settings().approval_token_max_age_seconds,
+        )
+    except SignatureExpired:
+        raise HTTPException(
+            status_code=400,
+            detail="This review expired. Generate a fresh answer and approve it within 15 minutes.",
+        ) from None
+    except BadSignature:
+        raise HTTPException(status_code=400, detail="Invalid approval token.") from None
+    if draft.get("user_id") != str(user_id) or draft.get("project_id") != str(project_id):
+        raise HTTPException(status_code=403, detail="This review belongs to a different user or project.")
+    return draft
+
+
+def _assistant_draft_response(
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    question: str,
+    mode: str,
+    conversation_id: uuid.UUID | None,
+    answer: str,
+    sources: list[dict],
+) -> AssistantDraftResponse:
+    approval_payload = {
+        "user_id": str(user_id),
+        "project_id": str(project_id),
+        "question": question,
+        "answer": answer,
+        "mode": mode,
+        "conversation_id": str(conversation_id) if conversation_id else None,
+        "sources": [
+            {"kind": source["kind"], "id": str(source["source_id"])} for source in sources
+        ],
+    }
+    return AssistantDraftResponse(
+        answer=answer,
+        sources=[SourceResponse(**source) for source in sources],
+        approval_token=_approval_serializer().dumps(approval_payload),
+    )
 
 
 def _conversation_for_user(
@@ -415,21 +464,104 @@ def create_draft(
             document_ids=set(selection.document_ids),
             paper_ids=set(selection.paper_ids),
         )
-    approval_payload = {
-        "user_id": str(user.user_id),
-        "project_id": str(project_id),
-        "question": payload.question.strip(),
-        "answer": answer,
-        "mode": payload.mode,
-        "conversation_id": str(payload.conversation_id) if payload.conversation_id else None,
-        "sources": [
-            {"kind": source["kind"], "id": str(source["source_id"])} for source in sources
-        ],
-    }
-    return AssistantDraftResponse(
-        answer=answer,
-        sources=[SourceResponse(**source) for source in sources],
-        approval_token=_approval_serializer().dumps(approval_payload),
+    return _assistant_draft_response(
+        user.user_id,
+        project_id,
+        payload.question.strip(),
+        payload.mode,
+        payload.conversation_id,
+        answer,
+        sources,
+    )
+
+
+@router.post("/draft/retry", response_model=AssistantDraftResponse)
+def retry_draft(
+    project_id: uuid.UUID,
+    payload: RetryDraftRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    literature_db: Session = Depends(get_literature_db),
+    user: User = Depends(get_current_user),
+):
+    draft = _load_approval_draft(payload.approval_token, user.user_id, project_id)
+    require_project_access(db, project_id, user.user_id)
+
+    conversation_id = uuid.UUID(draft["conversation_id"]) if draft.get("conversation_id") else None
+    if conversation_id is not None:
+        _conversation_for_user(db, conversation_id, user.user_id, project_id)
+
+    question = draft.get("question")
+    mode = draft.get("mode")
+    source_data = draft.get("sources")
+    if (
+        not isinstance(question, str)
+        or not question.strip()
+        or mode not in ("question", "compare", "directions")
+        or not isinstance(source_data, list)
+        or not source_data
+    ):
+        raise HTTPException(status_code=400, detail="This review cannot be retried.")
+
+    source_refs: list[tuple[str, uuid.UUID]] = []
+    for source in source_data:
+        if not isinstance(source, dict) or source.get("kind") not in ("document", "paper"):
+            raise HTTPException(status_code=400, detail="Invalid approval token.")
+        try:
+            source_id = uuid.UUID(source["id"])
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid approval token.") from None
+        source_refs.append((source["kind"], source_id))
+    source_refs = list(dict.fromkeys(source_refs))
+    chunk_ids = {source_id for kind, source_id in source_refs if kind == "document"}
+    paper_ids = {source_id for kind, source_id in source_refs if kind == "paper"}
+
+    available_chunk_ids = set()
+    if chunk_ids:
+        available_chunk_ids = set(
+            db.scalars(
+                select(DocumentChunk.chunk_id)
+                .join(Document, Document.document_id == DocumentChunk.document_id)
+                .where(
+                    DocumentChunk.chunk_id.in_(chunk_ids),
+                    Document.project_id == project_id,
+                    Document.processing_status == "ready",
+                )
+            ).all()
+        )
+    available_paper_ids = set()
+    if paper_ids:
+        available_paper_ids = set(
+            literature_db.scalars(
+                select(Paper.paper_id).where(Paper.paper_id.in_(paper_ids))
+            ).all()
+        )
+    if available_chunk_ids != chunk_ids or available_paper_ids != paper_ids:
+        raise HTTPException(
+            status_code=409,
+            detail="A source in this draft is no longer available. Generate a fresh answer to continue.",
+        )
+
+    consume_daily_prompt(db, request)
+    record_activity(db, user.user_id, "assistant.draft_requested", {"mode": mode})
+    db.commit()
+    answer, sources = draft_answer(
+        db,
+        literature_db,
+        project_id,
+        question.strip(),
+        mode,
+        conversation_id,
+        source_refs=source_refs,
+    )
+    return _assistant_draft_response(
+        user.user_id,
+        project_id,
+        question.strip(),
+        mode,
+        conversation_id,
+        answer,
+        sources,
     )
 
 
@@ -441,20 +573,7 @@ def approve_draft(
     literature_db: Session = Depends(get_literature_db),
     user: User = Depends(get_current_user),
 ):
-    try:
-        draft = _approval_serializer().loads(
-            payload.approval_token,
-            max_age=get_settings().approval_token_max_age_seconds,
-        )
-    except SignatureExpired:
-        raise HTTPException(
-            status_code=400,
-            detail="This review expired. Generate a fresh answer and approve it within 15 minutes.",
-        ) from None
-    except BadSignature:
-        raise HTTPException(status_code=400, detail="Invalid approval token.") from None
-    if draft.get("user_id") != str(user.user_id) or draft.get("project_id") != str(project_id):
-        raise HTTPException(status_code=403, detail="This review belongs to a different user or project.")
+    draft = _load_approval_draft(payload.approval_token, user.user_id, project_id)
     require_project_access(db, project_id, user.user_id)
     approval_id = hashlib.sha256(payload.approval_token.encode("utf-8")).hexdigest()
 

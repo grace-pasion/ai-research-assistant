@@ -452,6 +452,43 @@ def _retrieve_papers(
     return result
 
 
+def _retrieve_retry_chunks(
+    research_db: Session,
+    project_id: uuid.UUID,
+    chunk_ids: list[uuid.UUID],
+) -> list[tuple[DocumentChunk, Document]]:
+    if not chunk_ids:
+        return []
+    chunks = research_db.execute(
+        select(DocumentChunk, Document)
+        .join(Document, Document.document_id == DocumentChunk.document_id)
+        .where(
+            DocumentChunk.chunk_id.in_(chunk_ids),
+            Document.project_id == project_id,
+            Document.processing_status == "ready",
+        )
+    ).all()
+    chunks_by_id = {chunk.chunk_id: (chunk, document) for chunk, document in chunks}
+    return [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
+
+
+def _retrieve_retry_papers(
+    literature_db: Session,
+    paper_ids: list[uuid.UUID],
+) -> list[dict[str, Any]]:
+    if not paper_ids:
+        return []
+    papers = literature_db.scalars(
+        select(Paper).where(Paper.paper_id.in_(paper_ids))
+    ).all()
+    papers_by_id = {paper.paper_id: paper for paper in papers}
+    return [
+        {"paper": papers_by_id[paper_id], "author_ids": []}
+        for paper_id in paper_ids
+        if paper_id in papers_by_id
+    ]
+
+
 def _call_openai(callback: Callable[[], Any]) -> Any:
     try:
         return callback()
@@ -518,17 +555,45 @@ def draft_answer(
     *,
     document_ids: set[uuid.UUID] | None = None,
     paper_ids: set[uuid.UUID] | None = None,
+    source_refs: list[tuple[str, uuid.UUID]] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     client = _openai_client()
-    if document_ids is None and paper_ids is None:
+    if source_refs is not None:
+        retry_chunk_ids = [
+            source_id for kind, source_id in source_refs if kind == "document"
+        ]
+        retry_paper_ids = [
+            source_id for kind, source_id in source_refs if kind == "paper"
+        ]
+        chunks = _retrieve_retry_chunks(research_db, project_id, retry_chunk_ids)
+        papers = _retrieve_retry_papers(literature_db, retry_paper_ids)
+        if (
+            len(chunks) != len(set(retry_chunk_ids))
+            or len(papers) != len(set(retry_paper_ids))
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="A source in this draft is no longer available. Generate a fresh answer to continue.",
+            )
+        discovered_papers = []
+        saved_paper_ids = set(
+            research_db.scalars(
+                select(ProjectPaper.paper_id).where(
+                    ProjectPaper.project_id == project_id,
+                    ProjectPaper.paper_id.in_(retry_paper_ids),
+                )
+            ).all()
+        ) if retry_paper_ids else set()
+    elif document_ids is None and paper_ids is None:
         chunks = _retrieve_chunks(research_db, project_id, question)
         papers = _retrieve_papers(research_db, literature_db, project_id, question, mode)
         discovered_papers = _discover_external_papers(literature_db, question)
+        saved_paper_ids = {item["paper"].paper_id for item in papers}
     else:
         chunks = _retrieve_chunks(research_db, project_id, question, document_ids=document_ids)
         papers = _retrieve_papers(research_db, literature_db, project_id, question, mode, paper_ids=paper_ids)
         discovered_papers = []
-    saved_paper_ids = {item["paper"].paper_id for item in papers}
+        saved_paper_ids = {item["paper"].paper_id for item in papers}
     papers.extend(
         {"paper": paper, "author_ids": []}
         for paper in discovered_papers
