@@ -46,8 +46,22 @@ describe("literature screening filters and sorting", () => {
   it("filters by decision and searches paper metadata", () => {
     expect(filterAndSortScreeningPapers(papers, "include", "queryable", "saved").map((item) => item.title))
       .toEqual(["Alpha study"]);
+    expect(filterAndSortScreeningPapers(papers, "unread", "", "saved").map((item) => item.title))
+      .toEqual(["Zebra study"]);
+    expect(filterAndSortScreeningPapers(papers, "exclude", "", "saved").map((item) => item.title))
+      .toEqual(["No date"]);
     expect(filterAndSortScreeningPapers(papers, "all", "zebra", "saved").map((item) => item.title))
       .toEqual(["Zebra study"]);
+  });
+
+  it("filters by publication year, including papers without a recorded year", () => {
+    expect(filterAndSortScreeningPapers(papers, "all", "", "saved", 2024).map((item) => item.title))
+      .toEqual(["Alpha study"]);
+    expect(filterAndSortScreeningPapers(papers, "include", "", "saved", 2024).map((item) => item.title))
+      .toEqual(["Alpha study"]);
+    expect(filterAndSortScreeningPapers(papers, "all", "", "saved", "unknown").map((item) => item.title))
+      .toEqual(["No date"]);
+    expect(filterAndSortScreeningPapers(papers, "include", "", "saved", 2021)).toEqual([]);
   });
 
   it("sorts by title and publication year while keeping missing years last", () => {

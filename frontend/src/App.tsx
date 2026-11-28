@@ -74,6 +74,7 @@ import {
   SCREENING_EXCLUSION_REASONS,
   type ScreeningSort,
   type ScreeningStatusFilter,
+  type ScreeningYearFilter,
 } from "./literatureScreening";
 import { summarizeScreeningAssignments } from "./screeningAssignments";
 import {
@@ -264,6 +265,7 @@ function App() {
   const [reviewLoadError, setReviewLoadError] = useState("");
   const [reviewReloadKey, setReviewReloadKey] = useState(0);
   const [screeningFilter, setScreeningFilter] = useState<ScreeningStatusFilter>("all");
+  const [screeningYearFilter, setScreeningYearFilter] = useState<ScreeningYearFilter>("all");
   const [screeningQuery, setScreeningQuery] = useState("");
   const [screeningSort, setScreeningSort] = useState<ScreeningSort>("saved");
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
@@ -850,11 +852,24 @@ function App() {
   );
   const visibleScreeningPapers = useMemo(
     () => filterByLibraryMetadata(
-      filterAndSortScreeningPapers(papers, screeningFilter, screeningQuery, screeningSort),
+      filterAndSortScreeningPapers(
+        papers,
+        screeningFilter,
+        screeningQuery,
+        screeningSort,
+        screeningYearFilter,
+      ),
       paperMetadataFilters,
     ),
-    [papers, screeningFilter, screeningQuery, screeningSort, paperMetadataFilters],
+    [papers, screeningFilter, screeningQuery, screeningSort, screeningYearFilter, paperMetadataFilters],
   );
+  const screeningPublicationYears = useMemo(() => {
+    const years = new Set(papers
+      .map((paper) => paper.publication_year)
+      .filter((year): year is number => year !== null));
+    if (typeof screeningYearFilter === "number") years.add(screeningYearFilter);
+    return [...years].sort((left, right) => right - left);
+  }, [papers, screeningYearFilter]);
   const selectedScreeningCount = papers.filter((paper) => selectedPaperIds.has(paper.paper_id)).length;
   const visibleProjectAnnotations = useMemo(
     () => filterProjectAnnotations(
@@ -4601,6 +4616,24 @@ function App() {
                             </select>
                           </label>
                           <label>
+                            Publication year
+                            <select
+                              value={String(screeningYearFilter)}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setScreeningYearFilter(value === "all"
+                                  ? "all"
+                                  : value === "unknown" ? "unknown" : Number(value));
+                              }}
+                            >
+                              <option value="all">All years</option>
+                              <option value="unknown">Year unavailable</option>
+                              {screeningPublicationYears.map((year) => (
+                                <option key={year} value={year}>{year}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
                             Search saved papers
                             <input
                               value={screeningQuery}
@@ -4772,7 +4805,7 @@ function App() {
                       </Fragment>
                     )) : <p className="muted compact">Your saved papers will appear here.</p>}
                     {papers.length > 0 && visibleScreeningPapers.length === 0 && (
-                      <p className="muted compact">No saved papers match these screening filters.</p>
+                      <p className="muted compact">No saved papers match these filters.</p>
                     )}
                   </div>
                 </section>

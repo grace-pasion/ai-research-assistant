@@ -2,6 +2,7 @@ import type { Paper, PaperScreeningDecision, ScreeningExclusionReason } from "./
 
 export type ScreeningStatusFilter = Paper["screening_status"] | "all";
 export type ScreeningSort = "saved" | "title" | "year_desc" | "year_asc";
+export type ScreeningYearFilter = number | "all" | "unknown";
 
 export const SCREENING_EXCLUSION_REASONS: {
   value: ScreeningExclusionReason;
@@ -35,10 +36,13 @@ export function filterAndSortScreeningPapers(
   status: ScreeningStatusFilter,
   query: string,
   sort: ScreeningSort,
+  year: ScreeningYearFilter = "all",
 ): Paper[] {
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = papers.filter((paper) => {
     if (status !== "all" && paper.screening_status !== status) return false;
+    if (year === "unknown" && paper.publication_year !== null) return false;
+    if (typeof year === "number" && paper.publication_year !== year) return false;
     if (!normalizedQuery) return true;
     const searchableText = [
       paper.title,
