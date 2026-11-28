@@ -406,6 +406,8 @@ h1, h2, h3, p { margin-top: 0; }
 .paper-main h3 { color: #344139; font: 650 12px/1.45 var(--serif); margin: 0 0 5px; }
 .paper-meta, .doi-line { color: #849087; font-size: 9px; line-height: 1.5; margin: 0 0 6px; }
 .paper-abstract { color: #707b73; font-size: 10px; line-height: 1.6; margin: 8px 0; }
+.paper-abstract-toggle { background: none; border: 0; color: #3d7054; cursor: pointer; font: inherit; font-weight: 600; padding: 0; text-decoration: underline; }
+.paper-abstract-toggle:focus-visible { outline: 2px solid #63816b; outline-offset: 2px; }
 .doi-line { color: #9aa39c; margin: 0; }
 .paper-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; }
 .paper-copy-feedback { flex-basis: 100%; font-size: 9px; text-align: right; }

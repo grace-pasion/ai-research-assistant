@@ -33,7 +33,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
 import { findCitationRange } from "./citationEvidence";
@@ -98,6 +98,7 @@ import {
   formatPaperCitation,
   paperDoiForClipboard,
 } from "./paperCitation";
+import { preparePaperAbstract } from "./paperAbstract";
 import type { StudyExtractionValues } from "./studyExtraction";
 import type {
   AIUsageResponse,
@@ -5892,6 +5893,7 @@ function PaperCard({
     kind: "success" | "error";
     message: string;
   } | null>(null);
+  const [abstractExpanded, setAbstractExpanded] = useState(false);
   const [assignmentIds, setAssignmentIds] = useState(
     paper.screening_assignments.map((assignment) => assignment.user_id),
   );
@@ -5922,6 +5924,8 @@ function PaperCard({
   const assignmentSelectionChanged = currentAssignmentIds.length !== selectedAssignmentIds.length
     || currentAssignmentIds.some((userId, index) => userId !== selectedAssignmentIds[index]);
   const paperDoi = paperDoiForClipboard(paper);
+  const paperAbstract = preparePaperAbstract(paper.abstract);
+  const abstractId = useId();
 
   async function copyPaperText(value: string, label: "citation" | "DOI") {
     setCopyFeedback(null);
@@ -6022,7 +6026,27 @@ function PaperCard({
         <p className="paper-meta">
           {[paper.authors.slice(0, 4).map((author) => author.author_name).join(", "), paper.publication_year, paper.venue, paper.citation_count != null ? `${paper.citation_count.toLocaleString()} citations` : ""].filter(Boolean).join(" · ") || paper.api_provider}
         </p>
-        {paper.abstract && <p className="paper-abstract">{paper.abstract.replace(/<[^>]*>/g, "").slice(0, 500)}{paper.abstract.length > 500 ? "…" : ""}</p>}
+        {paperAbstract.text && (
+          <p className="paper-abstract">
+            <span id={`paper-abstract-${abstractId}`}>
+              {abstractExpanded ? paperAbstract.text : paperAbstract.preview}
+              {paperAbstract.hasMore && !abstractExpanded ? "… " : ""}
+            </span>
+            {paperAbstract.hasMore && (
+              <>
+                <button
+                  type="button"
+                  className="paper-abstract-toggle"
+                  aria-expanded={abstractExpanded}
+                  aria-controls={`paper-abstract-${abstractId}`}
+                  onClick={() => setAbstractExpanded((expanded) => !expanded)}
+                >
+                  {abstractExpanded ? "Show less" : "Read more"}
+                </button>
+              </>
+            )}
+          </p>
+        )}
         {paper.doi && <p className="doi-line">DOI: {paper.doi.replace(/^https?:\/\/doi\.org\//, "")}</p>}
         {saved && (
           <div className="screening-review-workspace">
