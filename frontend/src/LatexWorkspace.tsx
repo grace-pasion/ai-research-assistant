@@ -36,7 +36,7 @@ import {
 import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
-import { findLatexSourceLocation, sourceOffsetForLine } from "./latexDiagnostics";
+import { findLatexSourceLocation, sourceLineAt, sourceOffsetForLine } from "./latexDiagnostics";
 import { formatLastSavedAt, getWorkspaceSaveStatusLabel } from "./latexWorkspaceStatus";
 import {
   ensureLatexPackage,
@@ -55,6 +55,7 @@ type WorkspaceFiles = {
   references_bib: string;
   updated_at: string | null;
 };
+type LatexSourceFiles = Pick<WorkspaceFiles, "main_tex" | "references_bib">;
 
 type WorkspaceRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -163,6 +164,7 @@ export function LatexWorkspace({
   const [customCitationStyleSelected, setCustomCitationStyleSelected] = useState(false);
   const [citationStyleError, setCitationStyleError] = useState("");
   const [compileError, setCompileError] = useState("");
+  const [compiledSource, setCompiledSource] = useState<LatexSourceFiles | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
   const [comparison, setComparison] = useState<WorkspaceVersionDetails | null>(null);
@@ -241,6 +243,7 @@ export function LatexWorkspace({
       setWorkspace(restored);
       setSaveStatus("saved");
       setCompileError("");
+      setCompiledSource(null);
       await loadHistory(version.filename);
     } catch (cause) {
       setHistoryError(cause instanceof Error ? cause.message : "Could not restore this version.");
@@ -255,7 +258,7 @@ export function LatexWorkspace({
     const source = location.filename === "main.tex"
       ? workspaceRef.current.main_tex
       : workspaceRef.current.references_bib;
-    const offset = sourceOffsetForLine(source, location.line);
+    const offset = location.line === null ? 0 : sourceOffsetForLine(source, location.line);
     setPythonWorkspaceActive(false);
     setActiveFile(location.filename);
     setPaneMode("source");
@@ -558,7 +561,9 @@ export function LatexWorkspace({
   async function compilePdf() {
     setCompiling(true);
     setCompileError("");
+    setCompiledSource(null);
     onCompileStatusChange({ status: "compiling", message: null });
+    let sourceAtCompile: LatexSourceFiles | null = null;
     try {
       const saved = await persist(workspaceRef.current);
       if (!saved) {
@@ -567,6 +572,7 @@ export function LatexWorkspace({
         onCompileStatusChange({ status: "failed", message });
         return;
       }
+      sourceAtCompile = { main_tex: saved.main_tex, references_bib: saved.references_bib };
       const nextUrl = await fetchPdfObjectUrl(
         `/api/projects/${project.project_id}/latex/compile`,
         { method: "POST" },
@@ -583,7 +589,10 @@ export function LatexWorkspace({
       onCompileStatusChange({ status: "completed", message: null });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not compile this document.";
-      if (mountedRef.current) setCompileError(message);
+      if (mountedRef.current) {
+        setCompiledSource(sourceAtCompile);
+        setCompileError(message);
+      }
       onCompileStatusChange({ status: "failed", message });
     } finally {
       if (mountedRef.current) setCompiling(false);
@@ -591,6 +600,14 @@ export function LatexWorkspace({
   }
 
   const compileLocation = findLatexSourceLocation(compileError);
+  const compileSource = compileLocation?.filename === "main.tex"
+    ? compiledSource?.main_tex
+    : compileLocation
+      ? compiledSource?.references_bib
+      : undefined;
+  const compileSourceLine = compileLocation && compileLocation.line !== null && compileSource !== undefined
+    ? sourceLineAt(compileSource, compileLocation.line)
+    : null;
   const lastSavedAt = formatLastSavedAt(workspace.updated_at);
   const saveStatusClass = saveStatus === "saved" && !workspace.updated_at ? "unsaved" : saveStatus;
 
@@ -676,9 +693,26 @@ export function LatexWorkspace({
         <div className="inline-error latex-error latex-diagnostic" role="alert">
           <pre>{compileError}</pre>
           {compileLocation && (
-            <button type="button" className="button secondary small-button" onClick={openCompileLocation}>
-              Open {compileLocation.filename} line {compileLocation.line}
-            </button>
+            <>
+              <p className="latex-diagnostic-location">
+                {compileLocation.line === null
+                  ? `File: ${compileLocation.filename}`
+                  : `${compileLocation.filename}, line ${compileLocation.line}`}
+              </p>
+              {compileLocation.line !== null && compileSourceLine !== null && (
+                <pre
+                  className="latex-diagnostic-source"
+                  aria-label={`Source line ${compileLocation.line} from ${compileLocation.filename}`}
+                >
+                  <span>{compileLocation.line}</span>
+                  <code>{compileSourceLine || " "}</code>
+                </pre>
+              )}
+              <button type="button" className="button secondary small-button" onClick={openCompileLocation}>
+                Open {compileLocation.filename}
+                {compileLocation.line === null ? "" : ` line ${compileLocation.line}`}
+              </button>
+            </>
           )}
         </div>
       )}
