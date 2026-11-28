@@ -53,7 +53,9 @@ export function DocumentUploadDropzone({
       onDrop={handleDrop}
     >
       <Upload size={19} aria-hidden="true" />
-      <strong>{draggingFiles ? "Drop files to upload" : "Drag files here to upload"}</strong>
+      <strong>
+        {draggingFiles ? "Drop files to review" : "Drag files here to review before upload"}
+      </strong>
       <span>
         {disabled
           ? "Wait for the current upload to finish before adding more."

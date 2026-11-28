@@ -202,6 +202,21 @@ h1, h2, h3, p { margin-top: 0; }
 .document-upload-dropzone.is-active { background: #edf5ef; border-color: #3e8059; border-style: solid; color: #285d49; }
 .document-upload-dropzone.is-active strong, .document-upload-dropzone.is-active > svg { color: #285d49; }
 .document-upload-dropzone.is-disabled { background: #f5f6f4; opacity: .7; }
+.pending-upload-review { background: #fff; border: 1px solid #e8ece8; border-radius: 8px; margin: -8px 0 16px; overflow: hidden; }
+.pending-upload-heading, .pending-upload-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; padding: 9px 12px; }
+.pending-upload-heading { background: #f8faf8; border-bottom: 1px solid #edf0ed; }
+.pending-upload-heading strong { color: #536157; font-size: 10px; }
+.pending-upload-heading span, .pending-upload-actions > span { color: #89938b; font-size: 9px; }
+.pending-upload-list { max-height: 220px; overflow-y: auto; }
+.pending-upload-item { align-items: center; border-bottom: 1px solid #f0f2f0; color: #657168; display: grid; font-size: 10px; gap: 8px; grid-template-columns: 16px minmax(0, 1fr) auto; min-height: 44px; padding: 6px 12px; }
+.pending-upload-item:last-child { border-bottom: 0; }
+.pending-upload-item > svg { color: #74867a; }
+.pending-upload-file-details { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pending-upload-file-details strong { color: #4b584f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-upload-file-details span { color: #89938b; font-size: 9px; }
+.pending-upload-item .text-button { font-size: 9px; margin: 0; }
+.pending-upload-actions { border-top: 1px solid #edf0ed; justify-content: flex-end; }
+.pending-upload-actions > span { margin-right: auto; }
 .reference-toolbar { align-items: center; background: #fbfcfa; border: 1px solid #e8ece8; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: -7px 0 16px; padding: 10px 12px; }
 .reference-toolbar-copy { display: flex; flex-direction: column; gap: 4px; }
 .reference-toolbar-copy strong { color: #536157; font-size: 10px; }

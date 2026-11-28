@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getDroppedFiles, hasFileDragType } from "./documentFileDrop";
+import {
+  getDroppedFiles,
+  getUploadFileType,
+  hasFileDragType,
+} from "./documentFileDrop";
 
 describe("document file drops", () => {
   it("recognizes file drags without treating other drags as uploads", () => {
@@ -15,5 +19,13 @@ describe("document file drops", () => {
     ];
 
     expect(getDroppedFiles({ files })).toEqual(files);
+  });
+
+  it("shows a recognizable type from the file extension or MIME type", () => {
+    expect(getUploadFileType(new File(["pdf"], "PAPER.PDF"))).toBe("PDF");
+    expect(getUploadFileType(new File(["doc"], "notes.docx"))).toBe("Word document (DOCX)");
+    expect(getUploadFileType(new File(["data"], "table.csv", { type: "text/csv" })))
+      .toBe("text/csv");
+    expect(getUploadFileType(new File(["data"], "unknown"))).toBe("Unknown");
   });
 });

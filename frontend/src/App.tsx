@@ -61,6 +61,7 @@ import {
 } from "./quickAccess";
 import { WorkStatusPanel } from "./WorkStatusPanel";
 import { DocumentUploadDropzone } from "./DocumentUploadDropzone";
+import { getUploadFileType } from "./documentFileDrop";
 import { getDocumentStatusPresentation, type DocumentStatus } from "./documentStatus";
 import {
   buildWorkStatusItems,
@@ -166,6 +167,15 @@ type UploadQueueItem = {
   documentId: string | null;
   error: string | null;
 };
+type PendingUploadFile = {
+  id: string;
+  file: File;
+};
+type PendingDocumentUpload = {
+  projectId: string;
+  userId: string;
+  files: PendingUploadFile[];
+};
 type ProjectAnnotationUpdate = Partial<
   Pick<Annotation, "note" | "tags" | "is_pinned" | "related_sources">
 >;
@@ -214,6 +224,8 @@ function App() {
   const [aiUsage, setAiUsage] = useState<AIUsageResponse | null>(null);
   const [bulkUploads, setBulkUploads] = useState<UploadQueueItem[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [pendingDocumentUpload, setPendingDocumentUpload] =
+    useState<PendingDocumentUpload | null>(null);
   const [latexCompileActivities, setLatexCompileActivities] = useState<
     Record<string, LatexCompileActivity>
   >({});
@@ -359,6 +371,11 @@ function App() {
   } | null>(null);
   const canEditProject = project?.access_role === "owner" || project?.access_role === "edit";
   const canCommentOnProject = canEditProject || project?.access_role === "comment";
+  const pendingUploadFiles = pendingDocumentUpload
+    && pendingDocumentUpload.projectId === project?.project_id
+    && pendingDocumentUpload.userId === user?.user_id
+    ? pendingDocumentUpload.files
+    : [];
 
   useEffect(() => {
     if (!mobileNavigationOpen) return;
@@ -688,6 +705,7 @@ function App() {
         if (!active) return;
         setAuthToken(null);
         setToken(null);
+        setPendingDocumentUpload(null);
         setError(cause instanceof Error ? cause.message : "Could not restore your session.");
       });
     return () => {
@@ -1984,6 +2002,28 @@ function App() {
     }
   }
 
+  function stageDocumentsForUpload(files: File[]) {
+    if (!project || !user || !files.length || uploadingFiles) return;
+    const currentFiles = pendingDocumentUpload?.projectId === project.project_id
+      && pendingDocumentUpload.userId === user.user_id
+      ? pendingDocumentUpload.files
+      : [];
+    if (currentFiles.length + files.length > MAX_BULK_UPLOAD_COUNT) {
+      setError(`Choose no more than ${MAX_BULK_UPLOAD_COUNT} files at once.`);
+      return;
+    }
+    setPendingDocumentUpload({
+      projectId: project.project_id,
+      userId: user.user_id,
+      files: [
+        ...currentFiles,
+        ...files.map((file) => ({ id: crypto.randomUUID(), file })),
+      ],
+    });
+    setError("");
+    setNotice("");
+  }
+
   async function uploadDocuments(files: File[]) {
     if (!project || !files.length || uploadingFiles) return;
     if (files.length > MAX_BULK_UPLOAD_COUNT) {
@@ -2045,6 +2085,29 @@ function App() {
     } finally {
       setUploadingFiles(false);
     }
+  }
+
+  function uploadSelectedDocuments() {
+    if (
+      !project
+      || !user
+      || !pendingDocumentUpload
+      || pendingDocumentUpload.projectId !== project.project_id
+      || pendingDocumentUpload.userId !== user.user_id
+      || !pendingUploadFiles.length
+      || uploadingFiles
+    ) return;
+    const files = pendingUploadFiles.map((item) => item.file);
+    setPendingDocumentUpload(null);
+    void uploadDocuments(files);
+  }
+
+  function removePendingUploadFile(fileId: string) {
+    setPendingDocumentUpload((current) => {
+      if (!current) return current;
+      const files = current.files.filter((item) => item.id !== fileId);
+      return files.length ? { ...current, files } : null;
+    });
   }
 
   async function retryBulkUpload(item: UploadQueueItem) {
@@ -2835,6 +2898,7 @@ function App() {
     setToken(null);
     setAuthToken(null);
     setUser(null);
+    setPendingDocumentUpload(null);
     setProjects([]);
     setTeamWorkspaces([]);
     setSelectedTeamWorkspaceId(null);
@@ -2959,7 +3023,7 @@ function App() {
           aria-label="Upload project documents"
           onChange={(event) => {
             const files = Array.from(event.currentTarget.files ?? []);
-            if (files.length) void uploadDocuments(files);
+            if (files.length) stageDocumentsForUpload(files);
             event.currentTarget.value = "";
           }}
         />
@@ -4002,8 +4066,53 @@ function App() {
                       {canEditProject && (
                         <DocumentUploadDropzone
                           disabled={uploadingFiles}
-                          onFiles={(files) => void uploadDocuments(files)}
+                          onFiles={stageDocumentsForUpload}
                         />
+                      )}
+                      {!!pendingUploadFiles.length && (
+                        <section className="pending-upload-review" aria-live="polite">
+                          <div className="pending-upload-heading">
+                            <strong>Review before upload</strong>
+                            <span>Files are not sent until you start the upload.</span>
+                          </div>
+                          <div className="pending-upload-list">
+                            {pendingUploadFiles.map(({ id, file }) => (
+                              <div className="pending-upload-item" key={id}>
+                                <FileText size={15} aria-hidden="true" />
+                                <div className="pending-upload-file-details">
+                                  <strong title={file.name}>{file.name}</strong>
+                                  <span>{formatBytes(file.size)} · {getUploadFileType(file)}</span>
+                                </div>
+                                <button
+                                  className="text-button"
+                                  type="button"
+                                  aria-label={`Remove ${file.name}`}
+                                  onClick={() => removePendingUploadFile(id)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="pending-upload-actions">
+                            <span>{pendingUploadFiles.length} file{pendingUploadFiles.length === 1 ? "" : "s"} selected</span>
+                            <button
+                              className="button secondary small-button"
+                              type="button"
+                              onClick={() => setPendingDocumentUpload(null)}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className="button primary small-button"
+                              type="button"
+                              disabled={uploadingFiles}
+                              onClick={uploadSelectedDocuments}
+                            >
+                              <Upload size={14} /> Upload {pendingUploadFiles.length} file{pendingUploadFiles.length === 1 ? "" : "s"}
+                            </button>
+                          </div>
+                        </section>
                       )}
                       {bulkUploads.some((item) => item.projectId === project.project_id) && (
                         <section className="bulk-upload-status" aria-live="polite">
