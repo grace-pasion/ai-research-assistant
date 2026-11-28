@@ -1,5 +1,9 @@
 import type { Paper, PaperScreeningDecision, ScreeningExclusionReason } from "./types";
-import { hasLibraryMetadataFilters, type LibraryMetadataFilters } from "./libraryMetadata";
+import {
+  hasLibraryMetadataFilters,
+  libraryMetadataFilterLabels,
+  type LibraryMetadataFilters,
+} from "./libraryMetadata";
 
 export type ScreeningStatusFilter = Paper["screening_status"] | "all";
 export type ScreeningSort = "saved" | "title" | "year_desc" | "year_asc";
@@ -15,6 +19,29 @@ export function hasScreeningFilters(
     || query.trim().length > 0
     || year !== "all"
     || hasLibraryMetadataFilters(metadataFilters);
+}
+
+export function screeningFilterLabels(
+  status: ScreeningStatusFilter,
+  query: string,
+  year: ScreeningYearFilter,
+  metadataFilters: LibraryMetadataFilters,
+): string[] {
+  const labels: string[] = [];
+  if (status !== "all") {
+    const decisionLabel = {
+      unread: "Unread",
+      undecided: "Undecided",
+      include: "Included",
+      exclude: "Excluded",
+    }[status];
+    labels.push(`Decision: ${decisionLabel}`);
+  }
+  if (query.trim()) labels.push(`Search: ${query.trim()}`);
+  if (year !== "all") {
+    labels.push(`Publication year: ${year === "unknown" ? "Unavailable" : year}`);
+  }
+  return [...labels, ...libraryMetadataFilterLabels(metadataFilters)];
 }
 
 export const SCREENING_EXCLUSION_REASONS: {

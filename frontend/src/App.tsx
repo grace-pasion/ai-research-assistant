@@ -49,6 +49,7 @@ import {
   resolveProjectSection,
 } from "./projectSectionMemory";
 import { confirmDestructiveAction } from "./destructiveConfirmation";
+import { ActiveFilterSummary } from "./ActiveFilterSummary";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
 import { ProjectHome } from "./ProjectHome.tsx";
@@ -82,6 +83,7 @@ import {
   filterAndSortScreeningPapers,
   hasScreeningFilters,
   hasScreeningDisagreement,
+  screeningFilterLabels,
   SCREENING_EXCLUSION_REASONS,
   type ScreeningSort,
   type ScreeningStatusFilter,
@@ -92,11 +94,13 @@ import {
   filterProjectAnnotations,
   formatSelectedAnnotations,
   hasProjectAnnotationFilters,
+  projectAnnotationFilterLabels,
   type AnnotationSort,
   type AnnotationSourceFilter,
 } from "./projectAnnotations";
 import {
   filterByLibraryMetadata,
+  libraryMetadataFilterLabels,
   type LibraryMetadataFilters,
 } from "./libraryMetadata";
 import { literatureSearchRequest } from "./searchHistory";
@@ -4204,6 +4208,9 @@ function App() {
                         />
                       ) : (
                         <div className="document-list">
+                          <ActiveFilterSummary
+                            filters={libraryMetadataFilterLabels(documentMetadataFilters)}
+                          />
                           {visibleDocuments.map((document) => (
                             <article className="document-row" key={document.document_id}>
                               <div className="file-icon"><FileText size={18} /></div>
@@ -4518,6 +4525,13 @@ function App() {
                       {allVisibleAnnotationsSelected ? "Clear visible selection" : "Select visible"}
                     </button>
                   </div>
+                  <ActiveFilterSummary
+                    filters={projectAnnotationFilterLabels(
+                      annotationQuery,
+                      annotationSourceFilter,
+                      pinnedAnnotationsOnly,
+                    )}
+                  />
                   {notesWorkspaceLoadedId !== project.project_id ? (
                     <div className="annotation-library-empty">
                       <BookOpen size={22} />
@@ -5184,6 +5198,14 @@ function App() {
                             <Download size={14} /> Export screening CSV
                           </button>
                         </div>
+                        <ActiveFilterSummary
+                          filters={screeningFilterLabels(
+                            screeningFilter,
+                            screeningQuery,
+                            screeningYearFilter,
+                            paperMetadataFilters,
+                          )}
+                        />
                         {selectedScreeningCount > 0 && (
                           <div className="bulk-screening-actions">
                             <span>{selectedScreeningCount} selected</span>

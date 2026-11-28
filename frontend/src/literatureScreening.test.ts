@@ -4,6 +4,7 @@ import {
   filterAndSortScreeningPapers,
   hasScreeningFilters,
   hasScreeningDisagreement,
+  screeningFilterLabels,
 } from "./literatureScreening";
 import type { Paper, PaperScreeningDecision } from "./types";
 
@@ -50,6 +51,25 @@ describe("literature screening filters and sorting", () => {
     expect(hasScreeningFilters("include", "", "all", emptyMetadataFilters)).toBe(true);
     expect(hasScreeningFilters("all", "", 2024, emptyMetadataFilters)).toBe(true);
     expect(hasScreeningFilters("all", "", "all", { ...emptyMetadataFilters, tag: "methods" })).toBe(true);
+  });
+
+  it("labels active decision, search, year, and metadata filters", () => {
+    expect(screeningFilterLabels("exclude", "  cohort ", 2024, {
+      tag: "methods",
+      metadataKey: "design",
+      metadataValue: "",
+    })).toEqual([
+      "Decision: Excluded",
+      "Search: cohort",
+      "Publication year: 2024",
+      "Tag: methods",
+      "Metadata field: design",
+    ]);
+    expect(screeningFilterLabels("all", "", "unknown", {
+      tag: "",
+      metadataKey: "",
+      metadataValue: "",
+    })).toEqual(["Publication year: Unavailable"]);
   });
 
   it("filters by decision and searches paper metadata", () => {

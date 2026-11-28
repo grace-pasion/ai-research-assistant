@@ -3,6 +3,7 @@ import {
   filterProjectAnnotations,
   formatSelectedAnnotations,
   hasProjectAnnotationFilters,
+  projectAnnotationFilterLabels,
 } from "./projectAnnotations";
 import type { ProjectAnnotation } from "./types";
 
@@ -38,6 +39,15 @@ describe("project annotations", () => {
     expect(hasProjectAnnotationFilters("methods", "all", false)).toBe(true);
     expect(hasProjectAnnotationFilters("", "document", false)).toBe(true);
     expect(hasProjectAnnotationFilters("", "all", true)).toBe(true);
+  });
+
+  it("labels the active note search, source, and pinned-only filters", () => {
+    expect(projectAnnotationFilterLabels("  methods ", "document", true)).toEqual([
+      "Search: methods",
+      "Source: Documents",
+      "Pinned only",
+    ]);
+    expect(projectAnnotationFilterLabels("  ", "all", false)).toEqual([]);
   });
 
   it("searches source title, highlight, and note and filters by source type", () => {

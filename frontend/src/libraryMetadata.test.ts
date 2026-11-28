@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterByLibraryMetadata,
   hasLibraryMetadataFilters,
+  libraryMetadataFilterLabels,
   type LibraryMetadataFields,
 } from "./libraryMetadata";
 
@@ -47,5 +48,18 @@ describe("library metadata filters", () => {
     expect(hasLibraryMetadataFilters({ tag: "  ", metadataKey: "", metadataValue: "" })).toBe(false);
     expect(hasLibraryMetadataFilters({ tag: "", metadataKey: "study", metadataValue: "" })).toBe(true);
     expect(hasLibraryMetadataFilters({ tag: "", metadataKey: "", metadataValue: "randomized" })).toBe(true);
+  });
+
+  it("labels only the metadata filters that are active", () => {
+    expect(libraryMetadataFilterLabels({
+      tag: "  clinical ",
+      metadataKey: "  design ",
+      metadataValue: "  randomized  ",
+    })).toEqual([
+      "Tag: clinical",
+      "Metadata field: design",
+      "Metadata value: randomized",
+    ]);
+    expect(libraryMetadataFilterLabels({ tag: " ", metadataKey: "", metadataValue: "" })).toEqual([]);
   });
 });

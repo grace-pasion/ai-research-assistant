@@ -255,6 +255,9 @@ h1, h2, h3, p { margin-top: 0; }
 .library-metadata-filters label { color: #77837a; display: flex; flex-direction: column; font-size: 9px; gap: 4px; }
 .library-metadata-filters input { min-width: 120px; }
 .library-metadata-empty { margin: 0; padding: 18px; text-align: center; }
+.active-filter-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.active-filter-summary-label { color: #77837a; font-size: 9px; font-weight: 650; }
+.active-filter-chip { background: #edf4ee; border: 1px solid #dfe9df; border-radius: 999px; color: #547462; font-size: 9px; line-height: 1.35; max-width: 100%; overflow-wrap: anywhere; padding: 3px 7px; }
 .annotation-editor { background: #fff; border: 1px solid #e5ebe5; border-radius: 9px; margin: 14px 0 20px; padding: 16px; }
 .annotation-heading { align-items: flex-start; display: flex; justify-content: space-between; margin-bottom: 12px; }
 .annotation-heading h3 { color: #344139; font: 650 14px var(--serif); margin: 0 0 4px; }

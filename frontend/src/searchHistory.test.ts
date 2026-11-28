@@ -1,11 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
+  crossProjectSearchActiveFilterLabels,
   crossProjectSearchParams,
   literatureSearchRequest,
 } from "./searchHistory";
 import type { CrossProjectSearchRecord, SearchQueryHistoryRecord } from "./types";
 
 describe("reproducible search parameters", () => {
+  it("shows the submitted cross-project filters without exposing paging limits", () => {
+    expect(crossProjectSearchActiveFilterLabels(
+      "q=methods+study&limit=50&project_id=project-1&source_type=paper&author=Jane+Doe&year=2024&tag=cohort",
+      [{ project_id: "project-1", project_name: "Clinical studies" }],
+    )).toEqual([
+      "Search: methods study",
+      "Project: Clinical studies",
+      "Source type: Papers",
+      "Author: Jane Doe",
+      "Year: 2024",
+      "Tag: cohort",
+    ]);
+  });
+
   it("rebuilds the cross-project query and every recorded filter", () => {
     const record: CrossProjectSearchRecord = {
       record_id: "record-1",

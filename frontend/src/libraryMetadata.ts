@@ -13,6 +13,14 @@ export function hasLibraryMetadataFilters(filters: LibraryMetadataFilters): bool
   return Object.values(filters).some((value) => value.trim().length > 0);
 }
 
+export function libraryMetadataFilterLabels(filters: LibraryMetadataFilters): string[] {
+  return [
+    filters.tag.trim() ? `Tag: ${filters.tag.trim()}` : "",
+    filters.metadataKey.trim() ? `Metadata field: ${filters.metadataKey.trim()}` : "",
+    filters.metadataValue.trim() ? `Metadata value: ${filters.metadataValue.trim()}` : "",
+  ].filter(Boolean);
+}
+
 export function filterByLibraryMetadata<T extends LibraryMetadataFields>(
   items: T[],
   filters: LibraryMetadataFilters,

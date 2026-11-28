@@ -11,6 +11,20 @@ export function hasProjectAnnotationFilters(
   return query.trim().length > 0 || sourceFilter !== "all" || pinnedOnly;
 }
 
+export function projectAnnotationFilterLabels(
+  query: string,
+  sourceFilter: AnnotationSourceFilter,
+  pinnedOnly: boolean,
+): string[] {
+  const labels: string[] = [];
+  if (query.trim()) labels.push(`Search: ${query.trim()}`);
+  if (sourceFilter !== "all") {
+    labels.push(`Source: ${sourceFilter === "document" ? "Documents" : "Papers"}`);
+  }
+  if (pinnedOnly) labels.push("Pinned only");
+  return labels;
+}
+
 export function filterProjectAnnotations(
   annotations: ProjectAnnotation[],
   query: string,

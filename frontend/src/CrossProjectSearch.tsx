@@ -1,6 +1,10 @@
 import { AlertCircle, FileText, Library, Search } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { crossProjectSearchParams } from "./searchHistory";
+import { ActiveFilterSummary } from "./ActiveFilterSummary";
+import {
+  crossProjectSearchActiveFilterLabels,
+  crossProjectSearchParams,
+} from "./searchHistory";
 import type { CrossProjectSearchRecord, CrossProjectSearchResult, Project } from "./types";
 
 const SEARCH_PAGE_SIZE = 50;
@@ -252,6 +256,9 @@ export function CrossProjectSearch({
           <div className="result-label">
             <span>{hasMore ? `Showing ${results.length}+ matches` : `${results.length} ${results.length === 1 ? "match" : "matches"}`}</span>
           </div>
+          <ActiveFilterSummary
+            filters={crossProjectSearchActiveFilterLabels(activeSearchParams, projects)}
+          />
           {results.length ? results.map((result) => (
             <article
               className="cross-project-result"
