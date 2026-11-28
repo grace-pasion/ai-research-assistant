@@ -194,6 +194,15 @@ def ensure_search_query_reproducibility_columns(engine) -> None:
             )
 
 
+def ensure_saved_search_result_count_column(engine) -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("saved_paper_searches")}
+    if "last_new_result_count" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE saved_paper_searches ADD COLUMN last_new_result_count INTEGER")
+            )
+
+
 def ensure_project_team_workspace_column(engine) -> None:
     columns = {column["name"] for column in inspect(engine).get_columns("research_projects")}
     if "team_workspace_id" not in columns:

@@ -297,6 +297,7 @@ export type SavedPaperSearch = {
   api_provider: string;
   alert_enabled: boolean;
   last_checked_at: string | null;
+  last_new_result_count: number | null;
   created_at: string;
 };
 

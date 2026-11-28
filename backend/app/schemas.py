@@ -1058,6 +1058,7 @@ class SavedPaperSearchResponse(APIModel):
     api_provider: str
     alert_enabled: bool
     last_checked_at: datetime | None
+    last_new_result_count: int | None
     created_at: datetime
 
 

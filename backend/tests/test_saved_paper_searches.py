@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import (
     ensure_notification_details_column,
+    ensure_saved_search_result_count_column,
     ensure_search_query_reproducibility_columns,
 )
 from app.models import (
@@ -29,6 +30,7 @@ from app.schemas import (
     PaperResponse,
     PaperSearchResponse,
     SavedPaperSearchCreate,
+    SavedPaperSearchResponse,
     SearchQueryHistoryResponse,
 )
 
@@ -115,6 +117,10 @@ def test_saved_search_uses_search_history_as_baseline_and_is_idempotent(saved_se
     assert saved.saved_search_id == duplicate.saved_search_id
     assert duplicate.alert_enabled is True
     assert duplicate.seen_external_ids == [paper.external_paper_id]
+    assert duplicate.last_checked_at.replace(tzinfo=timezone.utc) == query.searched_at.replace(
+        tzinfo=timezone.utc
+    )
+    assert duplicate.last_new_result_count is None
 
 
 def test_due_alert_records_new_matches_once_and_respects_six_hour_cadence(
@@ -148,6 +154,9 @@ def test_due_alert_records_new_matches_once_and_respects_six_hour_cadence(
     )
 
     checked = papers_router.check_saved_search_alerts(project.project_id, db, literature_db, user)
+    assert saved.last_new_result_count == 1
+    assert saved.last_checked_at is not None
+    assert SavedPaperSearchResponse.model_validate(saved).last_new_result_count == 1
     notification = db.query(Notification).one()
     inbox_notifications = list_notifications(db, user)
     rerun, new_count, notification_count = papers_router._run_saved_paper_search(
@@ -165,9 +174,39 @@ def test_due_alert_records_new_matches_once_and_respects_six_hour_cadence(
     assert inbox_notifications[0]["details"] == notification.details
     assert rerun.query == "climate models"
     assert new_count == 0
+    assert saved.last_new_result_count == 0
+    assert saved.last_checked_at.replace(tzinfo=timezone.utc) == rerun.searched_at
     assert notification_count == 0
     assert checked_again.checked_count == 0
     assert db.query(Notification).count() == 1
+
+
+def test_failed_saved_search_does_not_update_last_successful_run(saved_search_databases, monkeypatch):
+    db, literature_db, user, project, _query, _paper_record = saved_search_databases
+    last_checked_at = datetime.now(timezone.utc) - timedelta(days=1)
+    saved = SavedPaperSearch(
+        project_id=project.project_id,
+        user_id=user.user_id,
+        query_text="climate models",
+        api_provider="openalex",
+        alert_enabled=True,
+        seen_external_ids=["W123"],
+        last_checked_at=last_checked_at,
+        last_new_result_count=2,
+    )
+    db.add(saved)
+    db.commit()
+    monkeypatch.setattr(
+        papers_router,
+        "search",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("Provider unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="Provider unavailable"):
+        papers_router._run_saved_paper_search(project.project_id, saved, db, literature_db, user)
+
+    assert saved.last_checked_at.replace(tzinfo=timezone.utc) == last_checked_at
+    assert saved.last_new_result_count == 2
 
 
 def test_notification_details_column_is_added_to_existing_databases(tmp_path):
@@ -250,6 +289,36 @@ def test_literature_search_records_provider_result_count(saved_search_databases,
         .count()
         == 1
     )
+
+
+def test_saved_search_result_count_column_is_added_to_existing_databases(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-saved-search.sqlite'}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE saved_paper_searches "
+                "(saved_search_id CHAR(32) PRIMARY KEY)"
+            )
+        )
+        connection.execute(
+            text("INSERT INTO saved_paper_searches (saved_search_id) VALUES ('search-one')")
+        )
+
+    ensure_saved_search_result_count_column(engine)
+    ensure_saved_search_result_count_column(engine)
+
+    with engine.connect() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                text("PRAGMA table_info(saved_paper_searches)")
+            ).mappings()
+        }
+        assert "last_new_result_count" in columns
+        assert connection.execute(
+            text("SELECT last_new_result_count FROM saved_paper_searches")
+        ).scalar_one() is None
+    engine.dispose()
 
 
 def test_search_history_columns_are_added_and_existing_result_counts_backfilled(tmp_path):

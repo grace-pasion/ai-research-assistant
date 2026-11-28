@@ -642,6 +642,7 @@ class SavedPaperSearch(ResearchBase):
     alert_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     seen_external_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_new_result_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

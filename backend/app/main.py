@@ -17,6 +17,7 @@ from app.database import (
     ensure_python_artifact_provenance_columns,
     ensure_python_artifact_run_columns,
     ensure_python_workspace_files_column,
+    ensure_saved_search_result_count_column,
     ensure_search_query_reproducibility_columns,
     ensure_user_profile_picture_column,
     ensure_user_username_column,
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
     ensure_python_artifact_provenance_columns(research_engine)
     ensure_python_artifact_run_columns(research_engine)
     ensure_search_query_reproducibility_columns(research_engine)
+    ensure_saved_search_result_count_column(research_engine)
     initialize_database(literature_engine, LiteratureBase.metadata)
     yield
     research_engine.dispose()

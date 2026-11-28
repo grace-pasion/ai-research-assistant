@@ -814,7 +814,7 @@ def create_saved_search(
         api_provider=query.api_provider,
         alert_enabled=payload.alert_enabled,
         seen_external_ids=[paper.external_paper_id for paper in papers],
-        last_checked_at=datetime.now(timezone.utc),
+        last_checked_at=query.searched_at,
     )
     db.add(saved_search)
     try:
@@ -873,8 +873,6 @@ def _run_saved_paper_search(
     literature_db: Session,
     user: User,
 ) -> tuple[PaperSearchResponse, int, int]:
-    saved_search.last_checked_at = datetime.now(timezone.utc)
-    db.commit()
     result = search(
         project_id,
         saved_search.query_text,
@@ -887,6 +885,8 @@ def _run_saved_paper_search(
     current_ids = {paper.external_paper_id for paper in result.results}
     seen_ids = set(saved_search.seen_external_ids)
     new_result_count = len(current_ids - seen_ids)
+    saved_search.last_checked_at = result.searched_at
+    saved_search.last_new_result_count = new_result_count
     saved_search.seen_external_ids = sorted(seen_ids | current_ids)
     notifications_created = 0
     if saved_search.alert_enabled and new_result_count:

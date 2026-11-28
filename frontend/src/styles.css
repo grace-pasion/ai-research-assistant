@@ -396,6 +396,7 @@ h1, h2, h3, p { margin-top: 0; }
 .saved-search-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 150px; }
 .saved-search-copy strong { color: #46534b; font-size: 11px; overflow-wrap: anywhere; }
 .saved-search-copy small { color: #9aa29d; font-size: 9px; }
+.saved-search-copy .saved-search-run-status { color: #69756d; }
 .saved-search-alert-toggle, .save-search-control label { align-items: center; color: #77837a; display: flex; font-size: 10px; gap: 6px; }
 .saved-search-alert-toggle input, .save-search-control input { accent-color: #4b8062; margin: 0; }
 .save-search-control { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-bottom: 10px; }

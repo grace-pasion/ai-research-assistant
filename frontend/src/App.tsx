@@ -776,6 +776,11 @@ function App() {
       )
         .then(async (result) => {
           if (!active) return;
+          if (result.checked_count > 0) {
+            const latestSavedSearches = await request<SavedPaperSearch[]>(path);
+            if (!active) return;
+            setSavedPaperSearches(latestSavedSearches);
+          }
           if (result.notifications_created) await refreshUnreadCount();
         })
         .catch((cause: unknown) => {
@@ -2138,15 +2143,27 @@ function App() {
       ].slice(0, 20));
       if (result.new_result_count > 0) {
         setNotice(`Found ${result.new_result_count} new result${result.new_result_count === 1 ? "" : "s"}.`);
-        if (saved.alert_enabled) await refreshUnreadCount();
       } else {
         setNotice("Search rerun; no new results were found.");
       }
       setSavedPaperSearches((current) => current.map((item) =>
         item.saved_search_id === saved.saved_search_id
-          ? { ...item, last_checked_at: new Date().toISOString() }
+          ? {
+            ...item,
+            last_checked_at: result.searched_at,
+            last_new_result_count: result.new_result_count,
+          }
           : item,
       ));
+      if (result.new_result_count > 0 && saved.alert_enabled) {
+        try {
+          await refreshUnreadCount();
+        } catch (cause) {
+          setError(cause instanceof Error
+            ? cause.message
+            : "Could not refresh the inbox count.");
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not rerun this saved search.");
     } finally {
@@ -4347,6 +4364,16 @@ function App() {
                           <div className="saved-search-copy">
                             <strong>{saved.query_text}</strong>
                             <small>{saved.api_provider === "openalex" ? "OpenAlex" : "Crossref"}</small>
+                            <small className="saved-search-run-status">
+                              Last run: {saved.last_checked_at
+                                ? new Date(saved.last_checked_at).toLocaleString()
+                                : "Not run yet"}
+                            </small>
+                            <small className="saved-search-run-status">
+                              {saved.last_new_result_count == null
+                                ? "New results: No saved-search check yet"
+                                : `${saved.last_new_result_count} new result${saved.last_new_result_count === 1 ? "" : "s"} on last run`}
+                            </small>
                           </div>
                           <label className="saved-search-alert-toggle">
                             <input
