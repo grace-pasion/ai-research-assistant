@@ -37,6 +37,10 @@ import {
 import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
+import {
+  confirmUnsavedEditorLeave,
+  preventUnloadWithUnsavedChanges,
+} from "./unsavedChanges";
 import { findAnnotationRange, findCitationRange } from "./citationEvidence";
 import {
   resolveGlobalShortcut,
@@ -229,7 +233,20 @@ function App() {
   const [teamWorkspaces, setTeamWorkspaces] = useState<TeamWorkspace[]>([]);
   const [selectedTeamWorkspaceId, setSelectedTeamWorkspaceId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
-  const [view, setView] = useState<View>("home");
+  const [view, setViewState] = useState<View>("home");
+  const viewRef = useRef<View>("home");
+  const editorHasUnsavedChangesRef = useRef(false);
+  viewRef.current = view;
+  const setView = useCallback((nextView: View): boolean => {
+    if (
+      viewRef.current === "latex"
+      && nextView !== "latex"
+      && !confirmUnsavedEditorLeave(editorHasUnsavedChangesRef.current)
+    ) return false;
+    viewRef.current = nextView;
+    setViewState(nextView);
+    return true;
+  }, []);
   const [projectDataLoadedId, setProjectDataLoadedId] = useState<string | null>(null);
   const [topbarMoreOpen, setTopbarMoreOpen] = useState(false);
   const topbarMoreRef = useRef<HTMLDivElement | null>(null);
@@ -377,6 +394,9 @@ function App() {
   const sourceSummaryRequestIdRef = useRef(0);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const quickNoteTextRef = useRef<HTMLTextAreaElement | null>(null);
+  const reportEditorUnsavedChanges = useCallback((hasUnsavedChanges: boolean) => {
+    editorHasUnsavedChangesRef.current = hasUnsavedChanges;
+  }, []);
   const [sourceSummary, setSourceSummary] = useState<{
     title: string;
     summary: string | null;
@@ -595,19 +615,42 @@ function App() {
     nextProject: Project | null,
     userId: string | null,
     section?: ProjectSectionView,
-  ) => {
+    alreadyConfirmedUnsavedChanges = false,
+  ): boolean => {
+    const projectChanged = nextProject?.project_id !== selectedProjectIdRef.current;
+    const nextView = nextProject
+      ? resolveProjectSection(
+        nextProject && !section
+          ? readRememberedProjectSection(userId, nextProject.project_id)
+          : null,
+        section,
+      )
+      : "home";
+    const leavingEditor = viewRef.current === "latex" && nextView !== "latex";
+    if (
+      (projectChanged || leavingEditor)
+      && !alreadyConfirmedUnsavedChanges
+      && !confirmUnsavedEditorLeave(editorHasUnsavedChangesRef.current)
+    ) return false;
+    if (projectChanged) editorHasUnsavedChangesRef.current = false;
     setProject(nextProject);
-    const remembered = nextProject && !section
-      ? readRememberedProjectSection(userId, nextProject.project_id)
-      : null;
-    setView(nextProject ? resolveProjectSection(remembered, section) : "home");
+    viewRef.current = nextView;
+    setViewState(nextView);
+    return true;
   }, [readRememberedProjectSection]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      preventUnloadWithUnsavedChanges(event, editorHasUnsavedChangesRef.current);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   const refreshTeamWorkspaces = useCallback(async (selectWorkspaceId?: string) => {
     const loaded = await request<TeamWorkspace[]>("/api/team-workspaces");
     setTeamWorkspaces(loaded);
     if (selectWorkspaceId) {
-      setSelectedTeamWorkspaceId(selectWorkspaceId);
       const loadedProjects = await request<Project[]>("/api/projects");
       setProjects(loadedProjects);
       const currentProject = loadedProjects.find(
@@ -618,10 +661,11 @@ function App() {
         loadedProjects.filter((item) => item.team_workspace_id === selectWorkspaceId),
       );
       if (nextProject?.project_id !== selectedProjectIdRef.current) {
-        selectProject(nextProject, user?.user_id ?? null);
+        if (!selectProject(nextProject, user?.user_id ?? null)) return;
       } else {
         setProject(nextProject);
       }
+      setSelectedTeamWorkspaceId(selectWorkspaceId);
     }
   }, [request, selectProject, user?.user_id]);
 
@@ -1104,7 +1148,7 @@ function App() {
         setError("Wait for the current upload to finish before starting another.");
         return;
       }
-      setView("documents");
+      if (!setView("documents")) return;
       uploadInputRef.current?.click();
     };
     window.addEventListener("keydown", handleGlobalShortcut);
@@ -1127,6 +1171,7 @@ function App() {
     sourceTitle?: string,
     focusedAnnotation: AnnotationPassage | null = null,
   ) {
+    if (!setView("documents")) return;
     const title = sourceTitle ?? documents.find(
       (document) => document.document_id === documentId,
     )?.filename;
@@ -1139,7 +1184,6 @@ function App() {
     setSourceAnnotationFocus(focusedAnnotation
       ? { sourceType: "document", sourceId: documentId, annotation: focusedAnnotation }
       : null);
-    setView("documents");
   }
 
   function openProjectSource(
@@ -1160,6 +1204,7 @@ function App() {
       setError("This linked paper is no longer saved in the project.");
       return;
     }
+    if (!setView("papers")) return;
     rememberRecentProjectSource(project?.project_id, "paper", sourceId, sourceTitle);
     setScreeningQuery(sourceTitle);
     setScreeningFilter("all");
@@ -1167,7 +1212,6 @@ function App() {
     setSourceAnnotationFocus(focusedAnnotation
       ? { sourceType: "paper", sourceId, annotation: focusedAnnotation }
       : null);
-    setView("papers");
   }
 
   async function openQuickAccessSource(source: QuickAccessSource) {
@@ -1210,11 +1254,11 @@ function App() {
       return;
     }
 
-    selectProject(
+    if (!selectProject(
       target,
       user?.user_id ?? null,
       source.source_type === "document" ? "documents" : "papers",
-    );
+    )) return;
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setConversation(null);
     setDraft(null);
@@ -1253,11 +1297,11 @@ function App() {
       setError("This project is no longer available.");
       return;
     }
-    selectProject(
+    if (!selectProject(
       target,
       user?.user_id ?? null,
       result.source_type === "document" ? "documents" : "papers",
-    );
+    )) return;
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setNotice("");
     setMobileNavigationOpen(false);
@@ -1293,7 +1337,7 @@ function App() {
       setError("This project is no longer available.");
       return;
     }
-    selectProject(target, user?.user_id ?? null, "notes");
+    if (!selectProject(target, user?.user_id ?? null, "notes")) return;
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setShowInbox(false);
   }
@@ -1302,16 +1346,16 @@ function App() {
     if (!project || !canCommentOnProject) return;
     const firstSource = projectTaskSources[0];
     if (!firstSource) {
-      setView("notes");
+      if (!setView("notes")) return;
       setError("Add a project document or save a paper before creating a note.");
       return;
     }
+    if (!setView("notes")) return;
     setQuickNoteSourceSelection(`${firstSource.source_type}.${firstSource.source_id}`);
     setQuickNoteText("");
     setQuickNoteError("");
     setError("");
     setNotice("");
-    setView("notes");
     setMobileNavigationOpen(false);
     setShowQuickNote(true);
     window.setTimeout(() => quickNoteTextRef.current?.focus(), 0);
@@ -1495,6 +1539,7 @@ function App() {
       setError("The selected notes do not fit in the assistant prompt. Shorten the prompt or select fewer notes.");
       return;
     }
+    if (!setView("assistant")) return;
     setError("");
     setNotice(formatted.omittedCount
       ? `${formatted.includedCount} selected notes added; ${formatted.omittedCount} did not fit.`
@@ -1502,7 +1547,6 @@ function App() {
     setAskMode("compare");
     setQuestion(`${baseQuestion}\n\n${formatted.text}`);
     setSelectedAnnotationIds(new Set());
-    setView("assistant");
   }
 
   function openSource(source: Source, cardId: string) {
@@ -2904,6 +2948,7 @@ function App() {
         "This permanently deletes all data in the project.",
       )
     ) return;
+    if (!confirmUnsavedEditorLeave(editorHasUnsavedChangesRef.current)) return;
     setBusy(true);
     setError("");
     try {
@@ -2913,6 +2958,8 @@ function App() {
       selectProject(
         projectsInWorkspace(remaining, selectedTeamWorkspaceId, teamWorkspaces)[0] ?? null,
         user?.user_id ?? null,
+        undefined,
+        true,
       );
       setConversation(null);
       setDraft(null);
@@ -2925,6 +2972,7 @@ function App() {
   }
 
   function signOut() {
+    if (!selectProject(null, null)) return;
     setToken(null);
     setAuthToken(null);
     setUser(null);
@@ -2933,19 +2981,18 @@ function App() {
     setProjects([]);
     setTeamWorkspaces([]);
     setSelectedTeamWorkspaceId(null);
-    selectProject(null, null);
     setConversation(null);
     setDraft(null);
     setError("");
   }
 
   function switchTeamWorkspace(workspaceId: string | null) {
-    setSelectedTeamWorkspaceId(workspaceId);
     const nextProject = retainProjectSelection(
       project,
       projectsInWorkspace(projects, workspaceId, teamWorkspaces),
     );
-    selectProject(nextProject, user?.user_id ?? null);
+    if (!selectProject(nextProject, user?.user_id ?? null)) return;
+    setSelectedTeamWorkspaceId(workspaceId);
     setConversation(null);
     setDraft(null);
   }
@@ -3146,8 +3193,8 @@ function App() {
                 const memberWorkspace = teamWorkspaces.find(
                   (workspace) => workspace.team_workspace_id === item.team_workspace_id,
                 );
+                if (!selectProject(item, user?.user_id ?? null)) return;
                 setSelectedTeamWorkspaceId(memberWorkspace ? memberWorkspace.team_workspace_id : null);
-                selectProject(item, user?.user_id ?? null);
                 setConversation(null);
                 setDraft(null);
                 setNotice("");
@@ -4001,6 +4048,7 @@ function App() {
                   documents={documents}
                   papers={papers}
                   request={request}
+                  onUnsavedChangesChange={reportEditorUnsavedChanges}
                   onCompileStatusChange={reportLatexCompileActivity}
                 />
               </div>

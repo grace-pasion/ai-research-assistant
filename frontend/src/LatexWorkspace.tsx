@@ -38,6 +38,7 @@ import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
 import { findLatexSourceLocation, sourceLineAt, sourceOffsetForLine } from "./latexDiagnostics";
 import { formatLastSavedAt, getWorkspaceSaveStatusLabel } from "./latexWorkspaceStatus";
+import { confirmUnsavedEditorLeave } from "./unsavedChanges";
 import {
   ensureLatexPackage,
   pythonOutputInsertion,
@@ -74,6 +75,7 @@ type Props = {
   documents: DocumentRecord[];
   papers: Paper[];
   request: WorkspaceRequest;
+  onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void;
   onCompileStatusChange: (activity: LatexCompileActivity) => void;
 };
 
@@ -145,6 +147,7 @@ export function LatexWorkspace({
   documents,
   papers,
   request,
+  onUnsavedChangesChange,
   onCompileStatusChange,
 }: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceFiles>(EMPTY_WORKSPACE);
@@ -155,6 +158,7 @@ export function LatexWorkspace({
   const [pythonWorkspaceActive, setPythonWorkspaceActive] = useState(false);
   const [pythonFiles, setPythonFiles] = useState<string[]>([]);
   const [selectedPythonFile, setSelectedPythonFile] = useState("main.py");
+  const [pythonHasUnsavedChanges, setPythonHasUnsavedChanges] = useState(false);
   const [paneMode, setPaneMode] = useState<PaneMode>("split");
   const [saveStatus, setSaveStatus] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
   const [workspaceError, setWorkspaceError] = useState("");
@@ -182,11 +186,26 @@ export function LatexWorkspace({
   const insertionSequenceRef = useRef(0);
   const workspaceRef = useRef(workspace);
   const savedContentRef = useRef("");
+  const pythonUnsavedChangesRef = useRef(false);
+  const latexUnsavedChangesRef = useRef(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const autosaveTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const pdfUrlRef = useRef<string | null>(null);
   const canEdit = project.access_role === "owner" || project.access_role === "edit";
+  const reportPythonUnsavedChanges = useCallback((hasUnsavedChanges: boolean) => {
+    pythonUnsavedChangesRef.current = hasUnsavedChanges;
+    setPythonHasUnsavedChanges(hasUnsavedChanges);
+    onUnsavedChangesChange(latexUnsavedChangesRef.current || hasUnsavedChanges);
+  }, [onUnsavedChangesChange]);
+
+  useEffect(() => {
+    const latexHasUnsavedChanges = loaded && saveStatus !== "saved";
+    latexUnsavedChangesRef.current = latexHasUnsavedChanges;
+    onUnsavedChangesChange(latexHasUnsavedChanges || pythonHasUnsavedChanges);
+  }, [loaded, onUnsavedChangesChange, pythonHasUnsavedChanges, saveStatus]);
+
+  useEffect(() => () => onUnsavedChangesChange(false), [onUnsavedChangesChange]);
 
   async function loadHistory(filename: EditorFile) {
     setHistoryLoading(true);
@@ -240,8 +259,10 @@ export function LatexWorkspace({
       );
       workspaceRef.current = restored;
       savedContentRef.current = JSON.stringify(restored);
+      latexUnsavedChangesRef.current = false;
       setWorkspace(restored);
       setSaveStatus("saved");
+      onUnsavedChangesChange(pythonUnsavedChangesRef.current);
       setCompileError("");
       setCompiledSource(null);
       await loadHistory(version.filename);
@@ -255,6 +276,10 @@ export function LatexWorkspace({
   function openCompileLocation() {
     const location = findLatexSourceLocation(compileError);
     if (!location) return;
+    if (
+      pythonWorkspaceActive
+      && !confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)
+    ) return;
     const source = location.filename === "main.tex"
       ? workspaceRef.current.main_tex
       : workspaceRef.current.references_bib;
@@ -300,6 +325,7 @@ export function LatexWorkspace({
         if (!active) return;
         workspaceRef.current = files;
         savedContentRef.current = JSON.stringify(files);
+        latexUnsavedChangesRef.current = false;
         setWorkspace(files);
         setLoaded(true);
         setSaveStatus("saved");
@@ -313,7 +339,7 @@ export function LatexWorkspace({
     return () => {
       active = false;
     };
-  }, [project.project_id, request]);
+  }, [onUnsavedChangesChange, project.project_id, request]);
 
   const persist = useCallback((snapshot: WorkspaceFiles) => {
     setSaveStatus("saving");
@@ -331,19 +357,24 @@ export function LatexWorkspace({
         const current = { ...workspaceRef.current, updated_at: saved.updated_at };
         workspaceRef.current = current;
         setWorkspace(current);
-        setSaveStatus(JSON.stringify(current) === savedContentRef.current ? "saved" : "unsaved");
+        const hasUnsavedChanges = JSON.stringify(current) !== savedContentRef.current;
+        latexUnsavedChangesRef.current = hasUnsavedChanges;
+        setSaveStatus(hasUnsavedChanges ? "unsaved" : "saved");
+        onUnsavedChangesChange(hasUnsavedChanges || pythonUnsavedChangesRef.current);
         setWorkspaceError("");
         return saved;
       } catch (cause) {
         if (!mountedRef.current) return;
         setSaveStatus("error");
+        latexUnsavedChangesRef.current = true;
+        onUnsavedChangesChange(true);
         setWorkspaceError(cause instanceof Error ? cause.message : "Could not save the LaTeX workspace.");
         return null;
       }
     });
     saveQueueRef.current = operation.then(() => undefined);
     return operation;
-  }, [project.project_id, request]);
+  }, [onUnsavedChangesChange, project.project_id, request]);
 
   useEffect(() => {
     if (!loaded || !canEdit || saveStatus !== "unsaved" || restoringVersion !== null) return;
@@ -386,8 +417,10 @@ export function LatexWorkspace({
       const latest = await request<WorkspaceFiles>(`/api/projects/${project.project_id}/latex`);
       workspaceRef.current = latest;
       savedContentRef.current = JSON.stringify(latest);
+      latexUnsavedChangesRef.current = false;
       setWorkspace(latest);
       setSaveStatus("saved");
+      onUnsavedChangesChange(pythonUnsavedChangesRef.current);
     } catch (cause) {
       setWorkspaceError(cause instanceof Error ? cause.message : "Could not reload the shared workspace.");
     } finally {
@@ -427,11 +460,19 @@ export function LatexWorkspace({
     };
     workspaceRef.current = updated;
     setWorkspace(updated);
-    setSaveStatus(JSON.stringify(updated) === savedContentRef.current ? "saved" : "unsaved");
+    const hasUnsavedChanges = JSON.stringify(updated) !== savedContentRef.current;
+    latexUnsavedChangesRef.current = hasUnsavedChanges;
+    setSaveStatus(hasUnsavedChanges ? "unsaved" : "saved");
+    onUnsavedChangesChange(hasUnsavedChanges || pythonUnsavedChangesRef.current);
   }
 
-  function insertIntoMain(insertion: string) {
+  function insertIntoMain(insertion: string, pythonLeaveAlreadyConfirmed = false) {
     if (!canEdit || restoringVersion !== null) return;
+    if (
+      pythonWorkspaceActive
+      && !pythonLeaveAlreadyConfirmed
+      && !confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)
+    ) return;
     const textarea = editorRef.current;
     const source = workspaceRef.current.main_tex;
     const preferredPosition = !pythonWorkspaceActive
@@ -450,6 +491,8 @@ export function LatexWorkspace({
     setPythonWorkspaceActive(false);
     setActiveFile("main.tex");
     setSaveStatus("unsaved");
+    latexUnsavedChangesRef.current = true;
+    onUnsavedChangesChange(true);
     cursorPositionRef.current = inserted.cursorPosition;
     const sequence = ++insertionSequenceRef.current;
     window.setTimeout(() => {
@@ -462,6 +505,10 @@ export function LatexWorkspace({
   function insertPythonOutput(filename: string) {
     const insertion = pythonOutputInsertion(filename);
     if (!insertion) return;
+    if (
+      pythonWorkspaceActive
+      && !confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)
+    ) return;
     const packageName = pythonOutputPackage(filename);
     if (packageName) {
       const current = workspaceRef.current;
@@ -480,9 +527,11 @@ export function LatexWorkspace({
         workspaceRef.current = { ...current, main_tex: mainTex };
         setWorkspace(workspaceRef.current);
         setSaveStatus("unsaved");
+        latexUnsavedChangesRef.current = true;
+        onUnsavedChangesChange(true);
       }
     }
-    insertIntoMain(insertion);
+    insertIntoMain(insertion, true);
   }
 
   function citePaper(paper: Paper, includeAbstract = false) {
@@ -727,7 +776,11 @@ export function LatexWorkspace({
           type="button"
           className={!pythonWorkspaceActive ? "active" : ""}
           aria-pressed={!pythonWorkspaceActive}
-          onClick={() => setPythonWorkspaceActive(false)}
+          onClick={() => {
+            if (confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)) {
+              setPythonWorkspaceActive(false);
+            }
+          }}
         >
           <FileCode2 size={14} /> LaTeX
         </button>
@@ -739,10 +792,22 @@ export function LatexWorkspace({
           <aside className="latex-sources">
             <div className="latex-files">
               <span className="latex-label">PROJECT FILES</span>
-              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setComparison(null); setPythonWorkspaceActive(false); setActiveFile("main.tex"); }}>
+              <button type="button" className={`latex-file ${activeFile === "main.tex" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => {
+                if (pythonWorkspaceActive && !confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)) return;
+                setHistoryOpen(false);
+                setComparison(null);
+                setPythonWorkspaceActive(false);
+                setActiveFile("main.tex");
+              }}>
                 <FileCode2 size={15} /> main.tex
               </button>
-              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => { setHistoryOpen(false); setComparison(null); setPythonWorkspaceActive(false); setActiveFile("references.bib"); }}>
+              <button type="button" className={`latex-file ${activeFile === "references.bib" && !pythonWorkspaceActive ? "active" : ""}`} onClick={() => {
+                if (pythonWorkspaceActive && !confirmUnsavedEditorLeave(pythonUnsavedChangesRef.current)) return;
+                setHistoryOpen(false);
+                setComparison(null);
+                setPythonWorkspaceActive(false);
+                setActiveFile("references.bib");
+              }}>
                 <BookOpen size={15} /> references.bib
               </button>
             </div>
@@ -1042,6 +1107,7 @@ export function LatexWorkspace({
                     request={request}
                     selectedFilename={selectedPythonFile}
                     onExit={() => setPythonWorkspaceActive(false)}
+                    onUnsavedChangesChange={reportPythonUnsavedChanges}
                     onFilesChange={setPythonFiles}
                     onSelectedFileChange={setSelectedPythonFile}
                     onInsertOutput={insertPythonOutput}

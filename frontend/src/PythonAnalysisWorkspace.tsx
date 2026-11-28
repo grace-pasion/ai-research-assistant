@@ -20,6 +20,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import CodeMirror from "@uiw/react-codemirror";
 import { downloadFile, fetchFileBlob } from "./api";
 import { confirmDestructiveAction } from "./destructiveConfirmation";
+import { confirmUnsavedEditorLeave } from "./unsavedChanges";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import {
   MAX_INPUT_FILE_COUNT,
@@ -74,6 +75,7 @@ type Props = {
   request: WorkspaceRequest;
   selectedFilename: string;
   onExit: () => void;
+  onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void;
   onFilesChange: (filenames: string[]) => void;
   onSelectedFileChange: (filename: string) => void;
   onInsertOutput: (filename: string) => void;
@@ -108,6 +110,7 @@ export function PythonAnalysisWorkspace({
   request,
   selectedFilename,
   onExit,
+  onUnsavedChangesChange,
   onFilesChange,
   onSelectedFileChange,
   onInsertOutput,
@@ -170,6 +173,14 @@ export function PythonAnalysisWorkspace({
     setWorkspace(data);
   }
 
+  function hasUnsavedChanges() {
+    return loaded && JSON.stringify(workspaceRef.current.files ?? []) !== savedFilesRef.current;
+  }
+
+  function reportUnsavedChanges(files = workspaceRef.current.files ?? []) {
+    onUnsavedChangesChange(loaded && JSON.stringify(files) !== savedFilesRef.current);
+  }
+
   function publishFiles(files: PythonSourceFile[]) {
     onFilesChange(files.map((file) => file.filename));
   }
@@ -180,6 +191,7 @@ export function PythonAnalysisWorkspace({
     savedFilesRef.current = JSON.stringify(normalized.files);
     updatedAtRef.current = normalized.updated_at;
     publishFiles(normalized.files ?? []);
+    onUnsavedChangesChange(false);
     if (!normalized.files?.some((file) => file.filename === selectedFilenameRef.current)) {
       onSelectedFileChange("main.py");
     }
@@ -215,6 +227,12 @@ export function PythonAnalysisWorkspace({
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     };
   }, [path, request, onFilesChange, onSelectedFileChange]);
+
+  useEffect(() => {
+    onUnsavedChangesChange(hasUnsavedChanges());
+  }, [loaded, onUnsavedChangesChange, workspace.files]);
+
+  useEffect(() => () => onUnsavedChangesChange(false), [onUnsavedChangesChange]);
 
   async function reloadWorkspace() {
     setLoading(true);
@@ -330,6 +348,7 @@ export function PythonAnalysisWorkspace({
     const updated = { ...workspaceRef.current, code: mainCode, files };
     replaceWorkspace(updated);
     setStatus(JSON.stringify(files) === savedFilesRef.current ? "saved" : "unsaved");
+    reportUnsavedChanges(files);
   }
 
   function updateSourceFiles(files: PythonSourceFile[]) {
@@ -344,6 +363,7 @@ export function PythonAnalysisWorkspace({
     replaceWorkspace(updated);
     publishFiles(files);
     setStatus(JSON.stringify(files) === savedFilesRef.current ? "saved" : "unsaved");
+    reportUnsavedChanges(files);
     return true;
   }
 
@@ -633,7 +653,13 @@ export function PythonAnalysisWorkspace({
           >
             <History size={13} /> History
           </button>
-          <button type="button" className="button secondary small-button" onClick={onExit}>
+          <button
+            type="button"
+            className="button secondary small-button"
+            onClick={() => {
+              if (confirmUnsavedEditorLeave(hasUnsavedChanges())) onExit();
+            }}
+          >
             <ArrowLeft size={13} /> Back to LaTeX
           </button>
         </div>
