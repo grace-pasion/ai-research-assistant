@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { filterByLibraryMetadata, type LibraryMetadataFields } from "./libraryMetadata";
+import {
+  filterByLibraryMetadata,
+  hasLibraryMetadataFilters,
+  type LibraryMetadataFields,
+} from "./libraryMetadata";
 
 type LibraryItem = LibraryMetadataFields & { title: string };
 
@@ -36,5 +40,12 @@ describe("library metadata filters", () => {
       metadataKey: "region",
       metadataValue: "randomized",
     })).toEqual([]);
+  });
+
+  it("only treats non-whitespace metadata values as active filters", () => {
+    expect(hasLibraryMetadataFilters({ tag: "", metadataKey: "", metadataValue: "" })).toBe(false);
+    expect(hasLibraryMetadataFilters({ tag: "  ", metadataKey: "", metadataValue: "" })).toBe(false);
+    expect(hasLibraryMetadataFilters({ tag: "", metadataKey: "study", metadataValue: "" })).toBe(true);
+    expect(hasLibraryMetadataFilters({ tag: "", metadataKey: "", metadataValue: "randomized" })).toBe(true);
   });
 });

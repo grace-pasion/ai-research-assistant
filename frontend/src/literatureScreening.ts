@@ -1,8 +1,21 @@
 import type { Paper, PaperScreeningDecision, ScreeningExclusionReason } from "./types";
+import { hasLibraryMetadataFilters, type LibraryMetadataFilters } from "./libraryMetadata";
 
 export type ScreeningStatusFilter = Paper["screening_status"] | "all";
 export type ScreeningSort = "saved" | "title" | "year_desc" | "year_asc";
 export type ScreeningYearFilter = number | "all" | "unknown";
+
+export function hasScreeningFilters(
+  status: ScreeningStatusFilter,
+  query: string,
+  year: ScreeningYearFilter,
+  metadataFilters: LibraryMetadataFilters,
+): boolean {
+  return status !== "all"
+    || query.trim().length > 0
+    || year !== "all"
+    || hasLibraryMetadataFilters(metadataFilters);
+}
 
 export const SCREENING_EXCLUSION_REASONS: {
   value: ScreeningExclusionReason;

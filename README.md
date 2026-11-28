@@ -16,7 +16,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented system architecture, 
 - The last project section visited is remembered per user and project in this browser and restored when that project is reopened. Global search is not stored as a project section.
 - Destructive actions ask for confirmation naming the affected item and explaining the scope, including project files and notes, saved papers, collections, collaboration access, and Python workspace files or outputs.
 - **Search all projects** finds saved papers and documents across every project the signed-in user can access, with project, source type, author, year, and exact-tag filters.
-- Add and edit project-scoped tags and custom string metadata on documents and saved papers; filter either library by tags or metadata fields and values.
+- Add and edit project-scoped tags and custom string metadata on documents and saved papers; filter either library by tags or metadata fields and values. Saved-paper and Notes filters include a clear action.
 - Organization team workspaces with multiple shared projects, registered-member invitations, and workspace-wide or project-scoped messaging channels.
 - Share projects with registered colleagues by username or email and assign **Reader**, **Commenter**, or **Editor** access. Readers can view and compile; commenters can also add source comments; editors can change shared project content. Owners manage roles and access. Assistant conversation histories remain private to each author.
 - Lightweight source-linked team tasks can be assigned to project collaborators, optionally attached to a note, tracked as open/in progress/done, and reassigned by the creator or project owner. Assignees receive in-app notifications.

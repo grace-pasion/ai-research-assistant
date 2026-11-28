@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   exclusionReasonLabel,
   filterAndSortScreeningPapers,
+  hasScreeningFilters,
   hasScreeningDisagreement,
 } from "./literatureScreening";
 import type { Paper, PaperScreeningDecision } from "./types";
@@ -42,6 +43,14 @@ describe("literature screening filters and sorting", () => {
     paper("Alpha study", "include", 2024, "A queryable abstract"),
     paper("No date", "exclude", null),
   ];
+
+  it("detects active paper filters but ignores sorting defaults and whitespace", () => {
+    const emptyMetadataFilters = { tag: "", metadataKey: "", metadataValue: "" };
+    expect(hasScreeningFilters("all", "  ", "all", emptyMetadataFilters)).toBe(false);
+    expect(hasScreeningFilters("include", "", "all", emptyMetadataFilters)).toBe(true);
+    expect(hasScreeningFilters("all", "", 2024, emptyMetadataFilters)).toBe(true);
+    expect(hasScreeningFilters("all", "", "all", { ...emptyMetadataFilters, tag: "methods" })).toBe(true);
+  });
 
   it("filters by decision and searches paper metadata", () => {
     expect(filterAndSortScreeningPapers(papers, "include", "queryable", "saved").map((item) => item.title))

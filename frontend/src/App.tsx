@@ -80,6 +80,7 @@ import { LatexWorkspace } from "./LatexWorkspace";
 import { fetchProjectData } from "./projectData";
 import {
   filterAndSortScreeningPapers,
+  hasScreeningFilters,
   hasScreeningDisagreement,
   SCREENING_EXCLUSION_REASONS,
   type ScreeningSort,
@@ -90,6 +91,7 @@ import { summarizeScreeningAssignments } from "./screeningAssignments";
 import {
   filterProjectAnnotations,
   formatSelectedAnnotations,
+  hasProjectAnnotationFilters,
   type AnnotationSort,
   type AnnotationSourceFilter,
 } from "./projectAnnotations";
@@ -4479,6 +4481,23 @@ function App() {
                     >
                       {pinnedAnnotationsOnly ? "Showing pinned" : "Pinned only"}
                     </button>
+                    {hasProjectAnnotationFilters(
+                      annotationQuery,
+                      annotationSourceFilter,
+                      pinnedAnnotationsOnly,
+                    ) && (
+                      <button
+                        type="button"
+                        className="button secondary small-button"
+                        onClick={() => {
+                          setAnnotationQuery("");
+                          setAnnotationSourceFilter("all");
+                          setPinnedAnnotationsOnly(false);
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    )}
                     <button
                       className="button secondary small-button"
                       disabled={!visibleProjectAnnotations.length}
@@ -5122,6 +5141,29 @@ function App() {
                               <option value="year_asc">Oldest publication year</option>
                             </select>
                           </label>
+                          {hasScreeningFilters(
+                            screeningFilter,
+                            screeningQuery,
+                            screeningYearFilter,
+                            paperMetadataFilters,
+                          ) && (
+                            <button
+                              className="button secondary small-button"
+                              type="button"
+                              onClick={() => {
+                                setScreeningFilter("all");
+                                setScreeningYearFilter("all");
+                                setScreeningQuery("");
+                                setPaperMetadataFilters({
+                                  tag: "",
+                                  metadataKey: "",
+                                  metadataValue: "",
+                                });
+                              }}
+                            >
+                              Clear filters
+                            </button>
+                          )}
                           <button
                             className="button secondary small-button"
                             onClick={toggleVisiblePaperSelection}

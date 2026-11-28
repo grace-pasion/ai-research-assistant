@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { filterProjectAnnotations, formatSelectedAnnotations } from "./projectAnnotations";
+import {
+  filterProjectAnnotations,
+  formatSelectedAnnotations,
+  hasProjectAnnotationFilters,
+} from "./projectAnnotations";
 import type { ProjectAnnotation } from "./types";
 
 function annotation(
@@ -29,6 +33,13 @@ function annotation(
 }
 
 describe("project annotations", () => {
+  it("detects active note filters but ignores whitespace", () => {
+    expect(hasProjectAnnotationFilters("  ", "all", false)).toBe(false);
+    expect(hasProjectAnnotationFilters("methods", "all", false)).toBe(true);
+    expect(hasProjectAnnotationFilters("", "document", false)).toBe(true);
+    expect(hasProjectAnnotationFilters("", "all", true)).toBe(true);
+  });
+
   it("searches source title, highlight, and note and filters by source type", () => {
     const notes = [
       annotation("1", { source_title: "Methods paper", quote: "sample design" }),

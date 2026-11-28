@@ -3,6 +3,14 @@ import type { ProjectAnnotation } from "./types";
 export type AnnotationSourceFilter = ProjectAnnotation["source_type"] | "all";
 export type AnnotationSort = "newest" | "oldest";
 
+export function hasProjectAnnotationFilters(
+  query: string,
+  sourceFilter: AnnotationSourceFilter,
+  pinnedOnly: boolean,
+): boolean {
+  return query.trim().length > 0 || sourceFilter !== "all" || pinnedOnly;
+}
+
 export function filterProjectAnnotations(
   annotations: ProjectAnnotation[],
   query: string,

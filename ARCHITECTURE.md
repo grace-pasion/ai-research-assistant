@@ -255,12 +255,12 @@ The verifier is another model call and can still make mistakes; evidence checkin
 - Search by topic, title, author, or DOI using OpenAlex or Crossref; OpenAI embeddings re-rank results semantically when configured.
 - Review returned bibliographic details and open an external paper link when supplied.
 - Save papers to the current project, review the saved-paper list, and remove papers from it.
-- Add project-scoped tags and custom string key/value metadata to saved papers, then filter the list by decision, publication year, exact tag, or metadata field and partial value.
+- Add project-scoped tags and custom string key/value metadata to saved papers, then filter the list by decision, publication year, exact tag, or metadata field and partial value. Use **Clear filters** to reset those saved-paper filters.
 - Generate and view an AI summary for a saved paper; imported full text is preferred, with the abstract used when no ready imported text is available. Summaries are shared within the project and reused until the source changes.
 - Import available open-access PDFs for saved papers; after processing, query their extracted full text through Documents search or the research assistant. Upload a copy when no open-access PDF is available.
 - Save a shared review question and protocol per project; editors can update it, and collaborators can view it. Record independent reviewer decisions with identity, structured exclusion reasons, notes, and timestamps; spot disagreements and maintain a separate project adjudication. Export the review protocol, adjudication counts, and reviewer decision trail as CSV.
 - Open a saved paper's available abstract to highlight passages and add, edit, or delete persistent project notes.
-- Search and organize annotations from saved documents and papers in the project **Notes** view; add tags, pin notes, link and open related project sources, filter by source type or pinned status, and reopen the annotation's source. Mention project collaborators with `@username` and receive inbox notifications for new mentions.
+- Search and organize annotations from saved documents and papers in the project **Notes** view; add tags, pin notes, link and open related project sources, filter by source type or pinned status, clear active filters, and reopen the annotation's source. Mention project collaborators with `@username` and receive inbox notifications for new mentions.
 - Create, assign, reassign, track, and delete lightweight tasks linked to project documents or saved papers, optionally attached to a note.
 - Generate and view a cached AI summary for the document or saved paper behind a note.
 - Select annotations to add them to a source-comparison prompt as bounded researcher context. Note text is not treated as evidence; the assistant must support factual claims with retrieved source excerpts.

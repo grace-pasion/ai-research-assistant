@@ -9,6 +9,10 @@ export type LibraryMetadataFilters = {
   metadataValue: string;
 };
 
+export function hasLibraryMetadataFilters(filters: LibraryMetadataFilters): boolean {
+  return Object.values(filters).some((value) => value.trim().length > 0);
+}
+
 export function filterByLibraryMetadata<T extends LibraryMetadataFields>(
   items: T[],
   filters: LibraryMetadataFilters,
