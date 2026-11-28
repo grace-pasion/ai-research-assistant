@@ -18,6 +18,10 @@ from app.services.python_workspace import (
 MAX_PDF_BYTES = 25 * 1024 * 1024
 MAX_COMPILE_FILE_BYTES = 30 * 1024 * 1024
 COMPILE_TIMEOUT_SECONDS = 20
+MAX_FORMAT_SOURCE_CHARACTERS = 1_000_000
+MAX_FORMAT_OUTPUT_CHARACTERS = 2_000_000
+MAX_FORMAT_OUTPUT_BYTES = 8 * 1024 * 1024
+FORMAT_TIMEOUT_SECONDS = 10
 LATEX_COMMANDS = ("pdflatex", "bibtex")
 CITATION_COMMANDS = {
     "cite",
@@ -42,6 +46,14 @@ class LatexCompilerUnavailable(RuntimeError):
 
 
 class LatexCompilationError(ValueError):
+    pass
+
+
+class LatexFormatterUnavailable(RuntimeError):
+    pass
+
+
+class LatexFormattingError(ValueError):
     pass
 
 
@@ -203,6 +215,100 @@ def _validate_assets(assets: Mapping[str, bytes] | None) -> dict[str, bytes]:
             raise LatexCompilationError("Generated outputs exceed the 20 MB limit.")
         validated[filename] = content
     return validated
+
+
+def format_latex_source(main_tex: str) -> str:
+    if not main_tex.strip():
+        raise LatexFormattingError("There is no LaTeX source to format.")
+    if len(main_tex) > MAX_FORMAT_SOURCE_CHARACTERS:
+        raise LatexFormattingError("The LaTeX source is too large to format.")
+    try:
+        source_bytes = main_tex.encode("utf-8")
+    except UnicodeEncodeError:
+        raise LatexFormattingError("The LaTeX source contains unsupported text encoding.") from None
+
+    formatter = shutil.which("latexindent")
+    runuser = shutil.which("runuser")
+    prlimit = shutil.which("prlimit")
+    if formatter is None or runuser is None or prlimit is None:
+        raise LatexFormatterUnavailable(
+            "LaTeX formatting suggestions are unavailable on this server."
+        )
+    try:
+        import pwd
+
+        latex_user = pwd.getpwnam("latex")
+    except (ImportError, KeyError):
+        raise LatexFormatterUnavailable(
+            "LaTeX formatting suggestions require the isolated API Docker runtime."
+        ) from None
+
+    with tempfile.TemporaryDirectory(prefix="fieldnotes-latex-format-") as directory:
+        root = Path(directory)
+        source_dir = root / "source"
+        work_dir = root / "work"
+        source_dir.mkdir(mode=0o755)
+        work_dir.mkdir(mode=0o700)
+        source_file = source_dir / "main.tex"
+        formatted_file = work_dir / "formatted.tex"
+        source_file.write_bytes(source_bytes)
+        source_file.chmod(0o644)
+        root.chmod(0o755)
+        os.chown(work_dir, latex_user.pw_uid, latex_user.pw_gid)
+        env = {
+            "PATH": os.pathsep.join(
+                {str(Path(formatter).parent), "/usr/bin", "/bin"}
+            ),
+            "HOME": str(work_dir),
+            "TMPDIR": str(work_dir),
+        }
+        command = [
+            prlimit,
+            f"--fsize={MAX_FORMAT_OUTPUT_BYTES}:{MAX_FORMAT_OUTPUT_BYTES}",
+            "--",
+            runuser,
+            "--preserve-environment",
+            "--user",
+            "latex",
+            "--",
+            formatter,
+            f"-o={formatted_file}",
+            str(source_file),
+        ]
+        with tempfile.TemporaryFile() as logs:
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=work_dir,
+                    env=env,
+                    stdout=logs,
+                    stderr=subprocess.STDOUT,
+                    timeout=FORMAT_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise LatexFormattingError(
+                    "The LaTeX formatter timed out; the source was not changed."
+                ) from exc
+        if result.returncode:
+            raise LatexFormattingError(
+                "The LaTeX formatter could not prepare a suggestion; the source was not changed."
+            )
+        if not formatted_file.is_file():
+            raise LatexFormattingError(
+                "The LaTeX formatter did not return a suggestion; the source was not changed."
+            )
+        if formatted_file.stat().st_size > MAX_FORMAT_OUTPUT_BYTES:
+            raise LatexFormattingError("The formatted source exceeds the size limit.")
+        try:
+            formatted = formatted_file.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            raise LatexFormattingError(
+                "The formatter returned unsupported text encoding; the source was not changed."
+            ) from None
+        if len(formatted) > MAX_FORMAT_OUTPUT_CHARACTERS:
+            raise LatexFormattingError("The formatted source exceeds the size limit.")
+        return formatted
 
 
 def compile_latex(

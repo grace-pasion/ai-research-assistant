@@ -8,6 +8,7 @@ COPY requirements.txt .
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     texlive-bibtex-extra \
+    texlive-extra-utils \
     texlive-latex-base \
     texlive-latex-recommended \
     util-linux \

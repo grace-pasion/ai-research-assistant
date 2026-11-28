@@ -10,10 +10,13 @@ from app.services import latex_compiler
 from app.services.latex_compiler import (
     LatexCompilationError,
     LatexCompilerUnavailable,
+    LatexFormatterUnavailable,
+    LatexFormattingError,
     _citation_key_locations,
     _format_compiler_output,
     citation_key_issues,
     compile_latex,
+    format_latex_source,
 )
 
 
@@ -121,6 +124,55 @@ def test_compiler_reports_unavailable_texlive(monkeypatch):
     monkeypatch.setattr(latex_compiler.shutil, "which", lambda _binary: None)
     with pytest.raises(LatexCompilerUnavailable, match="pdflatex"):
         compile_latex(r"\begin{document}Hello\end{document}", "")
+
+
+def test_formatter_returns_a_separate_suggestion_from_the_isolated_tool(monkeypatch):
+    source = "\\begin{document}\ntext\n\\end{document}\n"
+    formatted = "\\begin{document}\n  text\n\\end{document}\n"
+    calls = []
+
+    def which(binary):
+        return f"/usr/bin/{binary}" if binary in {"latexindent", "runuser", "prlimit"} else None
+
+    def fake_run(command, *, cwd, env, **kwargs):
+        calls.append((command, cwd, env, kwargs))
+        input_file = Path(command[-1])
+        output_file = Path(next(arg[3:] for arg in command if arg.startswith("-o=")))
+        assert input_file.read_bytes() == source.encode("utf-8")
+        output_file.write_bytes(formatted.encode("utf-8"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(latex_compiler.shutil, "which", which)
+    monkeypatch.setattr(latex_compiler.subprocess, "run", fake_run)
+    monkeypatch.setattr(os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "pwd",
+        SimpleNamespace(getpwnam=lambda _name: SimpleNamespace(pw_uid=10002, pw_gid=10002)),
+    )
+
+    result = format_latex_source(source)
+
+    assert result == formatted
+    assert len(calls) == 1
+    command, _cwd, env, kwargs = calls[0]
+    assert any("latexindent" in argument for argument in command)
+    assert "main.tex" in Path(command[-1]).name
+    assert kwargs["timeout"] == latex_compiler.FORMAT_TIMEOUT_SECONDS
+    assert "API_SECRET" not in repr(env)
+
+
+def test_formatter_reports_unavailable_tool_and_rejects_empty_source(monkeypatch):
+    monkeypatch.setattr(
+        latex_compiler.shutil,
+        "which",
+        lambda binary: None if binary == "latexindent" else f"/usr/bin/{binary}",
+    )
+    with pytest.raises(LatexFormatterUnavailable, match="unavailable"):
+        format_latex_source("\\begin{document}private source\\end{document}")
+
+    with pytest.raises(LatexFormattingError, match="There is no LaTeX source"):
+        format_latex_source(" \n ")
 
 
 def test_compiler_rejects_unsafe_generated_asset_paths_before_invoking_tex():

@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from difflib import unified_diff
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import LatexWorkspace, ProjectFileVersion, PythonWorkspaceArtifact, User
 from app.schemas import (
+    LatexFormatRequest,
+    LatexFormatSuggestion,
     LatexWorkspaceResponse,
     LatexWorkspaceUpdate,
     WorkspaceRestoreRequest,
@@ -21,7 +24,10 @@ from app.services.audit import record_activity
 from app.services.latex_compiler import (
     LatexCompilationError,
     LatexCompilerUnavailable,
+    LatexFormatterUnavailable,
+    LatexFormattingError,
     compile_latex,
+    format_latex_source,
 )
 from app.services.workspace_history import (
     get_file_version,
@@ -272,6 +278,37 @@ def compile_latex_workspace(
             "Content-Disposition": 'inline; filename="research-draft.pdf"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.post("/format-suggestion", response_model=LatexFormatSuggestion)
+def suggest_latex_formatting(
+    project_id: uuid.UUID,
+    payload: LatexFormatRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id, "edit")
+    if not payload.main_tex.strip():
+        raise HTTPException(status_code=422, detail="There is no LaTeX source to format.")
+    try:
+        formatted = format_latex_source(payload.main_tex)
+    except LatexFormatterUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LatexFormattingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    diff = "".join(
+        unified_diff(
+            payload.main_tex.splitlines(keepends=True),
+            formatted.splitlines(keepends=True),
+            fromfile="main.tex (current)",
+            tofile="main.tex (formatted)",
+        )
+    )
+    return LatexFormatSuggestion(
+        formatted_main_tex=formatted,
+        diff=diff,
+        changed=formatted != payload.main_tex,
     )
 
 

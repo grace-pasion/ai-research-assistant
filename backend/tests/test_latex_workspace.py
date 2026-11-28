@@ -368,3 +368,80 @@ def test_compile_http_route_returns_pdf_bytes(latex_database, monkeypatch):
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
     assert response.content.startswith(b"%PDF-")
+
+
+def test_latex_format_suggestion_route_returns_a_diff_without_saving_changes(
+    latex_database,
+    monkeypatch,
+):
+    db, owner, project = latex_database
+    api = FastAPI()
+    api.include_router(latex.router)
+    api.dependency_overrides[get_db] = lambda: db
+    api.dependency_overrides[get_current_user] = lambda: owner
+    captured = []
+    original = "\\begin{document}\ntext\n\\end{document}\n"
+    formatted = "\\begin{document}\n  text\n\\end{document}\n"
+
+    def format_source(source):
+        captured.append(source)
+        return formatted
+
+    monkeypatch.setattr(latex, "format_latex_source", format_source)
+    with TestClient(api) as client:
+        response = client.post(
+            f"/api/projects/{project.project_id}/latex/format-suggestion",
+            json={"main_tex": original},
+        )
+        rejected_extra_file = client.post(
+            f"/api/projects/{project.project_id}/latex/format-suggestion",
+            json={"main_tex": original, "references_bib": "@article{entry}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["formatted_main_tex"] == formatted
+    assert response.json()["changed"] is True
+    assert "-text\n+  text\n" in response.json()["diff"]
+    assert captured == [original]
+    assert db.get(LatexWorkspace, project.project_id) is None
+    assert rejected_extra_file.status_code == 422
+
+
+def test_latex_format_suggestions_require_editor_access(
+    latex_database,
+    monkeypatch,
+):
+    db, owner, project = latex_database
+    reader = User(email="reader@example.com", name="Reader", password_hash="hashed")
+    db.add(reader)
+    db.flush()
+    db.add(
+        ProjectInvitation(
+            project_id=project.project_id,
+            inviter_id=owner.user_id,
+            invitee_id=reader.user_id,
+            status="accepted",
+            role="read",
+        )
+    )
+    db.commit()
+    api = FastAPI()
+    api.include_router(latex.router)
+    api.dependency_overrides[get_db] = lambda: db
+    current_user = [reader]
+    api.dependency_overrides[get_current_user] = lambda: current_user[0]
+    monkeypatch.setattr(latex, "format_latex_source", lambda source: source)
+
+    with TestClient(api) as client:
+        denied = client.post(
+            f"/api/projects/{project.project_id}/latex/format-suggestion",
+            json={"main_tex": "\\begin{document}text\\end{document}"},
+        )
+        current_user[0] = owner
+        allowed = client.post(
+            f"/api/projects/{project.project_id}/latex/format-suggestion",
+            json={"main_tex": "\\begin{document}text\\end{document}"},
+        )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200

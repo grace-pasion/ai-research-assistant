@@ -37,6 +37,10 @@ import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
 import { findLatexSourceLocation, sourceLineAt, sourceOffsetForLine } from "./latexDiagnostics";
+import {
+  acceptLatexFormattingSuggestion,
+  type LatexFormattingSuggestion,
+} from "./latexFormatting";
 import { formatLastSavedAt, getWorkspaceSaveStatusLabel } from "./latexWorkspaceStatus";
 import { confirmUnsavedEditorLeave } from "./unsavedChanges";
 import {
@@ -57,6 +61,11 @@ type WorkspaceFiles = {
   updated_at: string | null;
 };
 type LatexSourceFiles = Pick<WorkspaceFiles, "main_tex" | "references_bib">;
+type LatexFormatSuggestionResponse = {
+  formatted_main_tex: string;
+  diff: string;
+  changed: boolean;
+};
 
 type WorkspaceRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -169,6 +178,10 @@ export function LatexWorkspace({
   const [citationStyleError, setCitationStyleError] = useState("");
   const [compileError, setCompileError] = useState("");
   const [compiledSource, setCompiledSource] = useState<LatexSourceFiles | null>(null);
+  const [formatSuggestion, setFormatSuggestion] = useState<LatexFormattingSuggestion | null>(null);
+  const [formatSuggestionError, setFormatSuggestionError] = useState("");
+  const [formatSuggestionMessage, setFormatSuggestionMessage] = useState("");
+  const [formatSuggestionLoading, setFormatSuggestionLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersions, setHistoryVersions] = useState<WorkspaceVersion[]>([]);
   const [comparison, setComparison] = useState<WorkspaceVersionDetails | null>(null);
@@ -192,6 +205,7 @@ export function LatexWorkspace({
   const autosaveTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const pdfUrlRef = useRef<string | null>(null);
+  const formatSuggestionRequestIdRef = useRef(0);
   const canEdit = project.access_role === "owner" || project.access_role === "edit";
   const reportPythonUnsavedChanges = useCallback((hasUnsavedChanges: boolean) => {
     pythonUnsavedChangesRef.current = hasUnsavedChanges;
@@ -242,8 +256,10 @@ export function LatexWorkspace({
     if (!window.confirm(
       `Restore ${version.filename} to version ${version.version_number}? This replaces the shared file and discards any unsaved edits.`,
     )) return;
+    formatSuggestionRequestIdRef.current += 1;
     setRestoringVersion(version.version_id);
     setHistoryError("");
+    setFormatSuggestionLoading(false);
     if (autosaveTimerRef.current !== null) {
       window.clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
@@ -265,6 +281,9 @@ export function LatexWorkspace({
       onUnsavedChangesChange(pythonUnsavedChangesRef.current);
       setCompileError("");
       setCompiledSource(null);
+      setFormatSuggestion(null);
+      setFormatSuggestionError("");
+      setFormatSuggestionMessage("");
       await loadHistory(version.filename);
     } catch (cause) {
       setHistoryError(cause instanceof Error ? cause.message : "Could not restore this version.");
@@ -298,11 +317,19 @@ export function LatexWorkspace({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      formatSuggestionRequestIdRef.current += 1;
       if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
     };
   }, []);
 
   useEffect(() => {
+    formatSuggestionRequestIdRef.current += 1;
+    setFormatSuggestion(null);
+    setFormatSuggestionError("");
+    setFormatSuggestionMessage("");
+    setFormatSuggestionLoading(false);
+    setCompileError("");
+    setCompiledSource(null);
     setActiveFile("main.tex");
     setPythonWorkspaceVisited(false);
     setPythonWorkspaceActive(false);
@@ -608,6 +635,11 @@ export function LatexWorkspace({
   }
 
   async function compilePdf() {
+    formatSuggestionRequestIdRef.current += 1;
+    setFormatSuggestion(null);
+    setFormatSuggestionError("");
+    setFormatSuggestionMessage("");
+    setFormatSuggestionLoading(false);
     setCompiling(true);
     setCompileError("");
     setCompiledSource(null);
@@ -648,6 +680,82 @@ export function LatexWorkspace({
     }
   }
 
+  async function suggestFormatting() {
+    const sourceSnapshot = compiledSource?.main_tex;
+    if (!sourceSnapshot || formatSuggestionLoading) return;
+    if (workspaceRef.current.main_tex !== sourceSnapshot) {
+      setFormatSuggestionError(
+        "The draft changed since compilation. Compile the latest draft before requesting a formatting suggestion.",
+      );
+      return;
+    }
+    const requestId = ++formatSuggestionRequestIdRef.current;
+    setFormatSuggestion(null);
+    setFormatSuggestionError("");
+    setFormatSuggestionMessage("");
+    setFormatSuggestionLoading(true);
+    try {
+      const response = await request<LatexFormatSuggestionResponse>(
+        `/api/projects/${project.project_id}/latex/format-suggestion`,
+        {
+          method: "POST",
+          body: JSON.stringify({ main_tex: sourceSnapshot }),
+        },
+      );
+      if (!mountedRef.current || formatSuggestionRequestIdRef.current !== requestId) return;
+      if (workspaceRef.current.main_tex !== sourceSnapshot) {
+        setFormatSuggestionError(
+          "The draft changed while formatting. Compile the latest draft before requesting a new suggestion.",
+        );
+      } else if (!response.changed) {
+        setFormatSuggestionMessage("No formatting changes were found.");
+      } else {
+        setFormatSuggestion({
+          sourceSnapshot,
+          formattedSource: response.formatted_main_tex,
+          diff: response.diff,
+        });
+      }
+    } catch (cause) {
+      if (mountedRef.current && formatSuggestionRequestIdRef.current === requestId) {
+        setFormatSuggestionError(
+          cause instanceof Error ? cause.message : "Could not prepare a formatting suggestion.",
+        );
+      }
+    } finally {
+      if (mountedRef.current && formatSuggestionRequestIdRef.current === requestId) {
+        setFormatSuggestionLoading(false);
+      }
+    }
+  }
+
+  function acceptFormattingSuggestion() {
+    if (!formatSuggestion) return;
+    const formattedSource = acceptLatexFormattingSuggestion(
+      workspaceRef.current.main_tex,
+      formatSuggestion,
+    );
+    if (formattedSource === null) {
+      setFormatSuggestionError(
+        "The draft changed after this preview. Compile again to request a fresh formatting suggestion.",
+      );
+      return;
+    }
+    const updated = { ...workspaceRef.current, main_tex: formattedSource };
+    workspaceRef.current = updated;
+    setWorkspace(updated);
+    const hasUnsavedChanges = JSON.stringify(updated) !== savedContentRef.current;
+    latexUnsavedChangesRef.current = hasUnsavedChanges;
+    setSaveStatus(hasUnsavedChanges ? "unsaved" : "saved");
+    onUnsavedChangesChange(hasUnsavedChanges || pythonUnsavedChangesRef.current);
+    setActiveFile("main.tex");
+    setPythonWorkspaceActive(false);
+    setPaneMode("source");
+    setFormatSuggestion(null);
+    setFormatSuggestionError("");
+    setFormatSuggestionMessage("Formatting applied. Your draft will autosave; compile again to verify it.");
+  }
+
   const compileLocation = findLatexSourceLocation(compileError);
   const compileSource = compileLocation?.filename === "main.tex"
     ? compiledSource?.main_tex
@@ -657,6 +765,11 @@ export function LatexWorkspace({
   const compileSourceLine = compileLocation && compileLocation.line !== null && compileSource !== undefined
     ? sourceLineAt(compileSource, compileLocation.line)
     : null;
+  const canSuggestFormatting = canEdit && Boolean(
+    compileError
+    && compiledSource
+    && (!compileLocation || compileLocation.filename === "main.tex"),
+  );
   const lastSavedAt = formatLastSavedAt(workspace.updated_at);
   const saveStatusClass = saveStatus === "saved" && !workspace.updated_at ? "unsaved" : saveStatus;
 
@@ -739,31 +852,79 @@ export function LatexWorkspace({
       </header>
       {workspaceError && <p className="inline-error latex-error" role="alert">{workspaceError}</p>}
       {compileError && (
-        <div className="inline-error latex-error latex-diagnostic" role="alert">
-          <pre>{compileError}</pre>
-          {compileLocation && (
-            <>
-              <p className="latex-diagnostic-location">
-                {compileLocation.line === null
-                  ? `File: ${compileLocation.filename}`
-                  : `${compileLocation.filename}, line ${compileLocation.line}`}
+        <>
+          <div className="inline-error latex-error latex-diagnostic" role="alert">
+            <pre>{compileError}</pre>
+            {compileLocation && (
+              <>
+                <p className="latex-diagnostic-location">
+                  {compileLocation.line === null
+                    ? `File: ${compileLocation.filename}`
+                    : `${compileLocation.filename}, line ${compileLocation.line}`}
+                </p>
+                {compileLocation.line !== null && compileSourceLine !== null && (
+                  <pre
+                    className="latex-diagnostic-source"
+                    aria-label={`Source line ${compileLocation.line} from ${compileLocation.filename}`}
+                  >
+                    <span>{compileLocation.line}</span>
+                    <code>{compileSourceLine || " "}</code>
+                  </pre>
+                )}
+                <button type="button" className="button secondary small-button" onClick={openCompileLocation}>
+                  Open {compileLocation.filename}
+                  {compileLocation.line === null ? "" : ` line ${compileLocation.line}`}
+                </button>
+              </>
+            )}
+          </div>
+          {canSuggestFormatting && (
+            <div className="latex-format-help" aria-label="LaTeX formatting suggestion">
+              <p>
+                The server-side formatter suggests formatting-only changes to <code>main.tex</code>. It does not repair semantic errors; review the diff before applying it.
               </p>
-              {compileLocation.line !== null && compileSourceLine !== null && (
-                <pre
-                  className="latex-diagnostic-source"
-                  aria-label={`Source line ${compileLocation.line} from ${compileLocation.filename}`}
-                >
-                  <span>{compileLocation.line}</span>
-                  <code>{compileSourceLine || " "}</code>
-                </pre>
-              )}
-              <button type="button" className="button secondary small-button" onClick={openCompileLocation}>
-                Open {compileLocation.filename}
-                {compileLocation.line === null ? "" : ` line ${compileLocation.line}`}
+              <button
+                type="button"
+                className="button secondary small-button"
+                onClick={() => void suggestFormatting()}
+                disabled={formatSuggestionLoading}
+              >
+                {formatSuggestionLoading
+                  ? <LoaderCircle size={14} className="spin" />
+                  : <FileCode2 size={14} />}
+                {formatSuggestionLoading ? "Preparing diff…" : "Suggest formatting changes"}
               </button>
-            </>
+              {formatSuggestionError && <p className="inline-error" role="alert">{formatSuggestionError}</p>}
+              {formatSuggestionMessage && <p role="status">{formatSuggestionMessage}</p>}
+              {formatSuggestion && (
+                <div className="latex-format-suggestion" role="region" aria-label="Suggested formatting diff">
+                  <strong>Review suggested formatting</strong>
+                  <pre>{formatSuggestion.diff}</pre>
+                  <div className="latex-format-actions">
+                    <button
+                      type="button"
+                      className="button primary small-button"
+                      onClick={acceptFormattingSuggestion}
+                    >
+                      Accept formatting
+                    </button>
+                    <button
+                      type="button"
+                      className="button secondary small-button"
+                      onClick={() => {
+                        setFormatSuggestion(null);
+                        setFormatSuggestionError("");
+                        setFormatSuggestionMessage("Formatting suggestion declined.");
+                      }}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
       {!canEdit && <p className="latex-preview-note">You can read and compile this draft but cannot change shared project content.</p>}
       {workspaceError.includes("changed in another session") && (

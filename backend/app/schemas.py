@@ -418,6 +418,18 @@ class LatexWorkspaceResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class LatexFormatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    main_tex: str = Field(max_length=1_000_000)
+
+
+class LatexFormatSuggestion(BaseModel):
+    formatted_main_tex: str = Field(max_length=2_000_000)
+    diff: str = Field(max_length=4_000_000)
+    changed: bool
+
+
 class WorkspaceVersionMetadata(BaseModel):
     version_id: uuid.UUID
     filename: str
