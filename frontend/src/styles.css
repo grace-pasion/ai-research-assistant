@@ -763,6 +763,7 @@ h1, h2, h3, p { margin-top: 0; }
 .assistant-source-options { max-height: 180px; overflow-y: auto; padding-left: 18px; }
 .assistant-source-options p { color: #78817b; }
 .citation-passage { background: #f7e7a7; outline: 2px solid #e2c96f; scroll-margin: 35vh; }
+.note-source-passage { background: #d7eddf; outline: 2px solid #72a887; scroll-margin: 35vh; }
 .citation-ref { background: #edf3ee; border: 0; border-radius: 3px; color: #3d7054; cursor: pointer; font: inherit; margin: 0 1px; padding: 0 3px; }
 .source-link { color: #74877a; margin-left: auto; }
 .review-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; }

@@ -46,3 +46,26 @@ export function findCitationRange(text: string, excerpt: string | null): Citatio
     end: normalizedText.offsets[normalizedEnd - 1] + 1,
   };
 }
+
+export function findAnnotationRange(
+  text: string,
+  quote: string | null,
+  startOffset: number | null,
+  endOffset: number | null,
+): CitationRange | null {
+  if (!quote) return null;
+  const characters = Array.from(text);
+  if (
+    startOffset !== null
+    && endOffset !== null
+    && Number.isInteger(startOffset)
+    && Number.isInteger(endOffset)
+    && startOffset >= 0
+    && endOffset > startOffset
+    && endOffset <= characters.length
+    && characters.slice(startOffset, endOffset).join("") === quote
+  ) {
+    return { start: startOffset, end: endOffset };
+  }
+  return findCitationRange(text, quote);
+}

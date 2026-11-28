@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findCitationRange } from "./citationEvidence";
+import { findAnnotationRange, findCitationRange } from "./citationEvidence";
 
 describe("citation passage location", () => {
   it("finds the exact cited passage in the extracted source text", () => {
@@ -29,5 +29,16 @@ describe("citation passage location", () => {
     expect(findCitationRange("Source text.", "")).toBeNull();
     expect(findCitationRange("Source text.", " \n\t ")).toBeNull();
     expect(findCitationRange("Source \n\t text.", " \n\t ")).toBeNull();
+  });
+
+  it("uses saved annotation offsets to select the exact repeated passage", () => {
+    expect(findAnnotationRange("Passage one. Passage two.", "Passage", 13, 20))
+      .toEqual({ start: 13, end: 20 });
+  });
+
+  it("falls back to matching the quote when saved offsets no longer match", () => {
+    expect(findAnnotationRange("First passage. Second passage.", "passage", 0, 7))
+      .toEqual({ start: 6, end: 13 });
+    expect(findAnnotationRange("Source text.", null, null, null)).toBeNull();
   });
 });

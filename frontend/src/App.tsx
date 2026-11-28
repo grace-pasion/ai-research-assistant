@@ -37,7 +37,7 @@ import {
 import { Fragment, type FormEvent, type ReactNode, type TextareaHTMLAttributes, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, downloadFile, fetchPdfObjectUrl, getToken, jsonBody, setToken } from "./api";
 import { allAssistantSources, withoutAssistantSource, type AssistantSourceSelection } from "./assistantSources";
-import { findCitationRange } from "./citationEvidence";
+import { findAnnotationRange, findCitationRange } from "./citationEvidence";
 import {
   resolveGlobalShortcut,
   type ProjectSectionView,
@@ -154,6 +154,12 @@ import type {
 } from "./types";
 
 type View = ProjectSectionView | "search";
+type AnnotationPassage = Pick<Annotation, "annotation_id" | "quote" | "start_offset" | "end_offset">;
+type SourceAnnotationFocus = {
+  sourceType: "document" | "paper";
+  sourceId: string;
+  annotation: AnnotationPassage;
+};
 type LoginResponse = { access_token: string; user: User };
 const PROJECT_SECTION_OPTIONS: { view: ProjectSectionView; label: string }[] = [
   { view: "home", label: "Overview" },
@@ -239,6 +245,7 @@ function App() {
   const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null);
   const [citationPage, setCitationPage] = useState<number | null>(null);
   const [citationExcerpt, setCitationExcerpt] = useState<string | null>(null);
+  const [sourceAnnotationFocus, setSourceAnnotationFocus] = useState<SourceAnnotationFocus | null>(null);
   const [annotationPaperId, setAnnotationPaperId] = useState<string | null>(null);
   const [showQuickNote, setShowQuickNote] = useState(false);
   const [quickNoteSourceSelection, setQuickNoteSourceSelection] = useState("");
@@ -1118,6 +1125,7 @@ function App() {
     excerpt: string | null = null,
     sourceProjectId: string | null | undefined = project?.project_id,
     sourceTitle?: string,
+    focusedAnnotation: AnnotationPassage | null = null,
   ) {
     const title = sourceTitle ?? documents.find(
       (document) => document.document_id === documentId,
@@ -1128,16 +1136,24 @@ function App() {
     setAnnotationDocumentId(documentId);
     setCitationPage(pageNumber);
     setCitationExcerpt(excerpt);
+    setSourceAnnotationFocus(focusedAnnotation
+      ? { sourceType: "document", sourceId: documentId, annotation: focusedAnnotation }
+      : null);
     setView("documents");
   }
 
-  function openProjectSource(sourceType: "document" | "paper", sourceId: string, sourceTitle: string) {
+  function openProjectSource(
+    sourceType: "document" | "paper",
+    sourceId: string,
+    sourceTitle: string,
+    focusedAnnotation: AnnotationPassage | null = null,
+  ) {
     if (sourceType === "document") {
       if (!documents.some((document) => document.document_id === sourceId)) {
         setError("This linked document is no longer available in the project.");
         return;
       }
-      openDocumentEvidence(sourceId);
+      openDocumentEvidence(sourceId, null, null, project?.project_id, sourceTitle, focusedAnnotation);
       return;
     }
     if (!papers.some((paper) => paper.paper_id === sourceId)) {
@@ -1148,10 +1164,14 @@ function App() {
     setScreeningQuery(sourceTitle);
     setScreeningFilter("all");
     setAnnotationPaperId(sourceId);
+    setSourceAnnotationFocus(focusedAnnotation
+      ? { sourceType: "paper", sourceId, annotation: focusedAnnotation }
+      : null);
     setView("papers");
   }
 
   async function openQuickAccessSource(source: QuickAccessSource) {
+    setSourceAnnotationFocus(null);
     const target = projects.find((item) => item.project_id === source.project_id);
     if (!target) {
       setError("This source's project is no longer available.");
@@ -1227,6 +1247,7 @@ function App() {
   }
 
   function openCrossProjectSearchResult(result: CrossProjectSearchResult) {
+    setSourceAnnotationFocus(null);
     const target = projects.find((item) => item.project_id === result.project_id);
     if (!target) {
       setError("This project is no longer available.");
@@ -1263,7 +1284,7 @@ function App() {
   function openProjectAnnotation(annotation: ProjectAnnotation) {
     openProjectSource(annotation.source_type, annotation.source_type === "document"
       ? annotation.document_id ?? ""
-      : annotation.paper_id ?? "", annotation.source_title);
+      : annotation.paper_id ?? "", annotation.source_title, annotation);
   }
 
   function openProjectNotesFromInbox(projectId: string) {
@@ -4053,6 +4074,12 @@ function App() {
                         sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
                         sourceStatus={openedDocument.processing_status}
                         citationExcerpt={openedDocument.file_type === "pdf" ? null : citationExcerpt}
+                        focusAnnotation={
+                          sourceAnnotationFocus?.sourceType === "document"
+                            && sourceAnnotationFocus.sourceId === openedDocument.document_id
+                            ? sourceAnnotationFocus.annotation
+                            : null
+                        }
                         canComment={project.access_role !== "read"}
                         currentUserId={user?.user_id ?? null}
                         isProjectOwner={project.access_role === "owner"}
@@ -4600,7 +4627,12 @@ function App() {
                             <div className="annotation-library-source">
                               <span>{annotation.source_type === "document" ? "DOCUMENT" : "PAPER"}</span>
                               {annotation.is_pinned && <span className="annotation-pinned-badge">PINNED</span>}
-                              <button type="button" onClick={() => openProjectAnnotation(annotation)}>
+                              <button
+                                type="button"
+                                onClick={() => openProjectAnnotation(annotation)}
+                                aria-label={`Open ${annotation.source_title} at this note's passage`}
+                                title="Open source at saved passage"
+                              >
                                 {annotation.source_title}
                               </button>
                               <button
@@ -5311,6 +5343,7 @@ function App() {
                             : undefined}
                           onRemove={canEditProject ? () => void unsavePaper(paper) : undefined}
                           onAnnotate={() => {
+                            setSourceAnnotationFocus(null);
                             if (annotationPaperId !== paper.paper_id) {
                               rememberRecentProjectSource(
                                 project.project_id,
@@ -5334,6 +5367,12 @@ function App() {
                             sourceName={paper.title}
                             annotationsPath={`/api/projects/${project.project_id}/papers/${paper.paper_id}/annotations`}
                             sourceText={paper.abstract?.replace(/<[^>]*>/g, "") ?? ""}
+                            focusAnnotation={
+                              sourceAnnotationFocus?.sourceType === "paper"
+                                && sourceAnnotationFocus.sourceId === paper.paper_id
+                                ? sourceAnnotationFocus.annotation
+                                : null
+                            }
                             canComment={project.access_role !== "read"}
                             currentUserId={user?.user_id ?? null}
                             isProjectOwner={project.access_role === "owner"}
@@ -7155,6 +7194,7 @@ function AnnotationEditor({
   sourceText,
   sourceStatus,
   citationExcerpt,
+  focusAnnotation,
   canComment,
   currentUserId,
   isProjectOwner,
@@ -7166,6 +7206,7 @@ function AnnotationEditor({
   sourceText?: string;
   sourceStatus?: string;
   citationExcerpt?: string | null;
+  focusAnnotation?: AnnotationPassage | null;
   canComment: boolean;
   currentUserId: string | null;
   isProjectOwner: boolean;
@@ -7186,6 +7227,7 @@ function AnnotationEditor({
   } | null>(null);
   const sourceRef = useRef<HTMLDivElement>(null);
   const citationHighlightRef = useRef<HTMLElement>(null);
+  const focusedPassageRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -7227,11 +7269,22 @@ function AnnotationEditor({
   }, [annotationsPath, sourcePath, sourceStatus, sourceText]);
 
   const citationRange = findCitationRange(text, citationExcerpt ?? null);
+  const focusRange = findAnnotationRange(
+    text,
+    focusAnnotation?.quote ?? null,
+    focusAnnotation?.start_offset ?? null,
+    focusAnnotation?.end_offset ?? null,
+  );
 
   useEffect(() => {
     if (loading || !citationRange) return;
     citationHighlightRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [citationRange?.start, citationRange?.end, loading]);
+
+  useEffect(() => {
+    if (loading || !focusRange) return;
+    focusedPassageRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusRange?.start, focusRange?.end, loading]);
 
   useEffect(() => {
     if (busy || editingId) return;
@@ -7393,22 +7446,34 @@ function AnnotationEditor({
     boundaries.add(citationRange.start);
     boundaries.add(citationRange.end);
   }
+  if (focusRange) {
+    boundaries.add(focusRange.start);
+    boundaries.add(focusRange.end);
+  }
   const orderedBoundaries = [...boundaries].sort((left, right) => left - right);
   orderedBoundaries.slice(0, -1).forEach((start, index) => {
     const end = orderedBoundaries[index + 1];
     if (start === end) return;
     const annotation = highlightRanges.find((range) => range.start <= start && end <= range.end);
     const isCitation = Boolean(citationRange && citationRange.start <= start && end <= citationRange.end);
+    const isFocusedPassage = Boolean(focusRange && focusRange.start <= start && end <= focusRange.end);
     const content = sourceCharacters.slice(start, end).join("");
-    if (!annotation && !isCitation) {
+    if (!annotation && !isCitation && !isFocusedPassage) {
       sourceParts.push(content);
       return;
     }
     sourceParts.push(
       <mark
         key={`${annotation?.annotationId ?? "citation"}-${start}`}
-        className={isCitation ? "citation-passage" : undefined}
-        ref={isCitation ? citationHighlightRef : undefined}
+        className={[
+          isCitation ? "citation-passage" : "",
+          isFocusedPassage ? "note-source-passage" : "",
+        ].filter(Boolean).join(" ")}
+        ref={isCitation
+          ? citationHighlightRef
+          : isFocusedPassage && start === focusRange?.start
+            ? focusedPassageRef
+            : undefined}
       >
         {content}
       </mark>,
