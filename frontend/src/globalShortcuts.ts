@@ -34,6 +34,10 @@ const PROJECT_SECTIONS: readonly ProjectSectionView[] = [
   "assistant",
 ];
 
+export function isProjectSectionView(value: string | null): value is ProjectSectionView {
+  return value !== null && PROJECT_SECTIONS.some((section) => section === value);
+}
+
 export function resolveGlobalShortcut(
   event: ShortcutKeyInput,
   blockedContext: boolean,

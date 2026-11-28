@@ -43,6 +43,11 @@ import {
   type ProjectSectionView,
 } from "./globalShortcuts";
 import { getMentionQuery, insertMention } from "./mentions";
+import {
+  readRememberedProjectSection as readStoredProjectSection,
+  rememberProjectSection,
+  resolveProjectSection,
+} from "./projectSectionMemory";
 import { confirmDestructiveAction } from "./destructiveConfirmation";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
@@ -536,6 +541,35 @@ function App() {
       });
     }
   }
+  const readRememberedProjectSection = useCallback((
+    userId: string | null,
+    projectId: string,
+  ): ProjectSectionView | null => {
+    if (!userId) return null;
+    try {
+      return readStoredProjectSection(window.localStorage, userId, projectId);
+    } catch (cause) {
+      setError((current) => current || (
+        cause instanceof Error
+          ? cause.message
+          : "Could not read the last project section from this browser."
+      ));
+      return null;
+    }
+  }, []);
+
+  const selectProject = useCallback((
+    nextProject: Project | null,
+    userId: string | null,
+    section?: ProjectSectionView,
+  ) => {
+    setProject(nextProject);
+    const remembered = nextProject && !section
+      ? readRememberedProjectSection(userId, nextProject.project_id)
+      : null;
+    setView(nextProject ? resolveProjectSection(remembered, section) : "home");
+  }, [readRememberedProjectSection]);
+
   const refreshTeamWorkspaces = useCallback(async (selectWorkspaceId?: string) => {
     const loaded = await request<TeamWorkspace[]>("/api/team-workspaces");
     setTeamWorkspaces(loaded);
@@ -543,21 +577,37 @@ function App() {
       setSelectedTeamWorkspaceId(selectWorkspaceId);
       const loadedProjects = await request<Project[]>("/api/projects");
       setProjects(loadedProjects);
-      setProject((current) => retainProjectSelection(
-        current,
+      const currentProject = loadedProjects.find(
+        (item) => item.project_id === selectedProjectIdRef.current,
+      ) ?? null;
+      const nextProject = retainProjectSelection(
+        currentProject,
         loadedProjects.filter((item) => item.team_workspace_id === selectWorkspaceId),
-      ));
+      );
+      if (nextProject?.project_id !== selectedProjectIdRef.current) {
+        selectProject(nextProject, user?.user_id ?? null);
+      } else {
+        setProject(nextProject);
+      }
     }
-  }, [request]);
+  }, [request, selectProject, user?.user_id]);
 
   const refreshProjects = useCallback(async () => {
     const loaded = await request<Project[]>("/api/projects");
     setProjects(loaded);
-    setProject((selected) => retainProjectSelection(
-      selected,
+    const currentProject = loaded.find(
+      (item) => item.project_id === selectedProjectIdRef.current,
+    ) ?? null;
+    const nextProject = retainProjectSelection(
+      currentProject,
       projectsInWorkspace(loaded, selectedTeamWorkspaceId, teamWorkspaces),
-    ));
-  }, [request, selectedTeamWorkspaceId, teamWorkspaces]);
+    );
+    if (nextProject?.project_id !== selectedProjectIdRef.current) {
+      selectProject(nextProject, user?.user_id ?? null);
+    } else {
+      setProject(nextProject);
+    }
+  }, [request, selectedTeamWorkspaceId, selectProject, teamWorkspaces, user?.user_id]);
 
   const refreshUnreadCount = useCallback(async () => {
     const result = await request<{ count: number }>("/api/inbox/unread-count");
@@ -595,6 +645,24 @@ function App() {
   );
 
   useEffect(() => {
+    if (!user || !project || view === "search") return;
+    try {
+      rememberProjectSection(
+        window.localStorage,
+        user.user_id,
+        project.project_id,
+        view,
+      );
+    } catch (cause) {
+      setError((current) => current || (
+        cause instanceof Error
+          ? cause.message
+          : "Could not remember the last project section in this browser."
+      ));
+    }
+  }, [project?.project_id, user?.user_id, view]);
+
+  useEffect(() => {
     if (!token) return;
     let active = true;
     Promise.all([
@@ -612,7 +680,8 @@ function App() {
           ? null
           : loadedWorkspaces[0]?.team_workspace_id ?? null;
         setSelectedTeamWorkspaceId(initialWorkspaceId);
-        setProject(projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null);
+        const initialProject = projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null;
+        selectProject(initialProject, me.user_id);
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -623,7 +692,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [request, token]);
+  }, [request, selectProject, token]);
 
   useLayoutEffect(() => {
     selectedProjectIdRef.current = project?.project_id ?? null;
@@ -1093,7 +1162,11 @@ function App() {
       return;
     }
 
-    setProject(target);
+    selectProject(
+      target,
+      user?.user_id ?? null,
+      source.source_type === "document" ? "documents" : "papers",
+    );
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setConversation(null);
     setDraft(null);
@@ -1131,7 +1204,11 @@ function App() {
       setError("This project is no longer available.");
       return;
     }
-    setProject(target);
+    selectProject(
+      target,
+      user?.user_id ?? null,
+      result.source_type === "document" ? "documents" : "papers",
+    );
     setSelectedTeamWorkspaceId(target.team_workspace_id);
     setNotice("");
     setMobileNavigationOpen(false);
@@ -1167,9 +1244,8 @@ function App() {
       setError("This project is no longer available.");
       return;
     }
-    setProject(target);
+    selectProject(target, user?.user_id ?? null, "notes");
     setSelectedTeamWorkspaceId(target.team_workspace_id);
-    setView("notes");
     setShowInbox(false);
   }
 
@@ -1755,7 +1831,15 @@ function App() {
         ]);
         if (!active || selectedProjectIdRef.current !== project.project_id) return;
         setProjects(loadedProjects);
-        setProject((selected) => retainProjectSelection(selected, loadedProjects));
+        const currentProject = loadedProjects.find(
+          (item) => item.project_id === project.project_id,
+        ) ?? null;
+        const nextProject = retainProjectSelection(currentProject, loadedProjects);
+        if (nextProject?.project_id !== project.project_id) {
+          selectProject(nextProject, user?.user_id ?? null);
+        } else {
+          setProject(nextProject);
+        }
         setDocuments(docs);
         setPapers(savedPapers);
         setConversations(chats);
@@ -1771,7 +1855,7 @@ function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [project, request, token]);
+  }, [project, request, selectProject, token, user?.user_id]);
 
   useEffect(() => {
     if (!aiUsage) return;
@@ -1837,7 +1921,8 @@ function App() {
         ? null
         : loadedWorkspaces[0]?.team_workspace_id ?? null;
       setSelectedTeamWorkspaceId(initialWorkspaceId);
-      setProject(projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null);
+      const initialProject = projectsInWorkspace(loaded, initialWorkspaceId, loadedWorkspaces)[0] ?? null;
+      selectProject(initialProject, result.user.user_id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Authentication failed.");
     } finally {
@@ -1861,7 +1946,7 @@ function App() {
         }),
       });
       setProjects((current) => [created, ...current]);
-      setProject(created);
+      selectProject(created, user?.user_id ?? null, "home");
       setShowNewProject(false);
       setNotice("Research project created.");
       formElement.reset();
@@ -2731,8 +2816,9 @@ function App() {
       await request<void>(`/api/projects/${project.project_id}`, { method: "DELETE" });
       const remaining = projects.filter((item) => item.project_id !== project.project_id);
       setProjects(remaining);
-      setProject(
+      selectProject(
         projectsInWorkspace(remaining, selectedTeamWorkspaceId, teamWorkspaces)[0] ?? null,
+        user?.user_id ?? null,
       );
       setConversation(null);
       setDraft(null);
@@ -2751,7 +2837,7 @@ function App() {
     setProjects([]);
     setTeamWorkspaces([]);
     setSelectedTeamWorkspaceId(null);
-    setProject(null);
+    selectProject(null, null);
     setConversation(null);
     setDraft(null);
     setError("");
@@ -2759,13 +2845,13 @@ function App() {
 
   function switchTeamWorkspace(workspaceId: string | null) {
     setSelectedTeamWorkspaceId(workspaceId);
-    setProject((current) => retainProjectSelection(
-      current,
+    const nextProject = retainProjectSelection(
+      project,
       projectsInWorkspace(projects, workspaceId, teamWorkspaces),
-    ));
+    );
+    selectProject(nextProject, user?.user_id ?? null);
     setConversation(null);
     setDraft(null);
-    setView("home");
   }
 
   const visibleProjects = useMemo(
@@ -2965,10 +3051,9 @@ function App() {
                   (workspace) => workspace.team_workspace_id === item.team_workspace_id,
                 );
                 setSelectedTeamWorkspaceId(memberWorkspace ? memberWorkspace.team_workspace_id : null);
-                setProject(item);
+                selectProject(item, user?.user_id ?? null);
                 setConversation(null);
                 setDraft(null);
-                setView("home");
                 setNotice("");
                 setMobileNavigationOpen(false);
               }}
