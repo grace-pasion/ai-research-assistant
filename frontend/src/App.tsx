@@ -60,6 +60,7 @@ import {
   toggleQuickAccessPin,
 } from "./quickAccess";
 import { WorkStatusPanel } from "./WorkStatusPanel";
+import { DocumentUploadDropzone } from "./DocumentUploadDropzone";
 import { getDocumentStatusPresentation, type DocumentStatus } from "./documentStatus";
 import {
   buildWorkStatusItems,
@@ -3998,6 +3999,12 @@ function App() {
                           </button>
                         </div>}
                       </div>
+                      {canEditProject && (
+                        <DocumentUploadDropzone
+                          disabled={uploadingFiles}
+                          onFiles={(files) => void uploadDocuments(files)}
+                        />
+                      )}
                       {bulkUploads.some((item) => item.projectId === project.project_id) && (
                         <section className="bulk-upload-status" aria-live="polite">
                           <div className="bulk-upload-heading">
