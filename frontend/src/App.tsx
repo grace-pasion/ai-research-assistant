@@ -6,6 +6,7 @@ import {
   Bell,
   Bot,
   Check,
+  Copy,
   Download,
   Eye,
   EyeOff,
@@ -92,6 +93,11 @@ import {
   findPaperSimilarityMatches,
   type PaperSimilarityMatch,
 } from "./paperSimilarity";
+import {
+  copyTextToClipboard,
+  formatPaperCitation,
+  paperDoiForClipboard,
+} from "./paperCitation";
 import type { StudyExtractionValues } from "./studyExtraction";
 import type {
   AIUsageResponse,
@@ -5882,6 +5888,10 @@ function PaperCard({
   const [reviewerDirty, setReviewerDirty] = useState(false);
   const [reviewerSaving, setReviewerSaving] = useState(false);
   const [reviewerError, setReviewerError] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const [assignmentIds, setAssignmentIds] = useState(
     paper.screening_assignments.map((assignment) => assignment.user_id),
   );
@@ -5911,6 +5921,23 @@ function PaperCard({
   const selectedAssignmentIds = [...assignmentIds].sort();
   const assignmentSelectionChanged = currentAssignmentIds.length !== selectedAssignmentIds.length
     || currentAssignmentIds.some((userId, index) => userId !== selectedAssignmentIds[index]);
+  const paperDoi = paperDoiForClipboard(paper);
+
+  async function copyPaperText(value: string, label: "citation" | "DOI") {
+    setCopyFeedback(null);
+    try {
+      await copyTextToClipboard(value);
+      setCopyFeedback({ kind: "success", message: `${label} copied to clipboard.` });
+    } catch (cause) {
+      setCopyFeedback({
+        kind: "error",
+        message: cause instanceof Error
+          && cause.message === "Clipboard access is unavailable in this browser."
+          ? cause.message
+          : `Could not copy ${label.toLowerCase()}. Check browser clipboard permissions and try again.`,
+      });
+    }
+  }
 
   useEffect(() => {
     setScreeningStatus(paper.screening_status);
@@ -6222,6 +6249,20 @@ function PaperCard({
         )}
       </div>
       <div className="paper-actions">
+        <button
+          className="button secondary small-button"
+          onClick={() => void copyPaperText(formatPaperCitation(paper), "citation")}
+        >
+          <Copy size={13} /> Copy citation
+        </button>
+        {paperDoi && (
+          <button
+            className="button secondary small-button"
+            onClick={() => void copyPaperText(paperDoi, "DOI")}
+          >
+            <Copy size={13} /> Copy DOI
+          </button>
+        )}
         {paper.paper_url && <a className="icon-button" href={paper.paper_url} target="_blank" rel="noreferrer" title="Open paper"><ArrowUpRight size={16} /></a>}
         {saved ? (
           <>
@@ -6250,6 +6291,14 @@ function PaperCard({
             {alreadySaved ? <Check size={15} /> : <Plus size={15} />}
             {alreadySaved ? "Saved" : "Save"}
           </button>
+        )}
+        {copyFeedback && (
+          <small
+            className={`paper-copy-feedback ${copyFeedback.kind}`}
+            role={copyFeedback.kind === "error" ? "alert" : "status"}
+          >
+            {copyFeedback.message}
+          </small>
         )}
       </div>
     </article>
