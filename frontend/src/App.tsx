@@ -63,6 +63,7 @@ import {
 import { WorkStatusPanel } from "./WorkStatusPanel";
 import { DocumentUploadDropzone } from "./DocumentUploadDropzone";
 import { getUploadFileType } from "./documentFileDrop";
+import { selectedTextWithin } from "./documentSelection";
 import { getDocumentStatusPresentation, type DocumentStatus } from "./documentStatus";
 import {
   buildWorkStatusItems,
@@ -7179,6 +7180,10 @@ function AnnotationEditor({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const sourceRef = useRef<HTMLDivElement>(null);
   const citationHighlightRef = useRef<HTMLElement>(null);
 
@@ -7246,26 +7251,51 @@ function AnnotationEditor({
     };
   }, [annotationsPath, busy, editingId]);
 
-  function captureSelection() {
+  function getSourceSelection() {
     const container = sourceRef.current;
     const selected = window.getSelection();
-    if (!container || !selected || selected.isCollapsed || !selected.anchorNode || !selected.focusNode ||
-      !container.contains(selected.anchorNode) || !container.contains(selected.focusNode)) {
+    if (!container || !selected) return null;
+    const quote = selectedTextWithin(container, selected);
+    if (!quote) return null;
+    return { quote, range: selected.getRangeAt(0) };
+  }
+
+  function captureSelection() {
+    const container = sourceRef.current;
+    const sourceSelection = getSourceSelection();
+    if (!container || !sourceSelection) {
       setError("Select text in the source first.");
       return;
     }
-    const range = selected.getRangeAt(0);
+    const { quote, range } = sourceSelection;
     const preceding = range.cloneRange();
     preceding.selectNodeContents(container);
     preceding.setEnd(range.startContainer, range.startOffset);
     const start = Array.from(preceding.toString()).length;
-    const quote = range.toString();
-    if (!quote.trim()) {
-      setError("Select text in the source first.");
-      return;
-    }
     setSelection({ quote, start_offset: start, end_offset: start + Array.from(quote).length });
     setError("");
+    setCopyFeedback(null);
+  }
+
+  async function copySelectedPassage() {
+    setCopyFeedback(null);
+    const sourceSelection = getSourceSelection();
+    if (!sourceSelection) {
+      setCopyFeedback({ kind: "error", message: "Select text in the source first." });
+      return;
+    }
+    try {
+      await copyTextToClipboard(sourceSelection.quote);
+      setCopyFeedback({ kind: "success", message: "Passage copied to clipboard." });
+    } catch (cause) {
+      setCopyFeedback({
+        kind: "error",
+        message: cause instanceof Error
+          && cause.message === "Clipboard access is unavailable in this browser."
+          ? cause.message
+          : "Could not copy the passage. Check browser clipboard permissions and try again.",
+      });
+    }
   }
 
   async function saveAnnotation(event: FormEvent<HTMLFormElement>) {
@@ -7388,23 +7418,59 @@ function AnnotationEditor({
   return (
     <section className="annotation-editor" aria-label="Source annotations">
       <div className="annotation-heading">
-        <div><h3>Source comments</h3><p>Select text to highlight it, or add a comment on its own.</p></div>
+        <div>
+          <h3>Source comments</h3>
+          <p>{canComment
+            ? "Select text to copy it or highlight it for a note."
+            : "Select text to copy a passage from this source."}</p>
+        </div>
         <span>{annotations.length} saved</span>
       </div>
       {error && <p className="inline-error" role="alert">{error}</p>}
       {loading ? <p className="muted compact">Loading source and annotations…</p> : (
         <>
           {text ? (
-            <div className="annotation-source" ref={sourceRef}>
+            <div className="annotation-source" ref={sourceRef} onMouseUp={() => setCopyFeedback(null)}>
               {sourceParts.length ? sourceParts : text}
             </div>
           ) : (
             <p className="muted compact">No extracted text or abstract is available. You can still add a note.</p>
           )}
-          {canComment && text && (
+          {text && (
             <div className="annotation-selection">
-              <button className="button secondary small-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={captureSelection}>Highlight selection</button>
-              {selection && <span>Selected: “{selection.quote.slice(0, 180)}{selection.quote.length > 180 ? "…" : ""}”</span>}
+              <button
+                className="button secondary small-button"
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void copySelectedPassage()}
+              >
+                Copy selected passage
+              </button>
+              {canComment && (
+                <>
+                  <button
+                    className="button secondary small-button"
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={captureSelection}
+                  >
+                    Highlight selection
+                  </button>
+                  {selection && (
+                    <span>
+                      Selected: “{selection.quote.slice(0, 180)}{selection.quote.length > 180 ? "…" : ""}”
+                    </span>
+                  )}
+                </>
+              )}
+              {copyFeedback && (
+                <span
+                  className={`annotation-copy-feedback ${copyFeedback.kind}`}
+                  role={copyFeedback.kind === "error" ? "alert" : "status"}
+                >
+                  {copyFeedback.message}
+                </span>
+              )}
             </div>
           )}
           {canComment && <form className="annotation-form" onSubmit={(event) => void saveAnnotation(event)}>
