@@ -290,6 +290,9 @@ function App() {
   const [savedSearchBusy, setSavedSearchBusy] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
+  const [conversationTitleDraft, setConversationTitleDraft] = useState("");
+  const [conversationRenameBusy, setConversationRenameBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [draftQuestion, setDraftQuestion] = useState("");
   const [assistantSources, setAssistantSources] = useState<AssistantSourceSelection | null>(null);
@@ -662,6 +665,8 @@ function App() {
     setAssistantSources(null);
     setDraft(null);
     setConversation(null);
+    setRenamingConversationId(null);
+    setConversationTitleDraft("");
   }, [project?.project_id, token]);
 
   useEffect(() => {
@@ -2518,6 +2523,7 @@ function App() {
   async function openConversation(item: Conversation) {
     if (!project) return;
     setError("");
+    setRenamingConversationId(null);
     try {
       const loaded = await request<Conversation>(
         `/api/projects/${project.project_id}/assistant/conversations/${item.conversation_id}`,
@@ -2526,6 +2532,60 @@ function App() {
       setDraft(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open this conversation.");
+    }
+  }
+
+  function beginRenameConversation(item: Conversation) {
+    setRenamingConversationId(item.conversation_id);
+    setConversationTitleDraft(item.title);
+    setError("");
+    setNotice("");
+  }
+
+  function cancelRenameConversation() {
+    setRenamingConversationId(null);
+    setConversationTitleDraft("");
+  }
+
+  async function renameConversation(event: FormEvent<HTMLFormElement>, item: Conversation) {
+    event.preventDefault();
+    if (!project || conversationRenameBusy) return;
+    const projectId = project.project_id;
+    const title = conversationTitleDraft.trim();
+    if (!title) {
+      setError("Enter a conversation title.");
+      return;
+    }
+    if (Array.from(title).length > 200) {
+      setError("Conversation titles must be 200 characters or fewer.");
+      return;
+    }
+
+    setConversationRenameBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await request<Conversation>(
+        `/api/projects/${projectId}/assistant/conversations/${item.conversation_id}`,
+        { method: "PATCH", body: jsonBody({ title }) },
+      );
+      if (selectedProjectIdRef.current !== projectId) return;
+      setConversations((current) => current
+        .map((candidate) => candidate.conversation_id === saved.conversation_id
+          ? { ...candidate, title: saved.title, updated_at: saved.updated_at }
+          : candidate)
+        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)));
+      setConversation((current) => current?.conversation_id === saved.conversation_id
+        ? { ...current, title: saved.title, updated_at: saved.updated_at }
+        : current);
+      cancelRenameConversation();
+      setNotice("Conversation renamed.");
+    } catch (cause) {
+      if (selectedProjectIdRef.current === projectId) {
+        setError(cause instanceof Error ? cause.message : "Could not rename this conversation.");
+      }
+    } finally {
+      setConversationRenameBusy(false);
     }
   }
 
@@ -4864,12 +4924,62 @@ function App() {
                       <button className="icon-button" title="New conversation" onClick={() => {
                         setConversation(null);
                         setDraft(null);
+                        cancelRenameConversation();
                       }}><Plus size={17} /></button>
                     </div>
                     {conversations.map((item) => (
-                      <button className={`conversation-link ${conversation?.conversation_id === item.conversation_id ? "active" : ""}`} key={item.conversation_id} onClick={() => void openConversation(item)}>
-                        <MessageSquareText size={15} /><span>{item.title}</span>
-                      </button>
+                      <div className="conversation-row" key={item.conversation_id}>
+                        {renamingConversationId === item.conversation_id ? (
+                          <form
+                            className="conversation-rename-form"
+                            onSubmit={(event) => void renameConversation(event, item)}
+                          >
+                            <input
+                              aria-label={`Rename conversation ${item.title}`}
+                              autoFocus
+                              value={conversationTitleDraft}
+                              onChange={(event) => setConversationTitleDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelRenameConversation();
+                                }
+                              }}
+                            />
+                            <button
+                              type="submit"
+                              className="conversation-rename-action"
+                              aria-label="Save conversation title"
+                              title="Save title"
+                              disabled={conversationRenameBusy}
+                            ><Check size={14} /></button>
+                            <button
+                              type="button"
+                              className="conversation-rename-action"
+                              aria-label="Cancel renaming"
+                              title="Cancel"
+                              onClick={cancelRenameConversation}
+                              disabled={conversationRenameBusy}
+                            ><X size={14} /></button>
+                          </form>
+                        ) : (
+                          <>
+                            <button
+                              className={`conversation-link ${conversation?.conversation_id === item.conversation_id ? "active" : ""}`}
+                              onClick={() => void openConversation(item)}
+                            >
+                              <MessageSquareText size={15} /><span>{item.title}</span>
+                            </button>
+                            <button
+                              className="conversation-rename-button"
+                              aria-label={`Rename ${item.title}`}
+                              title="Rename conversation"
+                              onClick={() => beginRenameConversation(item)}
+                              disabled={conversationRenameBusy}
+                            ><Pencil size={13} /></button>
+                          </>
+                        )}
+                      </div>
                     ))}
                     {!conversations.length && <p className="sidebar-empty">Approved conversations appear here.</p>}
                   </aside>

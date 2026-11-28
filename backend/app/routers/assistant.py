@@ -31,6 +31,7 @@ from app.schemas import (
     ConversationDetailResponse,
     ConversationMessageResponse,
     ConversationSummaryResponse,
+    ConversationTitleUpdate,
     SourceResponse,
 )
 from app.security import get_current_user, require_project_access
@@ -215,6 +216,26 @@ def list_conversations(
             .order_by(Conversation.updated_at.desc())
         ).all()
     )
+
+
+@router.patch(
+    "/conversations/{conversation_id}",
+    response_model=ConversationSummaryResponse,
+)
+def rename_conversation(
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    payload: ConversationTitleUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_project_access(db, project_id, user.user_id)
+    conversation = _conversation_for_user(db, conversation_id, user.user_id, project_id)
+    conversation.title = payload.title
+    conversation.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(conversation)
+    return conversation
 
 
 @router.get(

@@ -1125,6 +1125,19 @@ class ApproveRequest(BaseModel):
     approval_token: str
 
 
+class ConversationTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_conversation_title(cls, value: str) -> str:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Conversation title cannot be blank.")
+        return value
+
+
 class ConversationSummaryResponse(APIModel):
     conversation_id: uuid.UUID
     project_id: uuid.UUID
