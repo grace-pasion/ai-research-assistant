@@ -1,5 +1,6 @@
 import { Activity, AlertCircle, CheckCircle2, LoaderCircle } from "lucide-react";
 import { useState } from "react";
+import { CopyErrorDetailsButton } from "./CopyErrorDetailsButton";
 import type { WorkStatusItem } from "./workStatus";
 
 type Props = {
@@ -84,6 +85,16 @@ export function WorkStatusPanel({ items, projectName }: Props) {
                   <strong>{item.title}</strong>
                   <span>{KIND_LABELS[item.kind]} · {item.statusLabel}</span>
                   {item.detail && <p>{item.detail}</p>}
+                  {item.state === "attention" && (
+                    <CopyErrorDetailsButton
+                      details={[
+                        `Title: ${item.title}`,
+                        `Type: ${KIND_LABELS[item.kind]}`,
+                        `Status: ${item.statusLabel}`,
+                        `Details: ${item.detail ?? "No additional details were provided."}`,
+                      ].join("\n")}
+                    />
+                  )}
                 </div>
               </li>
             ))}

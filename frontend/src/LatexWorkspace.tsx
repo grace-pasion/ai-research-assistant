@@ -37,6 +37,7 @@ import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
 import { findLatexSourceLocation, sourceLineAt, sourceOffsetForLine } from "./latexDiagnostics";
+import { CopyErrorDetailsButton } from "./CopyErrorDetailsButton";
 import {
   acceptLatexFormattingSuggestion,
   type LatexFormattingSuggestion,
@@ -877,6 +878,9 @@ export function LatexWorkspace({
                 </button>
               </>
             )}
+          </div>
+          <div className="latex-error">
+            <CopyErrorDetailsButton details={`LaTeX build failed\n\n${compileError}`} />
           </div>
           {canSuggestFormatting && (
             <div className="latex-format-help" aria-label="LaTeX formatting suggestion">

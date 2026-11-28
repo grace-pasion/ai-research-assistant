@@ -142,6 +142,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .work-status-item-copy strong { color: #46534b; font-size: 11px; overflow-wrap: anywhere; }
 .work-status-item-copy > span { color: #748078; font-size: 9px; }
 .work-status-item-copy p { color: #87918a; font-size: 10px; line-height: 1.45; margin: 1px 0 0; overflow-wrap: anywhere; }
+.copy-error-details { align-items: center; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.copy-error-details-button { font-size: 9px; gap: 4px; min-height: 24px; padding: 3px 7px; }
+.copy-error-details-feedback { color: #54755e; font-size: 9px; }
+.copy-error-details-feedback.error { color: #a64e47; }
 .work-status-more { color: #7c887f; font-size: 10px; margin: 0; padding: 9px 14px 12px; }
 .mobile-nav-backdrop { display: none; }
 .private-badge { align-items: center; background: #f0f5f0; border-radius: 20px; color: #52715e; display: flex; font-size: 10px; gap: 5px; padding: 6px 9px; }
@@ -233,6 +237,7 @@ h1, h2, h3, p { margin-top: 0; }
 .bulk-upload-file strong { color: #4b584f; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bulk-upload-file small { color: #a64e47; font-size: 9px; line-height: 1.4; }
 .document-status-detail { color: #77837a; display: block; font-size: 9px; line-height: 1.45; margin: 3px 0 0; }
+.document-status-message { min-width: 0; }
 .bulk-upload-file .document-status-detail { color: #77837a; }
 .bulk-upload-file .document-status-detail.inline-error { color: #a64e47; }
 .status-uploading { background: #f4f1e8; color: #927344; }

@@ -65,6 +65,7 @@ import {
   toggleQuickAccessPin,
 } from "./quickAccess";
 import { WorkStatusPanel } from "./WorkStatusPanel";
+import { CopyErrorDetailsButton } from "./CopyErrorDetailsButton";
 import { DocumentUploadDropzone } from "./DocumentUploadDropzone";
 import { getUploadFileType } from "./documentFileDrop";
 import { selectedTextWithin } from "./documentSelection";
@@ -4098,6 +4099,7 @@ function App() {
                         </button>
                       </div>
                       <DocumentStatusMessage
+                        filename={openedDocument.filename}
                         status={openedDocument.processing_status}
                         error={openedDocument.processing_error}
                         canRetry={canEditProject}
@@ -4212,6 +4214,7 @@ function App() {
                               <div className="bulk-upload-file">
                                 <strong>{item.filename}</strong>
                                 <DocumentStatusMessage
+                                  filename={item.filename}
                                   status={item.status}
                                   error={item.error}
                                   canRetry={canEditProject}
@@ -4300,6 +4303,7 @@ function App() {
                                 </button>
                                 <span>{formatBytes(document.file_size)} · {new Date(document.uploaded_at).toLocaleDateString()}</span>
                                 <DocumentStatusMessage
+                                  filename={document.filename}
                                   status={document.processing_status}
                                   error={document.processing_error}
                                   canRetry={canEditProject}
@@ -6490,19 +6494,32 @@ function StatusPill({ status }: { status: DocumentStatus }) {
 }
 
 function DocumentStatusMessage({
+  filename,
   status,
   error,
   canRetry,
 }: {
+  filename: string;
   status: DocumentStatus;
   error: string | null;
   canRetry: boolean;
 }) {
   const presentation = getDocumentStatusPresentation(status, error, canRetry);
   return (
-    <small className={`document-status-detail ${presentation.state === "attention" ? "inline-error" : ""}`}>
-      {presentation.detail}
-    </small>
+    <div className="document-status-message">
+      <small className={`document-status-detail ${presentation.state === "attention" ? "inline-error" : ""}`}>
+        {presentation.detail}
+      </small>
+      {presentation.state === "attention" && (
+        <CopyErrorDetailsButton
+          details={[
+            `File: ${filename}`,
+            `Status: ${presentation.label}`,
+            `Details: ${presentation.detail}`,
+          ].join("\n")}
+        />
+      )}
+    </div>
   );
 }
 

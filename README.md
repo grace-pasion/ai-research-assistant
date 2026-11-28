@@ -88,6 +88,8 @@ Upload documents and search OpenAlex or Crossref for papers. In **Literature**, 
 
 After a LaTeX compile error, editors can request a formatting-only `latexindent` diff for `main.tex`, review it, and accept or decline; accepted formatting is applied to the editor and autosaved. The formatter adjusts layout only and does not repair semantic TeX errors.
 
+Failed uploads and LaTeX PDF builds include a **Copy error details** action so users can share or save diagnostic text for troubleshooting.
+
 To create a cited research brief, choose **Compare sources**, review and approve the draft, then select **Export cited brief** on the saved comparison. The editable Word document includes a findings synthesis, the evidence matrix, and bibliography; its `[S#]` markers connect claims to bibliography entries.
 
 Use **Research packet** in the project header to choose up to 100 saved papers, 500 notes, and 100 of your approved assistant responses for a focused ZIP export. The packet includes paper metadata and references in JSON/RIS/BibTeX, selected notes with tags and related-source links, and approved responses with citation mappings and Markdown copies. Only your own approved assistant responses are available; collaborators' private histories are excluded.
