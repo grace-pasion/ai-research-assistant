@@ -1,4 +1,5 @@
 import type { DocumentRecord } from "./types";
+import { getDocumentStatusPresentation } from "./documentStatus";
 
 export type LatexCompileActivity = {
   status: "compiling" | "completed" | "failed";
@@ -31,53 +32,26 @@ type WorkStatusDocument = Pick<
 function documentStatus(
   status: DocumentRecord["processing_status"],
   error: string | null,
+  canRetry: boolean,
 ): Pick<WorkStatusItem, "state" | "statusLabel" | "detail"> {
-  if (status === "processing") {
-    return {
-      state: "active",
-      statusLabel: "Processing",
-      detail: error ?? "Text extraction and indexing are in progress.",
-    };
-  }
-  if (status === "ready") {
-    return {
-      state: "complete",
-      statusLabel: "Ready",
-      detail: error,
-    };
-  }
-  if (status === "needs_api_key") {
-    return {
-      state: "attention",
-      statusLabel: "Needs API key",
-      detail: error ?? "Text is available; configure an API key for AI features.",
-    };
-  }
-  if (status === "quota_exceeded") {
-    return {
-      state: "attention",
-      statusLabel: "Allowance reached",
-      detail: error ?? "Document processing reached the AI usage allowance.",
-    };
-  }
+  const presentation = getDocumentStatusPresentation(status, error, canRetry);
   return {
-    state: "attention",
-    statusLabel: "Failed",
-    detail: error ?? "Document processing failed.",
+    state: presentation.state,
+    statusLabel: presentation.label,
+    detail: presentation.detail,
   };
 }
 
 function uploadStatus(
   upload: WorkStatusUpload,
+  canRetry: boolean,
 ): Pick<WorkStatusItem, "state" | "statusLabel" | "detail"> {
-  if (upload.status === "uploading") {
-    return {
-      state: "active",
-      statusLabel: "Uploading",
-      detail: "Sending this file to the project.",
-    };
-  }
-  return documentStatus(upload.status, upload.error);
+  const presentation = getDocumentStatusPresentation(upload.status, upload.error, canRetry);
+  return {
+    state: presentation.state,
+    statusLabel: presentation.label,
+    detail: presentation.detail,
+  };
 }
 
 export function buildWorkStatusItems(
@@ -85,6 +59,7 @@ export function buildWorkStatusItems(
   uploads: readonly WorkStatusUpload[],
   documents: readonly WorkStatusDocument[],
   latexCompile: LatexCompileActivity | null,
+  canRetry = true,
 ): WorkStatusItem[] {
   const projectUploads = uploads
     .filter((upload) => upload.projectId === projectId)
@@ -98,7 +73,7 @@ export function buildWorkStatusItems(
   const complete: WorkStatusItem[] = [];
 
   for (const upload of projectUploads) {
-    const status = uploadStatus(upload);
+    const status = uploadStatus(upload, canRetry);
     const item: WorkStatusItem = {
       id: `upload-${upload.key}`,
       kind: "upload",
@@ -121,7 +96,7 @@ export function buildWorkStatusItems(
       id: `document-${document.document_id}`,
       kind: "document",
       title: document.filename,
-      ...documentStatus(document.processing_status, document.processing_error),
+      ...documentStatus(document.processing_status, document.processing_error, canRetry),
     };
     if (item.state === "active") active.push(item);
     else attention.push(item);

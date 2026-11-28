@@ -76,10 +76,10 @@ describe("buildWorkStatusItems", () => {
     );
 
     expect(items.map(({ id, state, statusLabel }) => [id, state, statusLabel])).toEqual([
-      ["upload-failed-upload", "attention", "Failed"],
-      ["document-failed-document", "attention", "Failed"],
-      ["document-key-document", "attention", "Needs API key"],
-      ["document-quota-document", "attention", "Allowance reached"],
+      ["upload-failed-upload", "attention", "Needs attention"],
+      ["document-failed-document", "attention", "Needs attention"],
+      ["document-key-document", "attention", "Needs attention"],
+      ["document-quota-document", "attention", "Needs attention"],
       ["latex-project-1", "attention", "Failed"],
       ["upload-recent-ready-4", "complete", "Ready"],
       ["upload-recent-ready-3", "complete", "Ready"],
@@ -106,8 +106,9 @@ describe("buildWorkStatusItems", () => {
     expect(items[0]).toMatchObject({
       id: "upload-bad",
       state: "attention",
-      detail: "Unsupported file format.",
     });
+    expect(items[0].detail).toContain("Unsupported file format.");
+    expect(items[0].detail).toContain("Select Retry or Reprocess");
     expect(items[1]).toMatchObject({
       id: "latex-project-1",
       state: "complete",

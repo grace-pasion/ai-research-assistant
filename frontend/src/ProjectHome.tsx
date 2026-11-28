@@ -20,6 +20,7 @@ import type {
   ProjectTask,
   RecentProjectSource,
 } from "./types";
+import { getDocumentStatusPresentation } from "./documentStatus";
 
 type Props = {
   projectId: string;
@@ -244,20 +245,22 @@ export function ProjectHome({
           </div>
           {processingDocuments.length ? (
             <ul className="project-home-list">
-              {processingDocuments.slice(0, 6).map((document) => (
-                <li key={document.document_id}>
-                  <span className={`project-home-status-dot status-${document.processing_status}`} />
-                  <div>
-                    <strong>{document.filename}</strong>
-                    <p>
-                      {document.processing_error
-                        ?? (document.processing_status === "processing"
-                          ? "Processing is still in progress."
-                          : document.processing_status.replaceAll("_", " "))}
-                    </p>
-                  </div>
-                </li>
-              ))}
+              {processingDocuments.slice(0, 6).map((document) => {
+                const status = getDocumentStatusPresentation(
+                  document.processing_status,
+                  document.processing_error,
+                  canEditProject,
+                );
+                return (
+                  <li key={document.document_id}>
+                    <span className={`project-home-status-dot status-${document.processing_status}`} />
+                    <div>
+                      <strong>{document.filename}</strong>
+                      <p>{status.label}: {status.detail}</p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="project-home-empty">All project documents are ready.</p>

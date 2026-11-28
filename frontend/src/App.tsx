@@ -52,6 +52,7 @@ import {
   toggleQuickAccessPin,
 } from "./quickAccess";
 import { WorkStatusPanel } from "./WorkStatusPanel";
+import { getDocumentStatusPresentation, type DocumentStatus } from "./documentStatus";
 import {
   buildWorkStatusItems,
   type LatexCompileActivity,
@@ -806,9 +807,10 @@ function App() {
         bulkUploads,
         documents,
         latexCompileActivities[project.project_id] ?? null,
+        canEditProject,
       )
       : [],
-    [bulkUploads, documents, latexCompileActivities, project?.project_id],
+    [bulkUploads, canEditProject, documents, latexCompileActivities, project?.project_id],
   );
   const reportLatexCompileActivity = useCallback((activity: LatexCompileActivity) => {
     if (!project) return;
@@ -3684,7 +3686,11 @@ function App() {
                           <Download size={16} />
                         </button>
                       </div>
-                      {openedDocument.processing_error && <p className="inline-error">{openedDocument.processing_error}</p>}
+                      <DocumentStatusMessage
+                        status={openedDocument.processing_status}
+                        error={openedDocument.processing_error}
+                        canRetry={canEditProject}
+                      />
                       {citationExcerpt && (
                         <aside className="citation-evidence">
                           <strong>{citationPage ? `Cited passage · PDF page ${citationPage}` : "Cited passage"}</strong>
@@ -3736,7 +3742,11 @@ function App() {
                             <div className="bulk-upload-item" key={item.key}>
                               <div className="bulk-upload-file">
                                 <strong>{item.filename}</strong>
-                                {item.error && <small>{item.error}</small>}
+                                <DocumentStatusMessage
+                                  status={item.status}
+                                  error={item.error}
+                                  canRetry={canEditProject}
+                                />
                               </div>
                               <StatusPill status={item.status} />
                               {canEditProject && item.status === "failed" && (
@@ -3799,7 +3809,11 @@ function App() {
                                   {document.filename}
                                 </button>
                                 <span>{formatBytes(document.file_size)} · {new Date(document.uploaded_at).toLocaleDateString()}</span>
-                                {document.processing_error && <small className="inline-error">{document.processing_error}</small>}
+                                <DocumentStatusMessage
+                                  status={document.processing_status}
+                                  error={document.processing_error}
+                                  canRetry={canEditProject}
+                                />
                                 <LibraryMetadataEditor
                                   tags={document.tags}
                                   metadata={document.metadata}
@@ -5720,22 +5734,31 @@ function EmptyState({ icon, title, text }: { icon: ReactNode; title: string; tex
   return <div className="empty-state"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{text}</p></div>;
 }
 
-function StatusPill({ status }: { status: string }) {
-  const labels: Record<string, string> = {
-    uploading: "Uploading",
-    processing: "Processing",
-    ready: "Ready",
-    needs_api_key: "Needs API key",
-    failed: "Failed",
-    quota_exceeded: "AI allowance reached",
-  };
-  const label = labels[status] ?? status;
+function StatusPill({ status }: { status: DocumentStatus }) {
+  const presentation = getDocumentStatusPresentation(status);
   return (
-    <span className={`status-pill status-${status}`} aria-label={label} title={label}>
+    <span className={`status-pill status-${status}`} aria-label={presentation.label} title={presentation.label}>
       {["uploading", "processing"].includes(status) && <LoaderCircle size={12} className="spin" />}
-      {status === "quota_exceeded" && <AlertCircle size={12} />}
-      {label}
+      {presentation.state === "attention" && <AlertCircle size={12} />}
+      {presentation.label}
     </span>
+  );
+}
+
+function DocumentStatusMessage({
+  status,
+  error,
+  canRetry,
+}: {
+  status: DocumentStatus;
+  error: string | null;
+  canRetry: boolean;
+}) {
+  const presentation = getDocumentStatusPresentation(status, error, canRetry);
+  return (
+    <small className={`document-status-detail ${presentation.state === "attention" ? "inline-error" : ""}`}>
+      {presentation.detail}
+    </small>
   );
 }
 

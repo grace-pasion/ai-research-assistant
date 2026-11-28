@@ -210,6 +210,9 @@ h1, h2, h3, p { margin-top: 0; }
 .bulk-upload-file { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .bulk-upload-file strong { color: #4b584f; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bulk-upload-file small { color: #a64e47; font-size: 9px; line-height: 1.4; }
+.document-status-detail { color: #77837a; display: block; font-size: 9px; line-height: 1.45; margin: 3px 0 0; }
+.bulk-upload-file .document-status-detail { color: #77837a; }
+.bulk-upload-file .document-status-detail.inline-error { color: #a64e47; }
 .status-uploading { background: #f4f1e8; color: #927344; }
 .document-list { border: 1px solid #e8ece8; border-radius: 9px; overflow: hidden; }
 .document-row { align-items: center; background: #fff; border-bottom: 1px solid #edf0ed; display: flex; gap: 13px; min-height: 72px; padding: 12px 15px; }
@@ -1023,8 +1026,7 @@ h1, h2, h3, p { margin-top: 0; }
   .project-collection-source-type { flex-basis: 70px; }
   .document-row { gap: 8px; padding: 10px; }
   .document-row .button { padding: 0 7px; }
-  .status-pill { font-size: 0; padding: 7px; }
-  .status-pill svg { margin: 0; }
+  .status-pill { font-size: 9px; padding: 5px 7px; }
   .search-form { flex-wrap: wrap; }
   .search-form > input { flex-basis: calc(100% - 35px); }
   .search-form select { flex: 1; }
