@@ -92,7 +92,11 @@ export function StudyExtractionTable({ papers, canEdit, onSave }: Props) {
         {!canEdit && <span className="study-extraction-readonly">Read-only access</span>}
       </div>
       {papers.length === 0 ? (
-        <p className="muted compact">Save papers to this project to start a study extraction table.</p>
+        <p className="muted compact">
+          {canEdit
+            ? "Search above and save a paper, or import a bibliography, to begin shared study extraction."
+            : "Ask a project editor to save or import papers before study extraction can begin."}
+        </p>
       ) : (
         <div className="study-extraction-scroll">
           <table className="study-extraction-table" aria-label="Study extraction table">

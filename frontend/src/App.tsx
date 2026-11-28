@@ -220,6 +220,9 @@ function App() {
   const [quickNoteBusy, setQuickNoteBusy] = useState(false);
   const [quickNoteError, setQuickNoteError] = useState("");
   const [projectAnnotations, setProjectAnnotations] = useState<ProjectAnnotation[]>([]);
+  const [notesWorkspaceLoadedId, setNotesWorkspaceLoadedId] = useState<string | null>(null);
+  const [notesWorkspaceLoadError, setNotesWorkspaceLoadError] = useState("");
+  const [notesWorkspaceReloadKey, setNotesWorkspaceReloadKey] = useState(0);
   const [projectCollaborators, setProjectCollaborators] = useState<ProjectCollaborator[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
   const [recentSources, setRecentSources] = useState<{
@@ -647,6 +650,8 @@ function App() {
     setQuickNoteText("");
     setQuickNoteBusy(false);
     setQuickNoteError("");
+    setNotesWorkspaceLoadedId(null);
+    setNotesWorkspaceLoadError("");
     setResearchPacketPapers([]);
     setResearchPacketNotes([]);
     setResearchPacketOutputs([]);
@@ -685,9 +690,14 @@ function App() {
           setProjectAnnotations(loadedAnnotations);
           setProjectTasks(loadedTasks);
           setProjectCollaborators(loadedCollaborators);
+          setNotesWorkspaceLoadedId(project.project_id);
+          setNotesWorkspaceLoadError("");
         })
         .catch((cause: unknown) => {
-          if (active) setError(cause instanceof Error ? cause.message : "Could not load project notes and tasks.");
+          if (active) {
+            const message = cause instanceof Error ? cause.message : "Could not load project notes and tasks.";
+            setNotesWorkspaceLoadError(message);
+          }
         });
     };
     loadNotesWorkspace();
@@ -696,7 +706,7 @@ function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [project?.project_id, request, token, view]);
+  }, [notesWorkspaceReloadKey, project?.project_id, request, token, view]);
 
   useEffect(() => {
     if (!project || !token) {
@@ -3926,8 +3936,26 @@ function App() {
                           )) : <p className="muted compact">No extracted text matched that search.</p>}
                         </div>
                       )}
-                      {!documents.length ? (
-                        <EmptyState icon={<FileText size={22} />} title="No documents yet" text="Add a PDF, Word document, plain text, or Markdown file to begin." />
+                      {projectDataLoadedId !== project.project_id ? (
+                        <p className="muted compact" role="status">Loading project documents…</p>
+                      ) : !documents.length ? (
+                        <EmptyState
+                          icon={<FileText size={22} />}
+                          title="No documents yet"
+                          text={canEditProject
+                            ? "Upload your first PDF, Word, text, or Markdown file to add a source to this project."
+                            : "Ask a project owner or editor to upload a PDF, Word, text, or Markdown file."}
+                          action={canEditProject && (
+                            <button
+                              className="button primary small-button"
+                              type="button"
+                              disabled={uploadingFiles}
+                              onClick={() => uploadInputRef.current?.click()}
+                            >
+                              <Upload size={14} /> {uploadingFiles ? "Uploading…" : "Upload first document"}
+                            </button>
+                          )}
+                        />
                       ) : (
                         <div className="document-list">
                           {visibleDocuments.map((document) => (
@@ -4011,6 +4039,11 @@ function App() {
                       </button>
                     </div>
                   </div>
+                  {notesWorkspaceLoadError && notesWorkspaceLoadedId === project.project_id && (
+                    <p className="inline-error" role="alert">
+                      Could not refresh project notes and tasks. {notesWorkspaceLoadError}
+                    </p>
+                  )}
                   <section className="project-task-panel" aria-labelledby="project-task-heading">
                     <div className="project-task-heading">
                       <div>
@@ -4079,7 +4112,11 @@ function App() {
                       </form>
                     )}
                     {!canCommentOnProject && <p className="muted compact">Comment access is required to create project tasks.</p>}
-                    {!projectTaskSources.length && <p className="muted compact">Add a project document or saved paper to create a task.</p>}
+                    {projectDataLoadedId !== project.project_id ? (
+                      <p className="muted compact" role="status">Loading project documents and papers…</p>
+                    ) : !projectTaskSources.length && (
+                      <p className="muted compact">Add a project document or saved paper to create a task.</p>
+                    )}
                     {projectTasks.length > 0 ? (
                       <div className="project-task-list">
                         {projectTasks.map((task) => {
@@ -4157,7 +4194,13 @@ function App() {
                         })}
                       </div>
                     ) : (
-                      <p className="muted compact">No team tasks yet.</p>
+                      <p className="muted compact" role={notesWorkspaceLoadError ? "alert" : "status"}>
+                        {notesWorkspaceLoadedId === project.project_id
+                          ? "No team tasks yet."
+                          : notesWorkspaceLoadError
+                            ? "Could not load project tasks. Retry loading notes and tasks below."
+                            : "Loading project tasks…"}
+                      </p>
                     )}
                   </section>
                   <div className="annotation-library-controls">
@@ -4208,7 +4251,25 @@ function App() {
                       {allVisibleAnnotationsSelected ? "Clear visible selection" : "Select visible"}
                     </button>
                   </div>
-                  {visibleProjectAnnotations.length ? (
+                  {notesWorkspaceLoadedId !== project.project_id ? (
+                    <div className="annotation-library-empty">
+                      <BookOpen size={22} />
+                      {notesWorkspaceLoadError ? (
+                        <>
+                          <p role="alert">Could not load project notes. {notesWorkspaceLoadError}</p>
+                          <button
+                            className="button secondary small-button"
+                            type="button"
+                            onClick={() => setNotesWorkspaceReloadKey((current) => current + 1)}
+                          >
+                            Retry loading notes
+                          </button>
+                        </>
+                      ) : (
+                        <p role="status">Loading project notes…</p>
+                      )}
+                    </div>
+                  ) : visibleProjectAnnotations.length ? (
                     <div className="annotation-library-list">
                       {visibleProjectAnnotations.map((annotation) => {
                         const primarySourceId = annotation.source_type === "document"
@@ -4407,9 +4468,41 @@ function App() {
                   ) : (
                     <div className="annotation-library-empty">
                       <BookOpen size={22} />
-                      <p>{projectAnnotations.length
-                        ? "No saved notes match these filters."
-                        : "No notes or highlights yet. Annotate a document or saved paper to see it here."}</p>
+                      {projectAnnotations.length ? (
+                        <p>No saved notes match these filters.</p>
+                      ) : (
+                        <>
+                          <h3>No project notes yet</h3>
+                          <p>
+                            {!projectTaskSources.length
+                              ? canEditProject
+                                ? "Add a document or save a paper first, then use New note or Annotate to add notes and highlights."
+                                : "Ask a project owner or editor to add a document or save a paper before creating notes."
+                              : canCommentOnProject
+                                ? "Use New note above to attach a note to a source, or open a paper or document and choose Annotate."
+                                : "A collaborator with comment access can use New note or annotate a source to add the first note."}
+                          </p>
+                          {!projectTaskSources.length && canEditProject && (
+                            <div className="empty-state-actions">
+                              <button
+                                className="button primary small-button"
+                                type="button"
+                                disabled={uploadingFiles}
+                                onClick={() => uploadInputRef.current?.click()}
+                              >
+                                <Upload size={14} /> {uploadingFiles ? "Uploading…" : "Add document"}
+                              </button>
+                              <button
+                                className="button secondary small-button"
+                                type="button"
+                                onClick={() => setView("papers")}
+                              >
+                                <Search size={14} /> Find papers
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                 </section>
@@ -4872,7 +4965,9 @@ function App() {
                         )}
                       </div>
                     )}
-                    {papers.length ? visibleScreeningPapers.map((paper) => (
+                    {projectDataLoadedId !== project.project_id ? (
+                      <p className="muted compact" role="status">Loading saved papers…</p>
+                    ) : papers.length ? visibleScreeningPapers.map((paper) => (
                       <Fragment key={paper.paper_id}>
                         <PaperCard
                           paper={paper}
@@ -4931,8 +5026,14 @@ function App() {
                           />
                         )}
                       </Fragment>
-                    )) : <p className="muted compact">Your saved papers will appear here.</p>}
-                    {papers.length > 0 && visibleScreeningPapers.length === 0 && (
+                    )) : (
+                      <p className="muted compact">
+                        {canEditProject
+                          ? "Search above and save a result, or import an RIS/BibTeX file. Saved papers will appear here for screening."
+                          : "No papers are saved yet. Ask a project editor to save or import references to start screening."}
+                      </p>
+                    )}
+                    {projectDataLoadedId === project.project_id && papers.length > 0 && visibleScreeningPapers.length === 0 && (
                       <p className="muted compact">No saved papers match these filters.</p>
                     )}
                   </div>
@@ -5126,7 +5227,11 @@ function App() {
                                 Paper: {paper.title}
                               </label>
                             ))}
-                            {!documents.some((document) => document.processing_status === "ready") && !papers.length && <p>No ready documents or saved papers are available.</p>}
+                            {!documents.some((document) => document.processing_status === "ready") && !papers.length && (
+                              <p>
+                                Upload a document and wait for it to be ready, or save a paper from Literature to add a source.
+                              </p>
+                            )}
                           </div>
                         )}
                       </details>
@@ -5944,8 +6049,25 @@ function TabButton({
   );
 }
 
-function EmptyState({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
-  return <div className="empty-state"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{text}</p></div>;
+function EmptyState({
+  icon,
+  title,
+  text,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  text: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon">{icon}</div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {action && <div className="empty-state-actions">{action}</div>}
+    </div>
+  );
 }
 
 function StatusPill({ status }: { status: DocumentStatus }) {
