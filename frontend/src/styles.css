@@ -508,6 +508,7 @@ h1, h2, h3, p { margin-top: 0; }
 .latex-access-role { color: #7d8981; font-size: 9px; text-transform: capitalize; }
 .latex-save-status { align-items: center; color: #63816b; display: inline-flex; font-size: 10px; gap: 5px; margin-right: 4px; white-space: nowrap; }
 .latex-save-status.unsaved, .latex-save-status.error { color: #a56d38; }
+.latex-last-saved { color: #7d8981; font-size: 10px; white-space: nowrap; }
 .latex-error { margin: 10px 18px; }
 .latex-diagnostic pre { font: inherit; margin: 0 0 7px; white-space: pre-wrap; }
 .workspace-history { background: #fbfcfa; border: 1px solid #e4e9e4; border-radius: 6px; margin: 10px 12px; padding: 10px; }
@@ -1058,6 +1059,7 @@ h1, h2, h3, p { margin-top: 0; }
   .latex-header { align-items: flex-start; padding: 14px; }
   .latex-header-actions { gap: 6px; }
   .latex-save-status { flex-basis: 100%; }
+  .latex-last-saved { flex-basis: 100%; }
   .latex-layout { display: flex; flex-direction: column; }
   .latex-sources { border-bottom: 1px solid #e9ede9; border-right: 0; max-height: 310px; }
   .latex-panes { grid-template-columns: minmax(0, 1fr); }

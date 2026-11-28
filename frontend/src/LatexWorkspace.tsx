@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   BookOpen,
   Check,
   Code2,
@@ -36,6 +37,7 @@ import { documentBodyInsertionPosition, insertAtCursor } from "./latexEditor";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import { fetchPdfObjectUrl } from "./api";
 import { findLatexSourceLocation, sourceOffsetForLine } from "./latexDiagnostics";
+import { formatLastSavedAt, getWorkspaceSaveStatusLabel } from "./latexWorkspaceStatus";
 import {
   ensureLatexPackage,
   pythonOutputInsertion,
@@ -589,6 +591,8 @@ export function LatexWorkspace({
   }
 
   const compileLocation = findLatexSourceLocation(compileError);
+  const lastSavedAt = formatLastSavedAt(workspace.updated_at);
+  const saveStatusClass = saveStatus === "saved" && !workspace.updated_at ? "unsaved" : saveStatus;
 
   return (
     <section className="latex-workspace section-content" aria-label="LaTeX main document workspace">
@@ -604,10 +608,26 @@ export function LatexWorkspace({
           </span>
           {!pythonWorkspaceActive && (
             <>
-              <span className={`latex-save-status ${saveStatus}`} role="status">
-                {saveStatus === "saving" ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}
-                {saveStatus === "saving" ? "Saving…" : saveStatus === "unsaved" ? "Unsaved changes" : saveStatus === "error" ? "Save failed" : "Saved"}
-              </span>
+              {loaded && (
+                <>
+                  <span className={`latex-save-status ${saveStatusClass}`} role="status">
+                    {saveStatus === "saving"
+                      ? <LoaderCircle size={13} className="spin" />
+                      : saveStatusClass === "unsaved" || saveStatus === "error"
+                        ? <AlertCircle size={13} />
+                        : <Check size={13} />}
+                    {getWorkspaceSaveStatusLabel(saveStatus, workspace.updated_at)}
+                  </span>
+                  {workspace.updated_at !== null && (
+                    <span className="latex-last-saved">
+                      Last saved{" "}
+                      {lastSavedAt
+                        ? <time dateTime={workspace.updated_at}>{lastSavedAt}</time>
+                        : "time unavailable"}
+                    </span>
+                  )}
+                </>
+              )}
               <button
                 type="button"
                 className="button secondary small-button"
