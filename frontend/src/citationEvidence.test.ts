@@ -16,9 +16,18 @@ describe("citation passage location", () => {
     )).toEqual({ start: 16, end: 52 });
   });
 
+  it("finds chunk excerpts when source extraction has different whitespace", () => {
+    expect(findCitationRange(
+      "🧪 Intro.\n\nThe  trial enrolled\t120 participants.\nResults follow.",
+      "The trial enrolled 120 participants.",
+    )).toEqual({ start: 10, end: 47 });
+  });
+
   it("returns no range for missing or empty evidence", () => {
     expect(findCitationRange("Source text.", "Unavailable excerpt")).toBeNull();
     expect(findCitationRange("Source text.", null)).toBeNull();
     expect(findCitationRange("Source text.", "")).toBeNull();
+    expect(findCitationRange("Source text.", " \n\t ")).toBeNull();
+    expect(findCitationRange("Source \n\t text.", " \n\t ")).toBeNull();
   });
 });
