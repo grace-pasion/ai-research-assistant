@@ -43,6 +43,7 @@ import {
   type ProjectSectionView,
 } from "./globalShortcuts";
 import { getMentionQuery, insertMention } from "./mentions";
+import { confirmDestructiveAction } from "./destructiveConfirmation";
 import { CrossProjectSearch } from "./CrossProjectSearch";
 import { ProjectCollections } from "./ProjectCollections";
 import { ProjectHome } from "./ProjectHome.tsx";
@@ -1326,7 +1327,14 @@ function App() {
   }
 
   async function deleteProjectTask(task: ProjectTask) {
-    if (!project) return;
+    if (
+      !project
+      || !confirmDestructiveAction(
+        "Delete",
+        `${task.title} (source: ${task.source_title})`,
+        "This removes the task from this project.",
+      )
+    ) return;
     setTaskBusyId(task.task_id);
     setError("");
     try {
@@ -2007,12 +2015,19 @@ function App() {
     }
   }
 
-  async function deleteDocument(documentId: string) {
-    if (!project || !window.confirm("Delete this document and its extracted text?")) return;
+  async function deleteDocument(document: DocumentRecord) {
+    if (
+      !project
+      || !confirmDestructiveAction(
+        "Delete",
+        document.filename,
+        "This deletes the uploaded file, its extracted text, and its attached notes and highlights from the project.",
+      )
+    ) return;
     setBusy(true);
     setError("");
     try {
-      await request<void>(`/api/documents/${documentId}`, { method: "DELETE" });
+      await request<void>(`/api/documents/${document.document_id}`, { method: "DELETE" });
       await loadProjectData(project);
       setNotice("Document deleted.");
     } catch (cause) {
@@ -2215,7 +2230,15 @@ function App() {
   }
 
   async function removeSavedPaperSearch(saved: SavedPaperSearch) {
-    if (!project || savedSearchBusy) return;
+    if (
+      !project
+      || savedSearchBusy
+      || !confirmDestructiveAction(
+        "Remove",
+        saved.query_text,
+        "This removes the saved search and its alert from this project.",
+      )
+    ) return;
     setSavedSearchBusy(true);
     setError("");
     try {
@@ -2339,7 +2362,14 @@ function App() {
   }
 
   async function unsavePaper(paper: Paper) {
-    if (!project) return;
+    if (
+      !project
+      || !confirmDestructiveAction(
+        "Remove",
+        paper.title,
+        "This removes the paper from this project and any collections that include it.",
+      )
+    ) return;
     setError("");
     try {
       await request<void>(`/api/projects/${project.project_id}/papers/${paper.paper_id}/save`, {
@@ -2687,7 +2717,14 @@ function App() {
   }
 
   async function deleteProject() {
-    if (!project || !window.confirm(`Delete “${project.project_name}” and all its data?`)) return;
+    if (
+      !project
+      || !confirmDestructiveAction(
+        "Delete",
+        project.project_name,
+        "This permanently deletes all data in the project.",
+      )
+    ) return;
     setBusy(true);
     setError("");
     try {
@@ -3849,6 +3886,7 @@ function App() {
                       <AnnotationEditor
                         key={openedDocument.document_id}
                         projectId={project.project_id}
+                        sourceName={openedDocument.filename}
                         annotationsPath={`/api/projects/${project.project_id}/documents/${openedDocument.document_id}/annotations`}
                         sourcePath={`/api/documents/${openedDocument.document_id}/reader`}
                         sourceStatus={openedDocument.processing_status}
@@ -3993,7 +4031,11 @@ function App() {
                                 </button>
                               )}
                               {canEditProject && (
-                                <button className="icon-button danger-hover" title="Delete document" onClick={() => void deleteDocument(document.document_id)}>
+                                <button
+                                  className="icon-button danger-hover"
+                                  title="Delete document"
+                                  onClick={() => void deleteDocument(document)}
+                                >
                                   <Trash2 size={16} />
                                 </button>
                               )}
@@ -5018,6 +5060,7 @@ function App() {
                           <AnnotationEditor
                             key={`annotations-${paper.paper_id}`}
                             projectId={project.project_id}
+                            sourceName={paper.title}
                             annotationsPath={`/api/projects/${project.project_id}/papers/${paper.paper_id}/annotations`}
                             sourceText={paper.abstract?.replace(/<[^>]*>/g, "") ?? ""}
                             canComment={project.access_role !== "read"}
@@ -5562,7 +5605,14 @@ function AccountSettingsDialog({
                 <button
                   className="text-button profile-picture-remove"
                   type="button"
-                  onClick={() => setProfilePicture(null)}
+                  onClick={() => {
+                    if (!confirmDestructiveAction(
+                      "Remove",
+                      "profile picture",
+                      "This clears it from your profile when you save profile settings.",
+                    )) return;
+                    setProfilePicture(null);
+                  }}
                 >
                   Remove picture
                 </button>
@@ -6828,6 +6878,7 @@ function MentionableTextarea({
 
 function AnnotationEditor({
   projectId,
+  sourceName,
   annotationsPath,
   sourcePath,
   sourceText,
@@ -6838,6 +6889,7 @@ function AnnotationEditor({
   isProjectOwner,
 }: {
   projectId: string;
+  sourceName: string;
   annotationsPath: string;
   sourcePath?: string;
   sourceText?: string;
@@ -6989,6 +7041,18 @@ function AnnotationEditor({
   }
 
   async function deleteAnnotation(annotation: Annotation) {
+    const annotationText = (annotation.note.trim() || annotation.quote?.trim() || "highlight")
+      .replace(/\s+/g, " ");
+    const annotationLabel = annotationText.length > 80
+      ? `${annotationText.slice(0, 79)}…`
+      : annotationText;
+    if (
+      !confirmDestructiveAction(
+        "Delete",
+        `${sourceName}: ${annotationLabel}`,
+        "This removes the comment or highlight from the source and project notes.",
+      )
+    ) return;
     setBusy(true);
     setError("");
     try {

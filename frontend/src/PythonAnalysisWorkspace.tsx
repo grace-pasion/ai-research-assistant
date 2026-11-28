@@ -19,6 +19,7 @@ import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import CodeMirror from "@uiw/react-codemirror";
 import { downloadFile, fetchFileBlob } from "./api";
+import { confirmDestructiveAction } from "./destructiveConfirmation";
 import { WorkspaceVersionComparison } from "./WorkspaceVersionComparison";
 import {
   MAX_INPUT_FILE_COUNT,
@@ -362,6 +363,11 @@ export function PythonAnalysisWorkspace({
   function deleteSelectedFile() {
     if (restoringVersion !== null) return;
     if (selectedFilename.toLowerCase() === "main.py") return;
+    if (!confirmDestructiveAction(
+      "Delete",
+      selectedFilename,
+      "This removes the file from the project’s Python workspace.",
+    )) return;
     const files = (workspaceRef.current.files ?? []).filter((file) => file.filename !== selectedFilename);
     if (!updateSourceFiles(files)) return;
     onSelectedFileChange("main.py");
@@ -574,6 +580,11 @@ export function PythonAnalysisWorkspace({
   }
 
   async function deleteArtifact(filename: string) {
+    if (!confirmDestructiveAction(
+      "Delete",
+      filename,
+      "This permanently deletes the generated output from the project workspace.",
+    )) return;
     setError("");
     try {
       await request<void>(`${path}/artifacts/${encodeURIComponent(filename)}`, {

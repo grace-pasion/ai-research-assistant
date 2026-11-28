@@ -1,6 +1,7 @@
 import { AlertCircle, FileText, Library, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { jsonBody } from "./api";
+import { confirmDestructiveAction } from "./destructiveConfirmation";
 import type {
   DocumentRecord,
   Paper,
@@ -117,7 +118,11 @@ export function ProjectCollections({
   }
 
   async function deleteCollection(collection: ProjectCollection) {
-    if (!window.confirm(`Delete "${collection.name}" and its collection links?`)) return;
+    if (!confirmDestructiveAction(
+      "Delete",
+      collection.name,
+      "This removes the collection and its links; papers and documents remain in the project.",
+    )) return;
     setBusyCollectionId(collection.collection_id);
     setError("");
     try {
@@ -176,6 +181,12 @@ export function ProjectCollections({
   }
 
   async function removeSource(collection: ProjectCollection, item: ProjectCollectionItem) {
+    const sourceName = item.source_title || `${item.source_type} source`;
+    if (!confirmDestructiveAction(
+      "Remove",
+      sourceName,
+      `This removes it from collection “${collection.name}” but keeps the source in the project.`,
+    )) return;
     setBusyCollectionId(collection.collection_id);
     setError("");
     try {

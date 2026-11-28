@@ -1,5 +1,6 @@
 import { ArrowLeft, Check, Hash, MessageCircle, Send, UserPlus, X } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { confirmDestructiveAction } from "./destructiveConfirmation";
 import type {
   Colleague,
   DirectMessage,
@@ -80,6 +81,17 @@ export function ShareDialog({
   }
 
   async function revoke(invitation: ProjectInvitation) {
+    const invitee = invitation.invitee_name
+      ? `${invitation.invitee_name} (${invitation.invitee_email})`
+      : invitation.invitee_email;
+    const accepted = invitation.status === "accepted";
+    if (!confirmDestructiveAction(
+      accepted ? "Remove" : "Cancel",
+      accepted ? invitee : `invitation for ${invitee}`,
+      accepted
+        ? `This removes their access to project “${project.project_name}”.`
+        : `This cancels the invitation to project “${project.project_name}”.`,
+    )) return;
     setBusy(true);
     setError("");
     try {
@@ -609,6 +621,11 @@ export function TeamWorkspaceDialog({
 
   async function removeMember(member: TeamWorkspaceMember) {
     if (!selected) return;
+    if (!confirmDestructiveAction(
+      "Remove",
+      `${member.name} (${member.email})`,
+      `This removes their access to team workspace “${selected.name}”; their account and data remain.`,
+    )) return;
     setBusy(true);
     setError("");
     try {
